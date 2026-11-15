@@ -1,4 +1,4 @@
-"""Capture all client-to-server packets to sniff_log.txt for protocol analysis."""
+"""Log packet metadata; raw payloads require explicit diagnostic opt-in."""
 import sys, os
 from pathlib import Path
 
@@ -20,7 +20,9 @@ async def run(bot):
                 name = "?"
 
             raw = reader.peek_remaining()
-            hex_dump = raw.hex(" ") if raw else "(empty)"
+            # Payloads may contain chat and other private game data.
+            include_payload = os.environ.get("DBV_ALLOW_PACKET_CAPTURE") == "1"
+            hex_dump = (raw.hex(" ") if raw else "(empty)") if include_payload else "[redacted]"
 
             line = f"0x{opcode:02X} ({name}) [{len(raw)} bytes] {hex_dump}\n"
             bot.log(f"[SNIFF] {line.strip()}")
@@ -28,7 +30,7 @@ async def run(bot):
                 f.write(line)
 
             # Also parse known packet types for readability
-            if opcode == ClientOpcode.USE_ITEM and len(raw) >= 8:
+            if include_payload and opcode == ClientOpcode.USE_ITEM and len(raw) >= 8:
                 import struct
                 x = struct.unpack_from('<H', raw, 0)[0]
                 y = struct.unpack_from('<H', raw, 2)[0]
@@ -45,8 +47,8 @@ async def run(bot):
 
     proxy.register_client_packet_callback(sniffer)
     with open(SNIFF_LOG, "w") as f:
-        f.write("--- Full packet sniffer started ---\n")
-    bot.log("[SNIFF] Full packet sniffer installed — press your hotkey now")
+        f.write("--- Packet diagnostic logger started ---\n")
+    bot.log("[SNIFF] Packet diagnostic logger installed — press your hotkey now")
 
     try:
         while True:

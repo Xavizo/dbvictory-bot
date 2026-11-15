@@ -1,6 +1,14 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
+const path = require("node:path");
 
-const NEXT_URL = "http://localhost:4747";
+const NEXT_URL = "http://127.0.0.1:4747";
+const sessionToken = process.env.DBV_DASHBOARD_TOKEN;
+delete process.env.DBV_DASHBOARD_TOKEN;
+
+function isDashboardUrl(url) {
+  try { return new URL(url).origin === NEXT_URL; }
+  catch { return false; }
+}
 
 const LOADING_HTML = `data:text/html,
 <html>
@@ -28,7 +36,26 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      preload: path.join(__dirname, "preload.js"),
     },
+  });
+
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  for (const eventName of ["will-navigate", "will-redirect"]) {
+    win.webContents.on(eventName, (event, url) => {
+      if (!isDashboardUrl(url)) event.preventDefault();
+    });
+  }
+  win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  win.webContents.session.setPermissionCheckHandler(() => false);
+  ipcMain.handle("dbv:dashboard-token", (event) => {
+    if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame ||
+        !isDashboardUrl(event.senderFrame.url) || !sessionToken) {
+      throw new Error("Open the dashboard through the bot's start_bot tool.");
+    }
+    return sessionToken;
   });
 
   // Show loading screen immediately
@@ -36,8 +63,10 @@ function createWindow() {
 
   // Poll until Next.js is ready, then load
   const tryLoad = () => {
+    if (win.isDestroyed()) return;
     fetch(NEXT_URL)
       .then((res) => {
+        if (win.isDestroyed()) return;
         if (res.ok) win.loadURL(NEXT_URL);
         else setTimeout(tryLoad, 500);
       })

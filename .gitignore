@@ -30,6 +30,10 @@ dll/test_dll*.txt
 
 # Node
 node_modules/
+.venv/
+.pytest_cache/
+*.tsbuildinfo
+.codex/
 
 # Electron
 electron_err.log

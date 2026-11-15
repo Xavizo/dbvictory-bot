@@ -1,13 +1,14 @@
 """
 DBVictory Bot — MCP Server
 
-Exposes the bot's actions as MCP tools so Claude Code can control the
+Exposes the bot's actions as MCP tools so Codex or Claude Code can control the
 game character through natural language.
 
 Transport: stdio  (stdout = JSON-RPC, all logging → stderr)
 """
 
 import asyncio
+import atexit
 import collections
 import importlib
 import importlib.util
@@ -55,6 +56,7 @@ from protocol import (
 )
 from constants import SERVER_HOST, LOGIN_PORT, GAME_PORT
 import cavebot
+from dashboard_security import SESSION_TOKEN
 
 # ── Constants ───────────────────────────────────────────────────────
 SETTINGS_FILE = Path(__file__).parent / "bot_settings.json"
@@ -407,28 +409,37 @@ async def _async_restart_action(name: str) -> str:
 
 
 _dashboard_launched = False
+_dashboard_processes: dict[str, subprocess.Popen] = {}
 DASHBOARD_PORT = 4747
 
 
-def _kill_port(port: int) -> None:
-    """Kill any process listening on the given TCP port (Windows)."""
-    try:
-        result = subprocess.run(
-            f'netstat -ano | findstr "LISTENING" | findstr ":{port} "',
-            capture_output=True, text=True, shell=True,
-        )
-        pids = set()
-        for line in result.stdout.strip().splitlines():
-            parts = line.split()
-            if parts:
-                pids.add(parts[-1])
-        for pid in pids:
-            if pid and pid != "0" and pid.isdigit():
-                subprocess.run(["taskkill", "/F", "/PID", pid],
-                               capture_output=True)
-                log.info(f"Killed PID {pid} on port {port}")
-    except Exception as e:
-        log.debug(f"_kill_port({port}): {e}")
+def _dashboard_running(name: str) -> bool:
+    process = _dashboard_processes.get(name)
+    return process is not None and process.poll() is None
+
+
+def _stop_dashboard() -> None:
+    """Stop only process trees started by this MCP server, never other apps."""
+    global _dashboard_launched
+    for process in _dashboard_processes.values():
+        if process.poll() is not None:
+            continue
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                process.terminate()
+            process.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            log.warning("Could not stop dashboard child PID %s", process.pid)
+    _dashboard_processes.clear()
+    _dashboard_launched = False
+
+
+atexit.register(_stop_dashboard)
 
 
 def _check_process_running(name: str) -> bool:
@@ -444,14 +455,12 @@ def _check_process_running(name: str) -> bool:
 
 
 def _check_port_listening(port: int) -> bool:
-    """Check if something is listening on the given TCP port."""
+    """Probe loopback without shelling out to netstat."""
+    import socket
     try:
-        result = subprocess.run(
-            f'netstat -ano | findstr "LISTENING" | findstr ":{port} "',
-            capture_output=True, text=True, shell=True, timeout=5,
-        )
-        return bool(result.stdout.strip())
-    except Exception:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
         return False
 
 
@@ -506,11 +515,11 @@ def _build_status_report() -> str:
 
     # Dashboard / Electron
     dashboard_listening = _check_port_listening(DASHBOARD_PORT)
-    electron_running = _check_process_running("electron.exe")
+    electron_running = _dashboard_running("electron")
     if electron_running and dashboard_listening:
         lines.append(f"[OK] Dashboard: Electron running on port {DASHBOARD_PORT}")
     elif dashboard_listening:
-        lines.append(f"[OK] Dashboard: dev server on port {DASHBOARD_PORT} (Electron starting...)")
+        lines.append(f"[OK] Dashboard: server on port {DASHBOARD_PORT} (Electron starting...)")
     elif _dashboard_launched:
         lines.append("[..] Dashboard: launch requested, waiting for startup...")
     else:
@@ -527,55 +536,39 @@ def _build_status_report() -> str:
 
 
 def _launch_dashboard() -> None:
-    """Fire-and-forget launch of the Electron dashboard.
-
-    Re-launches Electron if it has exited; skips Next.js if already on port.
-    """
+    """Launch the built, loopback-only dashboard and its authenticated Electron UI."""
     global _dashboard_launched
     import shutil
     dashboard_dir = Path(__file__).parent / "dashboard"
-    if not (dashboard_dir / "package.json").exists():
-        log.warning("Dashboard not found — skipping launch.")
+    if os.name != "nt":
+        log.warning("The game dashboard requires Windows.")
         return
-
-    npm = shutil.which("npm.cmd") or shutil.which("npm")
+    if not (dashboard_dir / ".next" / "BUILD_ID").exists():
+        log.warning("Build the dashboard first: cd dashboard && npm ci && npm run build")
+        return
+    npm = shutil.which("npm.cmd")
     if npm is None:
-        log.warning("npm not found on PATH — cannot launch dashboard.")
+        log.warning("npm.cmd not found on PATH — cannot launch dashboard.")
         return
-
-    nextjs_running = _check_port_listening(DASHBOARD_PORT)
-    electron_running = _check_process_running("electron.exe")
-
-    if nextjs_running and electron_running:
-        log.info("Dashboard already fully running — skipping launch.")
-        _dashboard_launched = True
+    if not _dashboard_running("next") and _check_port_listening(DASHBOARD_PORT):
+        log.error("Dashboard port %s is occupied by another process; refusing to reuse it.", DASHBOARD_PORT)
         return
-
     try:
-        # Start Next.js dev server only if not already listening
-        if not nextjs_running:
-            _kill_port(DASHBOARD_PORT)
-            subprocess.Popen(
-                f'"{npm}" run dev',
-                cwd=str(dashboard_dir),
-                shell=True,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
+        for name, script in (("next", "start"), ("electron", "electron:only")):
+            if _dashboard_running(name):
+                continue
+            env = os.environ.copy()
+            env.pop("DBV_DASHBOARD_TOKEN", None)
+            if name == "electron":
+                env["DBV_DASHBOARD_TOKEN"] = SESSION_TOKEN
+            _dashboard_processes[name] = subprocess.Popen(
+                f'"{npm}" run {script}', cwd=str(dashboard_dir), shell=True,
+                env=env, creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
-            log.info(f"Next.js dev server launching on port {DASHBOARD_PORT}")
-
-        # Start Electron only if not already running
-        if not electron_running:
-            subprocess.Popen(
-                f'"{npm}" run electron:only',
-                cwd=str(dashboard_dir),
-                shell=True,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
-            log.info("Electron launching (waiting for Next.js).")
-
         _dashboard_launched = True
     except Exception as e:
-        log.warning(f"Failed to launch dashboard: {e}")
+        log.warning("Failed to launch dashboard: %s", e)
+        _stop_dashboard()
 
 
 # ── MCP Server ──────────────────────────────────────────────────────
@@ -583,8 +576,10 @@ def _launch_dashboard() -> None:
 mcp = FastMCP(
     "dbvictory-bot",
     instructions=(
-        "DBVictory game bot. Use start_bot first to patch the client and "
-        "launch the proxy. Then use the other tools to control the character."
+        "DBVictory game bot. Inspect get_status and list_actions first. "
+        "Call start_bot only when the user wants to connect to the Windows game client. "
+        "It patches client memory and launches local proxies. Login happens in the "
+        "game client; never request or log credentials. Enable only requested actions."
     ),
 )
 
@@ -622,7 +617,6 @@ async def _reset_bot() -> str:
     """Tear down the running bot, hot-reload modules, and reset state."""
     global _dashboard_launched
     import game_state as _gs_mod
-    import dashboard_api as _da_mod
 
     log.info("=== RESETTING BOT ===")
 
@@ -681,16 +675,8 @@ async def _reset_bot() -> str:
 
     await asyncio.sleep(1.0)  # Windows needs time for port release
 
-    # 4. Kill dashboard (Electron + Next.js dev server)
-    _kill_port(DASHBOARD_PORT)
-    try:
-        subprocess.run(
-            'taskkill /F /IM electron.exe',
-            shell=True, capture_output=True,
-        )
-    except Exception:
-        pass
-    _dashboard_launched = False
+    # 4. Stop only our dashboard process trees.
+    _stop_dashboard()
 
     # 5. Hot-reload Python modules
     try:
@@ -698,11 +684,8 @@ async def _reset_bot() -> str:
         log.info("Reloaded game_state.py")
     except Exception as e:
         log.warning(f"Failed to reload game_state: {e}")
-    try:
-        importlib.reload(_da_mod)
-        log.info("Reloaded dashboard_api.py")
-    except Exception as e:
-        log.warning(f"Failed to reload dashboard_api: {e}")
+    # Keep dashboard_api alive: its loopback listeners, credentials and client
+    # registry belong to this MCP process, not to one game connection.
     import cavebot as _cb_mod
     try:
         importlib.reload(_cb_mod)
@@ -869,6 +852,9 @@ async def start_bot() -> str:
     redirect traffic through the local proxy, then waits for the player
     to log in through the game client.
     """
+    if os.name != "nt":
+        return "ERROR: start_bot requires native Windows and the running DBVictory client."
+
     if state.ready:
         # Auto-reset: tear down everything and continue to fresh start
         log.info("Bot already running — auto-resetting...")

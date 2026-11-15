@@ -1,0 +1,11 @@
+# Alternative to scripts/setup-codex.ps1. Merge this section into your Codex
+# config; replace both example paths. Never replace your whole config file.
+[mcp_servers.dbvictory-bot]
+command = 'C:\DBVBot\venv\Scripts\python.exe'
+args = ['C:\DBVBot\run_mcp.py']
+startup_timeout_sec = 30
+tool_timeout_sec = 180
+
+[mcp_servers.dbvictory-bot.env]
+PYTHONUTF8 = "1"
+PYTHONUNBUFFERED = "1"

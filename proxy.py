@@ -430,7 +430,7 @@ class OTProxy:
                 self.logged_in = True
                 self._ts_logged_in = time.time()
                 log.info("=== GAME SESSION ESTABLISHED ===")
-                log.info(f"XTEA Keys: {' '.join(f'{k:08X}' for k in self.xtea_keys)}")
+                log.info("XTEA session keys captured (redacted)")
                 if self.on_login_success:
                     self.on_login_success(self.xtea_keys)
 
@@ -516,7 +516,7 @@ class OTProxy:
                             xtea_data = decrypted[1:17]
                             self.xtea_keys = struct.unpack('<4I', xtea_data)
                             self._ts_xtea_captured = time.time()
-                            log.info(f"XTEA keys: {' '.join(f'{k:08X}' for k in self.xtea_keys)}")
+                            log.info("XTEA session keys captured (redacted)")
 
                             # Log additional info from the decrypted block
                             try:

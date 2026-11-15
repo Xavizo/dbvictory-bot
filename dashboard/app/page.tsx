@@ -1137,11 +1137,12 @@ function CavebotPanel({
 }
 
 export default function Dashboard() {
-  const { state, mcpConnected, refresh } = useBot();
+  const { state, mcpConnected, refresh, dashboardError } = useBot();
   const [showProxySeq, setShowProxySeq] = useState(false);
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-8">
+      {dashboardError && <p role="alert" className="mb-4 rounded bg-amber-950 p-3 text-amber-200">{dashboardError}</p>}
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold tracking-tight">DBVictory Bot</h1>

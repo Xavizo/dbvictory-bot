@@ -1,3 +1,5 @@
+import { authenticatedFetch } from "./auth";
+
 const API_BASE = "http://127.0.0.1:8089";
 
 export interface ActionInfo {
@@ -171,7 +173,7 @@ export interface BotState {
 }
 
 export async function fetchState(): Promise<BotState> {
-  const res = await fetch(`${API_BASE}/api/state`);
+  const res = await authenticatedFetch(`${API_BASE}/api/state`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -180,7 +182,7 @@ export async function toggleAction(
   name: string,
   enabled: boolean
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/actions/${name}/toggle`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/actions/${name}/toggle`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
@@ -193,7 +195,7 @@ export async function toggleAction(
 
 
 export async function deleteAction(name: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/actions/${name}`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/actions/${name}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -206,7 +208,7 @@ export async function updateActionConfig(
   name: string,
   config: Record<string, any>
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/actions/${name}/config`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/actions/${name}/config`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
@@ -220,7 +222,7 @@ export async function updateActionConfig(
 // ── Cavebot API ─────────────────────────────────────────────────
 
 export async function startRecording(name: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/cavebot/record/start`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/record/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -232,7 +234,7 @@ export async function startRecording(name: string): Promise<void> {
 }
 
 export async function stopRecording(discard = false): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/cavebot/record/stop`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/record/stop`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ discard }),
@@ -247,7 +249,7 @@ export async function playRecording(
   name: string,
   loop = false
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/cavebot/play`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/play`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, loop }),
@@ -259,7 +261,7 @@ export async function playRecording(
 }
 
 export async function stopPlayback(): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/cavebot/play/stop`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/play/stop`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -269,7 +271,7 @@ export async function stopPlayback(): Promise<void> {
 }
 
 export async function clearCavebotLogs(): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/cavebot/logs/spacer`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/logs/spacer`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -281,13 +283,13 @@ export async function clearCavebotLogs(): Promise<void> {
 export async function fetchRecording(
   name: string
 ): Promise<{ name: string; waypoints: WaypointInfo[] } | null> {
-  const res = await fetch(`${API_BASE}/api/recordings/${encodeURIComponent(name)}`);
+  const res = await authenticatedFetch(`${API_BASE}/api/recordings/${encodeURIComponent(name)}`);
   if (!res.ok) return null;
   return res.json();
 }
 
 export async function deleteRecording(name: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/recordings/${encodeURIComponent(name)}`, {
+  const res = await authenticatedFetch(`${API_BASE}/api/recordings/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -300,7 +302,7 @@ export async function removeWaypoints(
   name: string,
   indices: number[]
 ): Promise<{ waypoints: WaypointInfo[] } | null> {
-  const res = await fetch(
+  const res = await authenticatedFetch(
     `${API_BASE}/api/recordings/${encodeURIComponent(name)}/remove_waypoints`,
     {
       method: "POST",
@@ -315,7 +317,7 @@ export async function removeWaypoints(
 export async function fetchActionsMap(
   name: string
 ): Promise<ActionsMapResponse | null> {
-  const res = await fetch(
+  const res = await authenticatedFetch(
     `${API_BASE}/api/cavebot/actions_map/${encodeURIComponent(name)}`
   );
   if (!res.ok) return null;

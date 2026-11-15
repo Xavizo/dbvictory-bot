@@ -1,12 +1,21 @@
 # DBVictory Bot
 
-A man-in-the-middle proxy bot for the DBVictory game, controlled through Claude Code via MCP (Model Context Protocol). Features DLL injection for real-time creature tracking, in-game targeting, automated healing/buffing, and a live Electron dashboard.
+A man-in-the-middle proxy bot for the DBVictory game, controlled through Codex or Claude Code via MCP (Model Context Protocol). Features DLL injection for real-time creature tracking, in-game targeting, automated healing/buffing, and a live Electron dashboard.
 
 ![Dashboard Screenshot](docs/dashboard.png)
 
 ![Cavebot with Minimap](docs/dashboard_cavebot.png)
 
 ![Cavebot Compare View](docs/dashboard_compare.png)
+
+## Codex setup (this fork)
+
+See [Codex on Windows](docs/CODEX.md) for installation, safe MCP checks, dashboard authentication, and the Windows acceptance test. The Windows game/DLL integration still needs testing against your client version.
+
+```powershell
+.\scripts\setup-codex.ps1
+.\scripts\start-codex.ps1
+```
 
 ## Features
 
@@ -16,7 +25,7 @@ A man-in-the-middle proxy bot for the DBVictory game, controlled through Claude 
 - **Real-Time Dashboard** — Electron + Next.js app with WebSocket updates every 100ms, showing player stats, creatures, packet counts, and action controls
 - **Automated Actions** — pluggable Python scripts that run in the background (healing, buffing, eating, targeting)
 - **Full Game State** — parses server packets for HP, mana, level, position, creatures, and text messages
-- **Claude Code Control** — natural language commands via MCP tools (walk, attack, say, use items)
+- **MCP Agent Control** — natural language commands via MCP tools (walk, attack, say, use items)
 - **HP Reading from DLL** — reads player health directly from game memory for fast, reliable healing triggers
 - **Dead Creature Filtering** — automatically filters out 0% HP creatures from game state
 
@@ -26,7 +35,7 @@ A man-in-the-middle proxy bot for the DBVictory game, controlled through Claude 
 2. The bot patches the client's memory to redirect traffic through `127.0.0.1`
 3. A local proxy intercepts login/game traffic, extracts XTEA encryption keys, and injects packets on demand
 4. A DLL is injected into the game process to read creature data and enable in-game targeting
-5. Claude Code sends commands to the MCP server, which translates them into game packets
+5. Codex or Claude Code sends commands to the MCP server, which translates them into game packets
 
 ### Architecture
 
@@ -74,7 +83,7 @@ The bot supports pluggable background actions — Python scripts in the `actions
 | **power_down** | Says "power down" every 1 second to cancel healing buff |
 | **auto_rune** | Uses rune 3165 on the currently targeted creature every 1 second |
 | **cavebot** | Records and replays navigation paths with live minimap visualization |
-| **packet_sniffer** | Captures all client-to-server packets to `sniff_log.txt` for protocol analysis |
+| **packet_sniffer** | Logs packet metadata to `sniff_log.txt`; raw payloads require explicit opt-in |
 | **item_id_spy** | Debug tool: shows "Item Id: XXXXX" in the game status bar when you use or look at an item |
 | **full_light** | Patches the game client to skip the darkness overlay entirely |
 
@@ -127,7 +136,7 @@ The Electron dashboard provides real-time visibility into the bot's state:
 - **Packet counters** — Server and client packet counts
 - **Action controls** — Toggle, view logs, and remove actions directly from the UI
 
-The dashboard connects via WebSocket (`ws://127.0.0.1:8090`) for 100ms update intervals, with an HTTP API (`http://127.0.0.1:8089`) for action mutations.
+The authenticated Electron dashboard is launched by `start_bot`; direct browser access is disabled. It connects via WebSocket (`ws://127.0.0.1:8090`) for 100ms update intervals, with an HTTP API (`http://127.0.0.1:8089`) for action mutations.
 
 ## DLL Injection System
 
@@ -190,7 +199,8 @@ cd dll && make
 
 ### Requirements
 
-- Python 3.10+
+- Python 3.11+ (3.12 recommended)
+- Node.js 22.12+ (for the dashboard)
 - Windows (required for memory patching and DLL injection)
 - DBVictory game client (`dbvStart.exe`)
 - MinGW-w64 32-bit (for DLL compilation)
@@ -198,18 +208,21 @@ cd dll && make
 ### Install Dependencies
 
 ```bash
-pip install pymem mcp websockets
+python -m pip install -r requirements.txt
 ```
 
 ### Usage
 
-> **Important:** Claude Code must be running as Administrator for memory patching to work.
+Use the [Codex setup and verification guide](docs/CODEX.md). Start without elevating
+Codex; matching process permissions are needed for native game attachment, and
+some operations may require elevation. Do not routinely run the entire coding
+agent as Administrator.
 
-1. **Start Claude Code as Administrator** — right-click terminal, "Run as Administrator"
-2. **Launch the game client** — open `dbvStart.exe`, wait at the login screen (do NOT log in yet)
-3. **Ask Claude to `start_bot`** — patches memory, starts the proxy (blocks up to 2 min waiting for login)
-4. **Log in through the game client** — the proxy intercepts the connection and extracts encryption keys
-5. **Control your character** — give Claude natural language commands or enable automated actions
+1. Check MCP with `get_status` and `list_actions` before connecting to the game.
+2. Launch `dbvStart.exe` at the login screen and review saved enabled actions.
+3. Request `start_bot` to patch memory and launch the local proxies and dashboard.
+4. Log in through the game client. The login wait runs in the background.
+5. Enable only the automated actions you want.
 
 ## Project Structure
 

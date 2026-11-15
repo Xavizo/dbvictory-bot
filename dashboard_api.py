@@ -14,6 +14,7 @@ import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote
+from dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
 
 log = logging.getLogger("dashboard_api")
 
@@ -25,6 +26,7 @@ ACTIONS_DIR = Path(__file__).parent / "actions"
 API_PORT = 8089
 WS_PORT = 8090
 WS_PUSH_INTERVAL = 0.1  # seconds between WebSocket pushes
+WS_AUTH_TIMEOUT = 5
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -35,11 +37,33 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── CORS ───────────────────────────────────────────────────────
     def _cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        if allowed_origin(self.headers.get("Origin")):
+            self.send_header("Access-Control-Allow-Origin", DASHBOARD_ORIGIN)
+        self.send_header("Vary", "Origin")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+    def _authorize(self, preflight=False):
+        # Validate Host as well as Origin to reject DNS-rebinding requests.
+        port = self.server.server_port
+        if self.headers.get("Host") not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+            self._json_response({"error": "invalid host"}, 403)
+            return False
+        origin = self.headers.get("Origin")
+        if (origin is not None or preflight) and not allowed_origin(origin):
+            self._json_response({"error": "origin not allowed"}, 403)
+            return False
+        if not preflight:
+            auth = self.headers.get("Authorization", "")
+            if not auth.startswith("Bearer ") or not valid_token(auth[7:]):
+                self._json_response({"error": "authentication required"}, 401)
+                return False
+        return True
 
     def do_OPTIONS(self):
+        if not self._authorize(preflight=True):
+            return
         self.send_response(204)
         self._cors_headers()
         self.end_headers()
@@ -61,6 +85,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── Routes ─────────────────────────────────────────────────────
     def do_GET(self):
+        if not self._authorize():
+            return
         if self.path == "/api/state":
             return self._handle_get_state()
         if self.path == "/api/recordings":
@@ -76,6 +102,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._json_response({"error": "not found"}, 404)
 
     def do_POST(self):
+        if not self._authorize():
+            return
         # POST /api/actions/{name}/toggle
         # POST /api/actions/{name}/restart
         parts = self.path.strip("/").split("/")
@@ -112,6 +140,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._json_response({"error": "not found"}, 404)
 
     def do_DELETE(self):
+        if not self._authorize():
+            return
         parts = self.path.strip("/").split("/")
         # DELETE /api/actions/{name}
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "actions":
@@ -575,6 +605,17 @@ _ws_clients: set = set()
 
 async def _ws_handler(websocket):
     """Handle a single WebSocket client connection."""
+    # No state is sent or broadcast until the first message authenticates.
+    try:
+        credentials = json.loads(await asyncio.wait_for(
+            websocket.recv(), timeout=WS_AUTH_TIMEOUT
+        ))
+        if not isinstance(credentials, dict) or not valid_token(credentials.get("token")):
+            await websocket.close(code=1008, reason="authentication required")
+            return
+    except Exception:
+        await websocket.close(code=1008, reason="authentication required")
+        return
     _ws_clients.add(websocket)
     log.info(f"WS client connected ({len(_ws_clients)} total)")
     try:
@@ -606,11 +647,18 @@ async def _ws_push_loop():
         await asyncio.sleep(WS_PUSH_INTERVAL)
 
 
+async def _create_ws_server():
+    import websockets
+    return await websockets.serve(
+        _ws_handler, "127.0.0.1", WS_PORT,
+        origins=[DASHBOARD_ORIGIN], max_size=4096, max_queue=4,
+    )
+
+
 async def _start_ws_server():
     """Start the WebSocket server on the asyncio event loop."""
     try:
-        import websockets
-        server = await websockets.serve(_ws_handler, "127.0.0.1", WS_PORT)
+        server = await _create_ws_server()
         log.info(f"WebSocket server listening on ws://127.0.0.1:{WS_PORT}")
         asyncio.create_task(_ws_push_loop())
         await server.wait_closed()
