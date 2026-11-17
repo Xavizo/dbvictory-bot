@@ -63,6 +63,7 @@ class OTProxy:
         self.on_game_disconnected = None
         self.on_raw_server_data = None  # Called with full decrypted bytes
         self._inject_queue = asyncio.Queue()
+        self.injections_paused = False
 
         # Stats
         self.packets_from_server = 0
@@ -191,6 +192,7 @@ class OTProxy:
             log.error(f"[{mode}] Error: {e}")
         finally:
             log.info(f"[{mode}] Game connection ended, cleaning up")
+            self.logged_in = False
             writer.close()
             try:
                 await writer.wait_closed()
@@ -579,6 +581,7 @@ class OTProxy:
             try:
                 decrypted = self._decrypt_game_packet(data)
                 if decrypted:
+                    if len(decrypted)==5 and decrypted[0]==0xA1:self._notify_target_marker(b'\xa1\0\0\0\0')
                     for cb in list(self._client_packet_callbacks):
                         try:
                             pr = PacketReader(decrypted)
@@ -592,32 +595,48 @@ class OTProxy:
 
         return data
 
-    async def inject_to_server(self, payload: bytes):
+    async def inject_to_server(self, payload: bytes, *, guard=None):
         """Inject a packet to the game server."""
+        if self.injections_paused:
+            return
         if not self.logged_in or self.xtea_keys is None:
             log.warning("Cannot inject: not logged in yet")
             return
-        await self._inject_queue.put(('server', payload))
+        await self._inject_queue.put(('server', payload, guard) if guard is not None else ('server', payload))
 
     async def inject_to_client(self, payload: bytes):
         """Inject a packet to the client."""
+        if self.injections_paused:
+            return
         if not self.logged_in or self.xtea_keys is None:
             log.warning("Cannot inject: not logged in yet")
             return
         await self._inject_queue.put(('client', payload))
 
+    def _notify_target_marker(self,payload):
+        if len(payload)!=5 or payload[0]!=0xA1:return
+        callback=getattr(self,'client_target_marker',None)
+        if callback is not None:
+            try:callback(int.from_bytes(payload[1:],'little'))
+            except Exception:log.warning('Visual marker unavailable; server attack unchanged.')
+
     async def _process_inject_queue(self):
         """Process queued packet injections."""
         while True:
-            target, payload = await self._inject_queue.get()
-
+            queued = await self._inject_queue.get()
+            target, payload = queued[:2]
+            if self.injections_paused:
+                continue
             try:
+                if len(queued)==3 and not queued[2]():
+                    continue  # Cancelled/expired navigation must not outlive its owner.
                 encrypted = self._encrypt_game_packet(payload)
                 packet = self._wrap_packet(encrypted)
 
                 if target == 'server' and self.server_writer:
                     self.server_writer.write(packet)
                     await self.server_writer.drain()
+                    self._notify_target_marker(payload)
                     log.info(f"Injected to server: opcode=0x{payload[0]:02X} len={len(payload)}B")
                 elif target == 'client' and self.client_writer:
                     self.client_writer.write(packet)
@@ -629,6 +648,22 @@ class OTProxy:
                                 f"client_writer={self.client_writer is not None}")
             except Exception as e:
                 log.error(f"Injection error: {e}")
+
+    def pause_injections(self):
+        """Latch off bot traffic without interrupting the user's relay connection."""
+        self.injections_paused = True
+        self._notify_target_marker(b'\xa1\0\0\0\0')
+        while not self._inject_queue.empty():
+            self._inject_queue.get_nowait()
+
+    async def send_emergency_stop(self):
+        """Only cancellation packets may bypass the emergency latch."""
+        from protocol import build_stop_walk_packet, build_attack_packet, build_follow_packet
+        self.pause_injections()
+        if self.logged_in and self.xtea_keys is not None and self.server_writer:
+            for payload in (build_stop_walk_packet(), build_attack_packet(0), build_follow_packet(0)):
+                self.server_writer.write(self._wrap_packet(self._encrypt_game_packet(payload)))
+            await asyncio.wait_for(self.server_writer.drain(), timeout=1)
 
     def get_proxy_rsa_public_key(self) -> str:
         """Get the proxy's RSA public key as a decimal string."""

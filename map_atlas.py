@@ -1,0 +1,617 @@
+"""Local passive atlas and bounded preview-only route planning. Never sends actions."""
+from collections import OrderedDict
+from route_identity import navigation_revision
+from contextlib import closing
+import heapq
+import hashlib
+import json
+from pathlib import Path
+import sqlite3
+import threading
+import time
+import uuid
+
+from transition_learning import position,gate_entry_record
+from cavebot_combat import validate_combat
+from navigation_tools import tool_kind
+
+CACHE_TILES=4096
+PAGE_SIZE=16
+CACHE_PAGES=128
+MAX_EXPANSIONS=40000
+MAX_ANCHORS=2048
+KINDS={"clear","blocked","avoid","no_ground"}
+
+
+def validate_labels(labels,count):
+    if labels is None:return ['']*count
+    if not isinstance(labels,list) or len(labels)!=count or any(not isinstance(v,str) or len(v)>60 or any(ord(c)<32 for c in v) for v in labels):
+        raise ValueError('Etykiety waypointów: do 60 znaków na punkt.')
+    return [v.strip() for v in labels]
+
+
+def validate_links(links,points):
+    if links is None:return []
+    if not isinstance(links,list) or len(links)>len(points):raise ValueError('Nieprawidłowa lista przejść.')
+    seen=set();result=[]
+    for link in links:
+        if not isinstance(link,dict) or set(link)!={'from_index','id'}:raise ValueError('Nieprawidłowe przejście.')
+        index,identity=link['from_index'],link['id']
+        if type(index)is not int or not 0<=index<len(points)-1 or index in seen or not isinstance(identity,str) or not 1<=len(identity)<=64:
+            raise ValueError('Nieprawidłowe przypisanie przejścia do waypointów.')
+        seen.add(index);result.append(dict(link))
+    return sorted(result,key=lambda r:r["from_index"])
+
+
+def transition_from_origin(row,origin,observations):
+    """A learned entry/exit has a stable ID; its latest approach is only a hint.
+
+    Bind explicitly selected/recorded uses and steps to an adjacent approach.
+    Known rope/dig functions and use-enters gates may keep an adjacent recorded
+    approach; unknown sequences and conflicting exit mechanisms are rejected.
+    """
+    if row.get('origin')==origin:return row
+    entry=row.get('entry');action=row.get('action')
+    kind=tool_kind(row);gate=gate_entry_record(row) if row.get('object_change') else None
+    if (row.get('evidence')!='observed' or not position(entry) or
+            (action not in {'step','use'} and not kind) or
+            (row.get('object_change') and gate is None) or row.get('reason')=='door_crossing'):return None
+    if origin[2]!=entry[2]:return None
+    delta=max(abs(origin[0]-entry[0]),abs(origin[1]-entry[1]))
+    if delta>1 or action=='step' and delta!=1 or action=='use' and row.get('item_id') is None:return None
+    if gate and delta!=1:return None
+    rebound={**row,'origin':list(origin)}
+    if kind and tool_kind(rebound)!=kind:return None
+    keys=('entry','action','item_id','prepared_item_id')+(() if kind else ('tool_id',))
+    exits={tuple(r['exit']) for r in observations if r.get('evidence')=='observed' and
+           all(r.get(k)==row.get(k) for k in keys) and (not kind or tool_kind(r)==kind)}
+    if exits!={tuple(row['exit'])}:return None
+    return rebound
+
+
+def trace_links(points,observations,trace):
+    """Authorize only transitions actually crossed in a recorded position trace."""
+    pairs={(tuple(a),tuple(b)) for a,b in zip(trace,trace[1:])}
+    triples={(tuple(a),tuple(b),tuple(c)) for a,b,c in zip(trace,trace[1:],trace[2:])}
+    result=[]
+    for index,(a,b) in enumerate(zip(points,points[1:])):
+        matches=[]
+        for source in observations:
+            row=gate_entry_record(source) if source.get('object_change') else source
+            if not row or not row.get('id') or row.get('evidence')!='observed' or row.get('exit')!=b:continue
+            row=transition_from_origin(row,a,observations)
+            if row is None:continue
+            direct=(tuple(a),tuple(b)) in pairs
+            door_step=row.get('action')=='step' and row.get('reason')=='door_crossing'
+            via=(row.get('action')=='use_then_step' or door_step) and (tuple(a),tuple(row['entry']),tuple(b)) in triples
+            if direct or via:matches.append(row)
+        identities={r['id'] for r in matches}
+        if len(identities)==1:result.append({'from_index':index,'id':matches[0]['id']})
+        elif matches:
+            # The same hole may have been recorded both already open and
+            # after digging. Prefer the verified conditional dig edge: its
+            # executor skips the tool when the prepared item is already there.
+            digs=[r for r in matches if r['action']=='use_with_then_step']
+            dig_signatures={(tuple(r['entry']),r.get('item_id'),r.get('prepared_item_id')) for r in digs}
+            if digs and len(dig_signatures)==1 and all(r.get('tool_id') in {3457,8899,8900} and r.get('prepared_item_id') for r in digs):
+                prepared=digs[0]['prepared_item_id']
+                if all(r in digs or r['action']=='step' and r['entry']==digs[0]['entry'] and
+                       (r.get('item_id')==prepared or r.get('item_id') is None and r.get('entry_items')==[prepared]) for r in matches):
+                    result.append({'from_index':index,'id':min(r['id'] for r in digs)});continue
+            # Loot and decorations can change entry_items and therefore the
+            # learner's record ID. They do not change a specifically used
+            # ladder. Preserve action, object, tool and exact endpoints.
+            signatures={(r.get('action'),tuple(r.get('entry') or []),r.get('item_id'),r.get('prepared_item_id'),
+                         None if r.get('action')=='use_with_then_step' or tool_kind(r)=='rope' else r.get('tool_id')) for r in matches}
+            action=matches[0]['action']
+            equivalent=(action in {'use','use_then_step'} and matches[0].get('item_id') is not None
+                        or action=='step' and bool(matches[0].get('entry_items')) and len({tuple(sorted(r.get('entry_items',[]))) for r in matches})==1
+                        or action=='use_with_then_step' and all(r.get('tool_id') in {3457,8899,8900} for r in matches)
+                        or action=='use_with' and all(tool_kind(r)=='rope' for r in matches))
+            if len(signatures)==1 and equivalent:result.append({'from_index':index,'id':sorted(identities)[0]})
+    return result
+
+
+def review_recorded_actions(recording,transitions):
+    """Match recorded world uses to confirmed, ordered transition occurrences.
+
+    A cast/use request alone is not success. Require the acknowledged position
+    trace after that request and a matching planned object/action. Nothing here
+    changes the recording, atlas or game state.
+    """
+    trace=recording.get('observed_path') or []
+    interactions=[];used=set();last_transition=-1
+    keys=('type','item_id','target_item_id','x','y','z','to_x','to_y','to_z','player_pos','t')
+    for wp in recording.get('waypoints',[]):
+        if wp.get('type') not in {'use_item','use_item_ex'} or (wp.get('x',65535)==65535 and wp.get('to_x',65535)==65535):continue
+        action={k:wp.get(k) for k in keys};action['matched_transition']=None
+        target=[wp.get(k) for k in (('x','y','z') if wp['type']=='use_item' else ('to_x','to_y','to_z'))]
+        for index,row in enumerate(transitions):
+            if index in used or index<last_transition or target!=row['entry'] or wp.get('player_pos')!=row['origin']:continue
+            if wp['type']=='use_item':
+                if row['action'] not in {'use','use_then_step'} or wp.get('item_id')!=row.get('item_id'):continue
+            else:
+                if row['action'] not in {'use_with','use_with_then_step'} or wp.get('item_id') not in (row.get('tool_ids') or [row.get('tool_id')]):continue
+                if wp.get('target_item_id') is not None and wp['target_item_id']!=row.get('item_id'):continue
+            confirmed=False
+            for start in range(len(trace)-1):
+                for length in (2,3):
+                    part=trace[start:start+length]
+                    if len(part)!=length or any(p.get('break_before') for p in part[1:]):continue
+                    positions=[p.get('pos') for p in part]
+                    expected=[row['origin'],row['exit']] if length==2 else [row['origin'],row['entry'],row['exit']]
+                    if positions!=expected or length==3 and row['action'] not in {'use_then_step','use_with_then_step'}:continue
+                    if all(type(t) in (int,float) for t in (part[0].get('t'),part[-1].get('t'),wp.get('t'))) and part[0]['t']<=wp['t']<=part[-1]['t']:
+                        confirmed=True;break
+                if confirmed:break
+            if confirmed:
+                action['matched_transition']=index;used.add(index);last_transition=index;break
+        interactions.append(action)
+    return interactions
+
+
+def near_loop_start(points):
+    """Only a local same-floor closing leg may be planned automatically."""
+    a,b=points[0],points[-1]
+    return a[2]==b[2] and max(abs(a[0]-b[0]),abs(a[1]-b[1]))<=2
+
+
+def remap_links(links,before,after):
+    """Keep authorizations only for the same consecutive anchors, in order."""
+    result=[];cursor=0
+    for link in validate_links(links,before):
+        i=link['from_index']
+        for j in range(cursor,len(after)-1):
+            if before[i:i+2]==after[j:j+2]:
+                result.append({'from_index':j,'id':link['id']});cursor=j+1;break
+    return result
+
+
+def navigation_edges(tiles,observations):
+    """Shared validated directed edges for preview, execution and the editor."""
+    edges={};ambiguous={};door_pairs={};normal_doors={};tool_exits={}
+    for r in observations:
+        kind=tool_kind(r)
+        if kind and r.get('evidence')=='observed':
+            key=(tuple(r['entry']),kind,r.get('item_id'),r.get('prepared_item_id'))
+            tool_exits.setdefault(key,set()).add(tuple(r['exit']))
+        change=r.get('object_change')
+        if change and r.get('evidence')=='observed' and r.get('entry'):
+            door_pairs.setdefault(tuple(r['entry']),set()).add((change['closed_id'],change['open_id']))
+            if change.get('kind')=='door' and change.get('behavior') in {'open_then_step','stays_open','manual_close'}:
+                normal_doors.setdefault(tuple(r['entry']),set()).add((change['closed_id'],change['open_id']))
+    for r in observations:
+        if r.get('object_change'):
+            r=gate_entry_record(r)
+            if r is None:continue
+        if r.get("evidence")!="observed" or not r.get("entry"):continue
+        kind=tool_kind(r)
+        if kind and len(tool_exits.get((tuple(r['entry']),kind,r.get('item_id'),r.get('prepared_item_id')),()))!=1:continue
+        origin,entry,dest=tuple(r["origin"]),tuple(r["entry"]),tuple(r["exit"])
+        if origin==dest:continue
+        tile=tiles.get(entry,{})
+        ids={i["id"] for i in tile.get("items",[])}
+        pairs=door_pairs.get(entry,set())
+        # A recorded walk through an open normal door remains valid when the
+        # door is later closed, but only with independently observed opening.
+        normal=normal_doors.get(entry,set())
+        if r['action']=='step' and r.get('reason')=='door_crossing' and len(normal)==len(pairs)==1 and normal==pairs:
+            closed,opened=next(iter(normal))
+            if opened in r.get('entry_items',[]):r={**r,'action':'use_then_step','item_id':closed,'automatic_door':True}
+        if r.get('object_change') and len(pairs)!=1:continue
+        opened_id=next(iter(pairs))[1] if len(pairs)==1 and next(iter(pairs))[0]==r.get('item_id') else None
+        if r.get("item_id") is not None:
+            if r["item_id"] not in ids and r.get("prepared_item_id") not in ids and not (r['action'] in {'use','use_then_step'} and opened_id in ids):continue
+        elif not r.get("entry_items") or not set(r["entry_items"])<=ids:continue
+        signature=(origin,entry,r["action"],tool_kind(r) or r.get("tool_id"),r.get("item_id"),r.get('prepared_item_id'))
+        ambiguous.setdefault(signature,set()).add(dest)
+        edges.setdefault(origin,[]).append((dest,{**r,'open_item_id':opened_id},signature))
+    edges={origin:[(dest,row) for dest,row,sig in values if len(ambiguous[sig])==1] for origin,values in edges.items()}
+    for values in edges.values():
+        for dest,row in values:
+            if row['action']=='use_with_then_step':
+                row['tool_ids']=sorted({r['tool_id'] for d,r in values if d==dest and r['action']==row['action']
+                    and r['entry']==row['entry'] and r.get('item_id')==row.get('item_id')
+                    and r.get('prepared_item_id')==row.get('prepared_item_id') and r.get('tool_id') in {3457,8899,8900}})
+            elif tool_kind(row)=='rope':
+                row['tool_ids']=sorted({r['tool_id'] for r in observations if r.get('evidence')=='observed'
+                    and tool_kind(r)=='rope' and r['entry']==row['entry'] and r['exit']==row['exit']
+                    and r.get('item_id')==row.get('item_id')})
+    # A normal door does not choose a destination or change floors. Once its
+    # opening mechanism is observed, known adjacent floor tiles define the
+    # available exits. This does not generalize to level gates or holes.
+    for entry,pairs in normal_doors.items():
+        if len(pairs)!=1 or pairs!=door_pairs.get(entry):continue
+        closed,opened=next(iter(pairs));tile=tiles.get(entry,{})
+        ids={i['id'] for i in tile.get('items',[])};features=tile.get('navigation',[])
+        if not ids.intersection({closed,opened}) or any(f['kind']=='level_gate' for f in features):continue
+        if not any(f['kind']=='door' for f in features):continue
+        x,y,z=entry;neighbors=[]
+        for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)):
+            p=(x+dx,y+dy,z);cell=tiles.get(p,{})
+            if cell.get('kind') in {'clear','avoid'} and all(f['kind'] in {'rope_spot','ladder'} for f in cell.get('navigation',[])):neighbors.append(p)
+        for origin in neighbors:
+            for dest in neighbors:
+                if origin==dest:continue
+                identity='door-'+hashlib.sha256(repr((origin,entry,dest,closed,opened)).encode()).hexdigest()[:20]
+                row=dict(id=identity,origin=list(origin),entry=list(entry),exit=list(dest),action='use_then_step',
+                         item_id=closed,open_item_id=opened,entry_items=[closed,opened],automatic_door=True,
+                         evidence='derived',direction='same_floor',count=1)
+                edges.setdefault(origin,[]).append((dest,row))
+    return edges
+
+
+def decode_tile(row):
+    x,y,z,raw,seen=row;cell=json.loads(raw)
+    if (not isinstance(cell,dict) or not position([x,y,z]) or
+        [cell.get(k) for k in ("x","y","z")]!=[x,y,z] or cell.get("kind") not in KINDS
+        or not isinstance(cell.get("items"),list) or len(cell["items"])>16):
+        raise ValueError("Nieprawidłowe pole w atlasie.")
+    return (x,y,z),{**cell,"seen_at":seen}
+
+
+class PagedTiles:
+    """Small read cache; the entire persistent atlas is addressable on demand."""
+    def __init__(self,path,recent=()):self.path=path;self.recent=dict(recent);self.pages=OrderedDict()
+    def get(self,key,default=None):
+        key=tuple(key)
+        if key in self.recent:return self.recent[key]
+        x,y,z=key;page=(x//PAGE_SIZE,y//PAGE_SIZE,z)
+        if page not in self.pages:
+            left,top=page[0]*PAGE_SIZE,page[1]*PAGE_SIZE
+            with closing(sqlite3.connect(self.path.as_uri()+"?mode=ro",uri=True,timeout=.5)) as db:
+                rows=db.execute("SELECT x,y,z,data,seen FROM tiles WHERE z=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?",
+                                (z,left,left+PAGE_SIZE-1,top,top+PAGE_SIZE-1)).fetchall()
+            self.pages[page]=dict(decode_tile(row) for row in rows)
+            if len(self.pages)>CACHE_PAGES:self.pages.popitem(last=False)
+        self.pages.move_to_end(page)
+        return self.pages[page].get(key,default)
+    def __contains__(self,key):return self.get(key) is not None
+    def __getitem__(self,key):
+        value=self.get(key)
+        if value is None:raise KeyError(key)
+        return value
+
+
+class MapAtlas:
+    def __init__(self,directory,scope):
+        self.scope=scope
+        self.path=Path(directory)/f"map_atlas-{scope[:16]}.sqlite3"
+        self.tiles=OrderedDict();self.total=0;self.floors=set();self.error=None;self.revision=0
+        self.lock=threading.RLock()
+        try:
+            self.path.parent.mkdir(parents=True,exist_ok=True)
+            with sqlite3.connect(self.path) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS meta (scope TEXT NOT NULL)")
+                row=db.execute("SELECT scope FROM meta").fetchone()
+                if row is None:db.execute("INSERT INTO meta VALUES (?)",(scope,))
+                elif row[0]!=scope:raise ValueError("scope")
+                db.execute("CREATE TABLE IF NOT EXISTS tiles (x INT,y INT,z INT,data TEXT,seen REAL,PRIMARY KEY(x,y,z))")
+                db.execute("CREATE INDEX IF NOT EXISTS tiles_floor_xy ON tiles(z,x,y)")
+                db.execute("CREATE INDEX IF NOT EXISTS tiles_seen ON tiles(seen DESC)")
+                db.execute("CREATE TABLE IF NOT EXISTS drafts (id TEXT PRIMARY KEY,name TEXT,points TEXT,updated REAL)")
+                if 'loop' not in {r[1] for r in db.execute('PRAGMA table_info(drafts)')}:
+                    db.execute('ALTER TABLE drafts ADD COLUMN loop INTEGER NOT NULL DEFAULT 1')
+                columns={r[1] for r in db.execute('PRAGMA table_info(drafts)')}
+                if 'combat' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN combat TEXT NOT NULL DEFAULT '{}'")
+                if 'deleted' not in columns:db.execute('ALTER TABLE drafts ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0')
+                if 'labels' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN labels TEXT")
+                if 'links' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN links TEXT NOT NULL DEFAULT '[]'")
+                self.total=db.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+                self.floors={r[0] for r in db.execute("SELECT DISTINCT z FROM tiles")}
+                rows=db.execute("SELECT x,y,z,data,seen FROM tiles ORDER BY seen DESC LIMIT ?",(CACHE_TILES,)).fetchall()
+                self.tiles=OrderedDict(decode_tile(row) for row in rows)
+        except (OSError,sqlite3.Error,ValueError,TypeError,KeyError):
+            self.tiles=OrderedDict();self.error="Atlas niedostępny lub nieprawidłowy. Plik nie zostanie nadpisany."
+
+    def observe(self,sample):
+        if sample.get("status")!="ready" or self.error:return
+        now=time.time();changed=[]
+        with self.lock:
+            for cell in sample["cells"]:
+                if cell["kind"] not in KINDS:continue
+                key=(cell["x"],cell["y"],cell["z"])
+                safe={k:cell[k] for k in ("x","y","z","kind")}
+                safe["items"]=[{"id":i["id"],"flags":list(i.get("flags",[])),"stack":i["stack"]} for i in cell["items"][:16]]
+                safe["navigation"]=[{k:f[k] for k in ("kind","item_id","stack","source","activation_hint","door_state_hint","behavior_hint",
+                    "direction_hint","observation_count","required_level","requirement_source","closing_policy","lock_hint","note") if k in f} for f in cell.get("navigation",[])[:16]]
+                safe["transitions"]=[{k:r[k] for k in ("id","exit","action","direction","count") if k in r} for r in cell.get("transitions",[])[:32]]
+                previous=self.tiles.get(key)
+                if previous and {k:v for k,v in previous.items() if k!="seen_at"}==safe and now-previous["seen_at"]<30:continue
+                self.tiles[key]={**safe,"seen_at":now};self.tiles.move_to_end(key)
+                if len(self.tiles)>CACHE_TILES:self.tiles.popitem(last=False)
+                changed.append((*key,json.dumps(safe,separators=(",",":")),now))
+            if not changed:return
+            self.revision+=1
+            try:
+                with sqlite3.connect(self.path,timeout=.2) as db:
+                    # Lift the old artificial file/page limit. Disk capacity remains the limit.
+                    db.execute("PRAGMA max_page_count=2147483646")
+                    added=db.executemany("INSERT OR IGNORE INTO tiles VALUES (?,?,?,?,?)",changed).rowcount
+                    db.executemany("UPDATE tiles SET data=?,seen=? WHERE x=? AND y=? AND z=?",
+                                   [(raw,seen,x,y,z) for x,y,z,raw,seen in changed])
+                self.total+=added;self.floors.update(row[2] for row in changed)
+            except (OSError,sqlite3.Error):self.error="Zapis atlasu wstrzymany; ostatni obraz pozostaje w pamięci."
+
+    def view(self,x,y,z,radius=20):
+        if not position([x,y,z]) or type(radius)is not int or not 5<=radius<=32:raise ValueError("Nieprawidłowy obszar atlasu.")
+        with self.lock:
+            try:
+                if self.error:raise ValueError(self.error)
+                with closing(sqlite3.connect(self.path.as_uri()+"?mode=ro",uri=True,timeout=.5)) as db:
+                    rows=db.execute("SELECT x,y,z,data,seen FROM tiles WHERE z=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?",
+                                    (z,x-radius,x+radius,y-radius,y+radius)).fetchall()
+                cells=[decode_tile(row)[1] for row in rows]
+            except (sqlite3.Error,ValueError,TypeError,KeyError):
+                cells=[c for (xx,yy,zz),c in self.tiles.items() if zz==z and abs(xx-x)<=radius and abs(yy-y)<=radius]
+                self.error=self.error or "Nie udało się odczytać fragmentu atlasu; dane pozostają na dysku."
+            return {"scope":self.scope,"center":[x,y,z],"radius":radius,"cells":cells,"floors":sorted(self.floors),
+                    "total":self.total,"limit":None,"revision":self.revision,"error":self.error,"passive":True}
+
+    def drafts(self,deleted=False):
+        if self.error:raise ValueError(self.error)
+        with self.lock,sqlite3.connect(self.path,timeout=.2) as db:
+            rows=[{"id":i,"name":name,"points":json.loads(points),"labels":validate_labels(json.loads(labels) if labels else None,len(json.loads(points))),"updated":updated,"loop":bool(loop),"links":validate_links(json.loads(links),json.loads(points)),"combat":validate_combat(json.loads(combat))}
+                    for i,name,points,updated,loop,combat,labels,links in db.execute("SELECT id,name,points,updated,loop,combat,labels,links FROM drafts WHERE deleted=? ORDER BY updated DESC LIMIT 100",(int(deleted),))]
+            return [{**row,'navigation_revision':navigation_revision(row)} for row in rows]
+
+    def save_draft(self,name,points,draft_id=None,loop=True,expected_updated=None,labels=None,links=None):
+        if self.error:raise ValueError(self.error)
+        if type(loop)is not bool:raise ValueError("Nieprawidłowa opcja pętli.")
+        if not isinstance(name,str) or not 1<=len(name.strip())<=80:raise ValueError("Nazwa szkicu: od 1 do 80 znaków.")
+        if not isinstance(points,list) or not 2<=len(points)<=MAX_ANCHORS or not all(position(p) for p in points):
+            raise ValueError("Szkic wymaga od 2 do 2048 punktów.")
+        labels=validate_labels(labels,len(points));links=validate_links(links,points)
+        with self.lock,sqlite3.connect(self.path,timeout=.2) as db:
+            if draft_id is not None and not db.execute("SELECT 1 FROM drafts WHERE id=? AND deleted=0",(draft_id,)).fetchone():
+                raise ValueError("Nie ma takiego szkicu w tym profilu.")
+            if draft_id is not None and expected_updated is not None:
+                if db.execute('SELECT updated FROM drafts WHERE id=?',(draft_id,)).fetchone()[0]!=expected_updated:
+                    raise ValueError('Szkic zmienił się w innym oknie. Wczytaj go ponownie przed zapisem; Twoje bieżące zmiany pozostają w edytorze.')
+            if draft_id is None and db.execute("SELECT COUNT(*) FROM drafts").fetchone()[0]>=100:
+                raise ValueError("Osiągnięto limit 100 szkiców; zapisz zmiany w istniejącym szkicu.")
+            draft_id=draft_id or uuid.uuid4().hex
+            db.execute("INSERT INTO drafts (id,name,points,updated,loop) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,points=excluded.points,updated=excluded.updated,loop=excluded.loop",(draft_id,name.strip(),json.dumps(points),time.time(),int(loop)))
+            db.execute('UPDATE drafts SET labels=?,links=? WHERE id=?',(json.dumps(labels),json.dumps(links),draft_id))
+        return draft_id
+
+    def change_draft(self,draft_id,operation,combat=None,loop=None):
+        if not isinstance(draft_id,str) or not draft_id or len(draft_id)>64:raise ValueError("Nieprawidłowy identyfikator szkicu.")
+        if operation not in {'delete','restore','configure','set_loop'}:raise ValueError('Nieznana operacja szkicu.')
+        with self.lock,sqlite3.connect(self.path,timeout=.2) as db:
+            row=db.execute('SELECT deleted FROM drafts WHERE id=?',(draft_id,)).fetchone()
+            if not row or bool(row[0])!=(operation=='restore'):raise ValueError('Nie ma takiego szkicu w tym profilu.')
+            if operation=='set_loop':
+                if type(loop)is not bool:raise ValueError('Nieprawidłowa opcja pętli.')
+                db.execute('UPDATE drafts SET loop=?,updated=? WHERE id=?',(int(loop),time.time(),draft_id))
+            elif operation=='configure':
+                config=validate_combat(combat)
+                if type(loop)is not bool:raise ValueError('Nieprawidłowa opcja pętli.')
+                db.execute('UPDATE drafts SET combat=?,loop=?,updated=? WHERE id=?',(json.dumps(config),int(loop),time.time(),draft_id))
+            else:db.execute('UPDATE drafts SET deleted=?,updated=? WHERE id=?',(int(operation=='delete'),time.time(),draft_id))
+
+    def route_transitions(self,observations,cells):
+        if self.error:return []
+        visible={(c['x'],c['y'],c['z']) for c in cells}
+        with self.lock:tiles=PagedTiles(self.path,self.tiles)
+        edges=navigation_edges(tiles,[r for r in observations if tuple(r.get('entry') or ()) in visible])
+        return [{k:r.get(k) for k in ('id','origin','entry','exit','action','item_id','tool_id','prepared_item_id','tool_ids','count')}
+                for values in edges.values() for dest,r in values
+                if tuple(r['entry']) in visible and tuple(r['origin']) in tiles and dest in tiles and r['action']!='unknown']
+
+    def plan(self,points,observations,original=None,*,loop=False,links=None):
+        if self.error:raise ValueError(self.error)
+        if not isinstance(points,list) or not 2<=len(points)<=MAX_ANCHORS or not all(position(p) for p in points):
+            raise ValueError("Wskaż od 2 do 2048 punktów trasy.")
+        anchors=points
+        links=validate_links(links,points);selected={r['from_index']:r['id'] for r in links}
+        # Keep drawn anchors intact. A nearby endpoint may close via verified
+        # ordinary terrain; distant returns still require explicit waypoints.
+        loop_closed=points[-1]==points[0]
+        with self.lock:tiles=PagedTiles(self.path,self.tiles)
+        # IDs identify an entry/exit mechanism, not its most recently observed
+        # approach. Preserve saved links after learning a different approach.
+        bound=list(observations)
+        for link in links:
+            a,b=points[link['from_index']:link['from_index']+2]
+            for source in observations:
+                if source.get('id')!=link['id'] or source.get('exit')!=b:continue
+                row=transition_from_origin(source,a,observations)
+                if row is not None and row['origin']!=source['origin']:bound.append(row)
+        edges=navigation_edges(tiles,bound)
+        automatic_entries={tuple(r["entry"]) for values in edges.values() for _,r in values if r["action"] in {"step","use_with_then_step"}}
+        def walkable(p):
+            tile=tiles.get(p,{})
+            # Transitions, doors and teleports require explicit observed edges.
+            # not_pathable is a preference (fields), not the not_walkable flag.
+            # Doors remain explicit transitions even when last seen open.
+            return p not in automatic_entries and tile.get("kind") in {"clear","avoid"} and all(f["kind"] in {"rope_spot","ladder"} for f in tile.get("navigation",[]))
+        path=[list(points[0])];actions=[];gaps=[];legs=[];expanded=0
+        pairs=list(zip(points,points[1:]))
+        for index,(a,b) in enumerate(pairs):
+            closing=index==len(points)-1
+            a,b=tuple(a),tuple(b)
+            entered_gate=index>0 and any(tuple(t['exit'])==a and tuple(t['entry'])==a and t['action']=='use' for t in actions)
+            open_door=tiles.get(a,{}).get('kind')=='clear' and any(f.get('door_state_hint')=='open' for f in tiles.get(a,{}).get('navigation',[]))
+            if a not in tiles or (not walkable(a) and a not in edges and not entered_gate and not open_door):
+                gaps.append({"segment":index,"from":list(a),"to":list(b),"reason":"Punkt początkowy jest nieznany lub zablokowany"})
+                break
+            if index in selected:
+                choices=[r for dest,r in edges.get(a,[]) if dest==b and r.get('id')==selected[index]]
+                if len(choices)!=1:
+                    gaps.append({'segment':index,'from':list(a),'to':list(b),'reason':'Wybrane przejście nie pasuje do aktualnych danych; wybierz je ponownie.'});break
+                row=choices[0];start=len(path)-1;path.append(list(b))
+                actions.append({k:row.get(k) for k in ('origin','entry','exit','action','item_id','tool_id','prepared_item_id','tool_ids','entry_items','id','open_item_id')})
+                legs.append({'from_index':index,'to_index':index+1,'start':start,'end':len(path)-1});continue
+            if a[2]!=b[2]:
+                gaps.append({'segment':index,'from':list(a),'to':list(b),'reason':'Dodaj jawne przejście między piętrami z menu mapy.'});break
+            queue=[(0,a)];cost={a:0};parent={};found=False
+            while queue and expanded<MAX_EXPANSIONS:
+                distance,p=heapq.heappop(queue)
+                if distance!=cost[p]:continue
+                expanded+=1
+                if p==b:found=True;break
+                neighbors=[]
+                for dx,dy in ((1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)):
+                    q=(p[0]+dx,p[1]+dy,p[2])
+                    # DBVictory acknowledges diagonal steps even between two
+                    # blocked side tiles. Only the destination is entered.
+                    if walkable(q):
+                        neighbors.append((q,(14 if dx and dy else 10)+(50 if tiles[q]["kind"]=="avoid" else 0),None))
+                # Known normal doors can open on the route. Floor changes,
+                # holes and teleports still require explicit selected edges.
+                for q,row in edges.get(p,[]):
+                    if row.get('automatic_door') and q[2]==a[2] and walkable(q):
+                        neighbors.append((q,20,row))
+                for q,step,row in neighbors:
+                    new=distance+step
+                    if new<cost.get(q,float("inf")):
+                        cost[q]=new;parent[q]=(p,row);heapq.heappush(queue,(new,q))
+            if not found:
+                target=tiles.get(b)
+                reason=('Osiągnięto limit wyszukiwania drogi.' if expanded>=MAX_EXPANSIONS else
+                        'Pole docelowe nie zostało zapisane w atlasie.' if target is None else
+                        'Pole docelowe jest przejściem; brakuje przypisanego wejścia i wyjścia.' if target.get('navigation') and not walkable(b) else
+                        'Pole docelowe jest zapisane jako zablokowane.' if not walkable(b) else
+                        'Znane pola atlasu nie tworzą dostępnej drogi między tymi punktami.')
+                gaps.append({"segment":index,"from":list(a),"to":list(b),"reason":reason})
+                break
+            segment=[];used=[];p=b
+            while p!=a:
+                segment.append(list(p));p,row=parent[p]
+                if row:used.append({k:row.get(k) for k in ("origin","entry","exit","action","item_id","tool_id","prepared_item_id","tool_ids","entry_items","id","open_item_id")})
+            start=len(path)-1
+            path.extend(reversed(segment));actions.extend(reversed(used))
+            legs.append({"from_index":index,"to_index":0 if closing else index+1,"start":start,"end":len(path)-1,**({'closing':True} if closing else {})})
+            if closing:loop_closed=True
+        return_start=len(path)-1;return_mode='closed' if loop_closed else None;return_error=None
+        if loop and not gaps and not loop_closed:
+            back=self.plan([anchors[-1],anchors[0]],observations)
+            if back['complete'] and not back['avoid_tiles']:
+                return_mode='direct';return_parts=[(len(anchors)-1,0,back)]
+            else:
+                # Retrace waypoint order only with independently learned inverse
+                # transitions. A downward hole never implies a rope/ladder back.
+                return_mode='reverse';return_parts=[]
+                for i in range(len(anchors)-2,-1,-1):
+                    start,end=anchors[i+1],anchors[i]
+                    part=self.plan([start,end],observations)
+                    if not part['complete'] or part['avoid_tiles']:
+                        part=None
+                        if i in selected:
+                            options=[]
+                            for source in observations:
+                                row=gate_entry_record(source) if source.get('object_change') else source
+                                if not row or row.get('evidence')!='observed' or not row.get('id'):continue
+                                origin,dest=row['origin'],row['exit']
+                                if origin[2]!=start[2] or dest[2]!=end[2]:continue
+                                if max(abs(origin[n]-start[n]) for n in (0,1))>2 or max(abs(dest[n]-end[n]) for n in (0,1))>2:continue
+                                route=[start]
+                                if origin!=start:route.append(origin)
+                                link={'from_index':len(route)-1,'id':row['id']};route.append(dest)
+                                if dest!=end:route.append(end)
+                                candidate=self.plan(route,observations,links=[link])
+                                if candidate['complete'] and not candidate['avoid_tiles']:options.append(candidate)
+                            if options:part=min(options,key=lambda p:len(p['path']))
+                        if part is None:
+                            return_error=f'Brak znanego powrotu z {tuple(start)} do {tuple(end)}. Powrót przez przejście musi być osobno zaobserwowany.'
+                            break
+                    return_parts.append((i+1,i,part))
+            if return_error is None:
+                for a_index,b_index,part in return_parts:
+                    offset=len(path)-1;path.extend(part['path'][1:]);actions.extend(part['transitions'])
+                    legs.append(dict(from_index=a_index,to_index=b_index,start=offset,end=len(path)-1,returning=True,closing=b_index==0))
+                loop_closed=True
+            else:
+                return_mode='unavailable'
+                gaps.append({'segment':len(anchors)-1,'from':anchors[-1],'to':anchors[0],'reason':return_error})
+        avoided=[p for p in path if tiles.get(tuple(p),{}).get("kind")=="avoid"]
+        return {"points":anchors,"original":original or anchors,"path":path,"transitions":actions,"gaps":gaps,"loop":loop,"loop_closed":loop_closed,
+                "legs":legs,"avoid_tiles":avoided,"requires_action_review":bool(avoided),
+                "complete":not gaps,"links":links,"expanded":expanded,"preview_only":True,"scope":self.scope,
+                "return_mode":return_mode,"return_start":return_start,"return_error":return_error,
+                "warning":"Plan po historycznie znanych polach. Stan drzwi i przeszkód wymaga ponownego odczytu przed ruchem."}
+
+
+def recording_points(recording, observations=(), *, optimize=True, keep_positions=()):
+    """Keep floor changes, interactions and shape; simplify only small walk wiggles."""
+    original=[];mandatory=set()
+    def add(p,required=False):
+        if not position(p):return
+        if not original or original[-1]!=list(p):original.append(list(p))
+        if required:mandatory.add(len(original)-1)
+    waypoints=recording.get("waypoints",[])
+    trace=recording.get("observed_path")
+    if len(waypoints)>20000 or (isinstance(trace,list) and len(trace)>20000):
+        raise ValueError("Nagranie jest za długie do jednego planu; podziel je na odcinki.")
+    def interaction(wp):
+        return wp.get("type") in {"use_item","use_item_ex"} and (wp.get("x",65535)!=65535 or wp.get("to_x",65535)!=65535)
+    if isinstance(trace,list):
+        # Version 2: only observed positions establish the route. Requested
+        # destinations and lagging floor packets must not invent visited tiles.
+        times=sorted(wp.get("t",0) for wp in waypoints if interaction(wp))
+        next_action=0
+        for index,snapshot in enumerate(trace):
+            until=trace[index+1].get("t",float("inf")) if index+1<len(trace) else float("inf")
+            required=bool(snapshot.get("break_before"))
+            while next_action<len(times) and times[next_action]<until:
+                required=True;next_action+=1
+            add(snapshot.get("pos"),required)
+    else:
+        add(recording.get("start_position"),True)
+        # Older recordings contain requested steps. Replace an entrance with
+        # its approach only when an observed edge independently matches all
+        # three positions. Otherwise retain the gap for manual review.
+        previous=None
+        for wp in waypoints:
+            kind=wp.get("type")
+            if interaction(wp):add(wp.get("player_pos",wp.get("pos")),True)
+            if kind=="floor_change" and previous and previous.get("type")=="walk":
+                matches=any(r.get("evidence")=="observed" and not r.get("object_change")
+                    and r.get("origin")==previous.get("player_pos") and r.get("entry")==previous.get("pos")
+                    and r.get("exit")==wp.get("pos") for r in observations)
+                if matches and original and original[-1]==previous.get("pos"):
+                    mandatory.discard(len(original)-1);original.pop()
+                    add(previous.get("player_pos"),True)
+            if kind in {"walk","position","floor_change"}:add(wp.get("pos"),kind=="floor_change")
+            if kind not in {"tile_transform_item"}:previous=wp
+    # A normal door can be sampled while the player stands inside it. Its
+    # confirmed origin->exit edge owns that intermediate door tile.
+    for r in observations:
+        if r.get('object_change'):
+            r=gate_entry_record(r)
+            if r is None:continue
+        if r.get('evidence')!='observed' or not r.get('entry'):continue
+        if r.get('action')=='use_then_step' or (r.get('action')=='step' and r.get('reason')=='door_crossing'):
+            for i in range(len(original)-3,-1,-1):
+                if original[i:i+3]==[r['origin'],r['entry'],r['exit']]:
+                    original.pop(i+1)
+                    mandatory={n if n<=i else n-1 for n in mandatory if n!=i+1}
+        for i in range(len(original)-1):
+            if original[i+1]==r['exit'] and transition_from_origin(r,original[i],observations) is not None:mandatory.update((i,i+1))
+    if len(original)<2:raise ValueError("Nagranie nie zawiera wystarczającej drogi.")
+    mandatory.update((0,len(original)-1))
+    pinned={tuple(p) for p in keep_positions}
+    mandatory.update(i for i,p in enumerate(original) if tuple(p) in pinned)
+    for i in range(1,len(original)):
+        if original[i][2]!=original[i-1][2]:mandatory.update((i-1,i))
+    keep=set(mandatory)
+    pending=[]
+    def simplify(a,b):
+        if b-a<=1:return
+        ax,ay,_=original[a];bx,by,_=original[b];length=(bx-ax)**2+(by-ay)**2
+        far=-1;distance=-1
+        for i in range(a+1,b):
+            x,y,_=original[i];t=max(0,min(1,((x-ax)*(bx-ax)+(y-ay)*(by-ay))/length)) if length else 0
+            delta=(x-ax-t*(bx-ax))**2+(y-ay-t*(by-ay))**2
+            if delta>distance:far,distance=i,delta
+        if distance>(2.25 if optimize else 0):
+            keep.add(far);pending.extend(((a,far),(far,b)))
+    ordered=sorted(mandatory)
+    pending.extend(zip(ordered,ordered[1:]))
+    while pending:
+        simplify(*pending.pop())
+        if len(keep)>MAX_ANCHORS:raise ValueError("Nagranie jest za długie do jednego planu; podziel je na odcinki.")
+    points=[original[i] for i in sorted(keep)]
+    if len(points)>MAX_ANCHORS:raise ValueError("Nagranie jest za długie do jednego planu; podziel je na odcinki.")
+    return points,original

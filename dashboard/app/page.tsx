@@ -1,9 +1,15 @@
 "use client";
 
 import { useBot } from "@/lib/useBot";
+import SpeedUpPanel from "./SpeedUpPanel";
+import ProfilePicker from "./ProfilePicker";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   toggleAction,
+  emergencyStop,
+  pauseAutomation,
+  resumeAutomation,
+  unlockAutomation,
   deleteAction,
   updateActionConfig,
   startRecording,
@@ -28,6 +34,12 @@ import type {
   RecordingInfo,
 } from "@/lib/api";
 import dynamic from "next/dynamic";
+import CavebotWorkspace from "./CavebotWorkspace";
+import AutomationStrip, {actionTitles} from "./AutomationStrip";
+import PotionPanel from "./PotionPanel";
+import PassiveMapPanel from "./PassiveMapPanel";
+import TransitionLearningPanel from "./TransitionLearningPanel";
+import DashboardChrome, { type WorkspaceView } from "./DashboardChrome";
 
 const SenzuChart = dynamic(() => import("./SenzuChart"), { ssr: false });
 
@@ -73,111 +85,42 @@ function Toggle({
   );
 }
 
-function ActionCard({
-  action,
-  onRefresh,
-}: {
-  action: ActionInfo;
-  onRefresh: () => void;
-}) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [showLogs, setShowLogs] = useState(false);
-
-  const handleToggle = async (enabled: boolean) => {
-    await toggleAction(action.name, enabled);
-    onRefresh();
-  };
-
-  const handleDelete = async () => {
-    await deleteAction(action.name);
-    setConfirmDelete(false);
-    onRefresh();
-  };
-
-  const hasLogs = action.logs && action.logs.length > 0;
-
-  return (
-    <div className="rounded-lg border border-gray-700 bg-gray-800 p-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {/* Running indicator */}
-          {action.running ? (
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
-          ) : action.completed && !action.running ? (
-            <svg className="h-3.5 w-3.5 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-            </svg>
-          ) : (
-            <span className="h-2.5 w-2.5 rounded-full bg-gray-600" />
-          )}
-          <div>
-            <h3 className="font-semibold text-sm">{action.name}</h3>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {action.description || "No description"}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {hasLogs && (
-            <button
-              onClick={() => setShowLogs(!showLogs)}
-              className={`rounded px-2 py-1 text-xs transition-colors ${
-                showLogs
-                  ? "text-blue-300 bg-blue-900/30"
-                  : "text-gray-300 hover:bg-gray-700"
-              }`}
-              title="Toggle logs"
-            >
-              Logs
-            </button>
-          )}
-          <button
-            onClick={() => setConfirmDelete(true)}
-            className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-900/30 transition-colors"
-            title="Remove action"
-          >
-            Remove
-          </button>
-          <Toggle enabled={action.enabled} onChange={handleToggle} />
-        </div>
-      </div>
-
-      {/* Logs panel */}
-      {showLogs && hasLogs && (
-        <div className="mt-3 rounded-md bg-gray-900 border border-gray-700 p-3 max-h-48 overflow-y-auto">
-          <div className="space-y-0.5 font-mono text-xs text-gray-300">
-            {action.logs!.map((line, i) => (
-              <div key={i} className={`whitespace-pre-wrap ${line?.includes("[SUCCESS]") ? "text-emerald-400" : line?.includes("[FAILURE]") ? "text-red-400" : ""}`}>{line}</div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Delete confirmation */}
-      {confirmDelete && (
-        <div className="mt-3 flex items-center justify-between rounded-md border border-red-800 bg-red-950/40 px-3 py-2">
-          <span className="text-xs text-red-300">
-            Delete <strong>{action.name}</strong>? This cannot be undone.
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setConfirmDelete(false)}
-              className="rounded px-2 py-1 text-xs text-gray-300 hover:bg-gray-700 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleDelete}
-              className="rounded px-2 py-1 text-xs text-white bg-red-600 hover:bg-red-500 transition-colors"
-            >
-              Confirm
-            </button>
-          </div>
-        </div>
-      )}
+function ActionCard({action,onRefresh}:{action:ActionInfo;onRefresh:()=>void}) {
+  const [confirmDelete,setConfirmDelete]=useState(false);
+  const [expanded,setExpanded]=useState(false);
+  const [actionError,setActionError]=useState("");
+  const [busy,setBusy]=useState(false);
+  const title=actionTitles[action.name] ?? action.name;
+  async function change(enabled:boolean) {
+    setBusy(true);setActionError("");
+    try {await toggleAction(action.name,enabled);onRefresh();}
+    catch(err) {setActionError(err instanceof Error ? err.message : String(err));}
+    finally {setBusy(false);}
+  }
+  async function remove() {
+    setBusy(true);setActionError("");
+    try {await deleteAction(action.name);setConfirmDelete(false);onRefresh();}
+    catch(err) {setActionError(err instanceof Error ? err.message : String(err));}
+    finally {setBusy(false);}
+  }
+  return <article className={`action-card ${action.running ? "is-running" : ""}`}>
+    <div className="action-line">
+      <button role="switch" aria-checked={action.enabled} aria-label={`${title}: włącz lub wyłącz`} disabled={busy} onClick={()=>change(!action.enabled)} className={`action-switch ${action.enabled ? "on" : ""}`}><span/></button>
+      <h3>{title}</h3>
+      <span className={`action-state ${action.running ? "running" : action.enabled ? "enabled" : ""}`}>
+        <i className="status-dot"/>{action.running ? "Pracuje" : action.completed ? "Zakończona" : action.enabled ? "Czeka na grę" : "Wyłączona"}
+      </span>
+      <button className="action-expand" aria-expanded={expanded} aria-controls={`action-details-${action.name}`} onClick={()=>setExpanded(!expanded)}>{expanded ? "Ukryj ▴" : "Opis / logi ▾"}</button>
     </div>
-  );
+    {actionError && <p role="alert" className="px-3 pb-2 text-xs text-red-300">{actionError}</p>}
+    <div hidden={!expanded} id={`action-details-${action.name}`} className="action-details">
+      <p className="action-description">{action.description || "Brak opisu tej akcji."}</p>
+      <p className="mb-2 font-mono text-xs text-gray-500">{action.name}</p>
+      {action.logs?.length ? <div className="action-log">{action.logs.map((line,i)=><div key={i}>{line}</div>)}</div> : <p className="text-xs text-gray-500">Brak zdarzeń w tej sesji.</p>}
+      <button disabled={busy} className="mt-3 text-xs text-red-300" onClick={()=>setConfirmDelete(true)}>Usuń plik akcji…</button>
+      {confirmDelete && <div className="mt-3 rounded-lg border border-red-900 bg-red-950/30 p-3 text-xs"><p>Usunąć <strong>{action.name}</strong>? Tej operacji nie można cofnąć.</p><div className="mt-3 flex gap-3"><button onClick={()=>setConfirmDelete(false)} className="secondary-button">Anuluj</button><button disabled={busy} onClick={remove} className="rounded bg-red-700 px-3 py-2">Usuń akcję</button></div></div>}
+    </div>
+  </article>;
 }
 
 function StatBar({
@@ -581,8 +524,9 @@ function CavebotPanel({
   };
 
   const handlePlay = async (name: string) => {
-    await playRecording(name, loopEnabled);
-    onRefresh();
+    setPlaybackError("");
+    try { await playRecording(name, loopEnabled); onRefresh(); }
+    catch (err) { setPlaybackError(err instanceof Error ? err.message : String(err)); }
   };
 
   const handleStopPlayback = async () => {
@@ -698,43 +642,121 @@ function CavebotPanel({
   };
 
   const hasPlaybackLogs = playback.logs && playback.logs.length > 0;
+  const [playbackError, setPlaybackError] = useState("");
 
   return (
-    <div className="mb-8">
-      <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
-        Cavebot
-      </h2>
-      <div className="rounded-lg border border-gray-700 bg-gray-800 p-4 space-y-4">
+    <div className="cavebot-panel">
+      {playbackError && <p role="alert" className="mb-3 text-sm text-red-300">{playbackError}</p>}
+      <div className="cavebot-tools">
+        {/* Recording Controls */}
+        {!recording.active ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={recName}
+              onChange={(e) => setRecName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleStartRecording()}
+              placeholder="Nazwa nowej trasy…"
+              aria-label="Nazwa nowej trasy"
+              className="flex-1 rounded-md bg-gray-900 border border-gray-600 px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:border-red-500 focus:outline-none"
+            />
+            <button
+              onClick={handleStartRecording}
+              disabled={!recName.trim() || playback.active}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Nagrywaj
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-sm text-red-300">
+                Nagrywanie &quot;{recording.name}&quot;
+              </span>
+              <span className="text-xs text-gray-500">
+                ({recording.waypoint_count} pkt)
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleStopRecording}
+                className="rounded-md bg-gray-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-500 transition-colors"
+              >
+                Zatrzymaj i zapisz
+              </button>
+              <button
+                onClick={handleDiscard}
+                className="rounded-md border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700 transition-colors"
+              >
+                Odrzuć nagranie
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Loop checkbox + Targeting strategy */}
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={loopEnabled}
+              onChange={(e) => setLoopEnabled(e.target.checked)}
+              className="rounded border-gray-600 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
+            />
+            <span className="text-xs text-gray-400">Powtarzaj trasę</span>
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">Wybór celu:</span>
+            <select
+              value={cavebotConfig?.targeting_strategy ?? "none"}
+              onChange={async (e) => {
+                await updateActionConfig("cavebot", {
+                  targeting_strategy: e.target.value,
+                });
+                onRefresh();
+              }}
+              className="rounded-md bg-gray-900 border border-gray-600 px-2 py-1 text-xs text-gray-200 focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="none">Brak</option>
+              <option value="pause_on_monster">Pauza przy potworze</option>
+              <option value="lure">Lure</option>
+              <option value="lure4">Lure 4</option>
+            </select>
+          </div>
+        </div>
+
         {/* Saved Recordings */}
         {recordings.length > 0 && (
           <div>
             <h3 className="text-xs font-medium text-gray-400 mb-2">
-              Saved Recordings
+              Zapisane trasy <span className="text-gray-500">· {recordings.length}</span>
             </h3>
-            <div className="space-y-1">
+            <div className="recording-list">
               {recordings.map((r) => (
                 <div key={r.name}>
-                  <div className="flex items-center justify-between rounded-md bg-gray-900 px-3 py-2">
-                    <div className="flex items-center gap-2">
+                  <div className="recording-row flex items-center justify-between rounded-md bg-gray-900 px-3 py-2">
+                    <div className="recording-name flex items-center gap-2">
                       <span className="text-sm text-gray-200">{r.name}</span>
                       <span className="text-xs text-gray-500">
-                        ({r.count} wp)
+                        ({r.count} pkt)
                       </span>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="recording-actions flex items-center gap-1">
                       {confirmDelete === r.name ? (
                         <>
                           <button
                             onClick={() => setConfirmDelete(null)}
                             className="rounded px-2 py-1 text-xs text-gray-300 hover:bg-gray-700 transition-colors"
                           >
-                            Cancel
+                            Anuluj
                           </button>
                           <button
                             onClick={() => handleDelete(r.name)}
                             className="rounded px-2 py-1 text-xs text-white bg-red-600 hover:bg-red-500 transition-colors"
                           >
-                            Confirm
+                            Potwierdź usunięcie
                           </button>
                         </>
                       ) : (
@@ -747,7 +769,7 @@ function CavebotPanel({
                                 : "text-gray-300 hover:bg-gray-700"
                             }`}
                           >
-                            Preview
+                            Punkty
                           </button>
                           <button
                             onClick={() => handleMapPreview(r.name)}
@@ -757,7 +779,7 @@ function CavebotPanel({
                                 : "text-gray-300 hover:bg-gray-700"
                             }`}
                           >
-                            Map
+                            Mapa
                           </button>
                           <button
                             onClick={() => handleCompare(r.name)}
@@ -767,21 +789,21 @@ function CavebotPanel({
                                 : "text-gray-300 hover:bg-gray-700"
                             }`}
                           >
-                            Compare
+                            Porównaj
                           </button>
                           <button
                             onClick={() => handlePlay(r.name)}
                             disabled={playback.active || recording.active}
                             className="rounded px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-900/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                           >
-                            Play
+                            Odtwórz
                           </button>
                           <button
                             onClick={() => setConfirmDelete(r.name)}
                             disabled={playback.active && playback.recording_name === r.name}
                             className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-40"
                           >
-                            Del
+                            Usuń
                           </button>
                         </>
                       )}
@@ -789,7 +811,7 @@ function CavebotPanel({
                   </div>
                   {/* Last playback stats */}
                   {r.last_stats && (
-                    <div className="px-3 pb-1 pt-0.5 text-[10px] text-gray-500 tabular-nums">
+                    <div className="recording-stats px-3 pb-1 pt-0.5 text-[10px] text-gray-500 tabular-nums">
                       XP/h: <span className="text-emerald-400">{r.last_stats.xp_per_hour >= 1_000_000 ? `${(r.last_stats.xp_per_hour / 1_000_000).toFixed(1)}M` : r.last_stats.xp_per_hour >= 1_000 ? `${(r.last_stats.xp_per_hour / 1_000).toFixed(1)}K` : r.last_stats.xp_per_hour}</span>
                       {" | "}Senzu/h: <span className="text-amber-400">{r.last_stats.senzu_per_hour}</span>
                       {" | "}Kills/h: <span className="text-gray-400">{r.last_stats.kills_per_hour >= 1_000 ? `${(r.last_stats.kills_per_hour / 1_000).toFixed(1)}K` : r.last_stats.kills_per_hour}</span>
@@ -805,7 +827,7 @@ function CavebotPanel({
                               onClick={() => handleRemoveWaypoint(r.name, i)}
                               disabled={removingIndex !== null}
                               className={`shrink-0 mt-0.5 rounded px-1 text-xs text-red-500 hover:bg-red-900/30 transition-all ${removingIndex !== null ? "opacity-30 cursor-not-allowed" : "opacity-0 group-hover:opacity-100"}`}
-                              title="Remove waypoint"
+                              title="Usuń punkt trasy"
                             >
                               X
                             </button>
@@ -855,8 +877,8 @@ function CavebotPanel({
                       >
                         {/* Header row */}
                         <div className="flex sticky top-0 bg-gray-950 z-10 border-b border-gray-700">
-                          <div className="flex-[3] px-2 py-1 text-[10px] text-blue-400 font-semibold uppercase tracking-wider">Recording</div>
-                          <div className="flex-[2] px-2 py-1 text-[10px] text-purple-400 font-semibold uppercase tracking-wider border-l border-gray-700">Actions Map</div>
+                          <div className="flex-[3] px-2 py-1 text-[10px] text-blue-400 font-semibold uppercase tracking-wider">Nagranie</div>
+                          <div className="flex-[2] px-2 py-1 text-[10px] text-purple-400 font-semibold uppercase tracking-wider border-l border-gray-700">Mapa czynności</div>
                         </div>
                         {segments.map((seg, si) => {
                           const wps = compareWaypoints.slice(seg.wpStart, seg.wpEnd + 1);
@@ -906,89 +928,11 @@ function CavebotPanel({
           </div>
         )}
 
-        {/* Recording Controls */}
-        {!recording.active ? (
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={recName}
-              onChange={(e) => setRecName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleStartRecording()}
-              placeholder="Recording name..."
-              className="flex-1 rounded-md bg-gray-900 border border-gray-600 px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:border-red-500 focus:outline-none"
-            />
-            <button
-              onClick={handleStartRecording}
-              disabled={!recName.trim() || playback.active}
-              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Record
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-sm text-red-300">
-                Recording &quot;{recording.name}&quot;
-              </span>
-              <span className="text-xs text-gray-500">
-                ({recording.waypoint_count} waypoints)
-              </span>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleStopRecording}
-                className="rounded-md bg-gray-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-500 transition-colors"
-              >
-                Stop &amp; Save
-              </button>
-              <button
-                onClick={handleDiscard}
-                className="rounded-md border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700 transition-colors"
-              >
-                Discard
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Loop checkbox + Targeting strategy */}
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={loopEnabled}
-              onChange={(e) => setLoopEnabled(e.target.checked)}
-              className="rounded border-gray-600 bg-gray-900 text-emerald-500 focus:ring-emerald-500"
-            />
-            <span className="text-xs text-gray-400">Loop playback</span>
-          </label>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">Targeting:</span>
-            <select
-              value={cavebotConfig?.targeting_strategy ?? "none"}
-              onChange={async (e) => {
-                await updateActionConfig("cavebot", {
-                  targeting_strategy: e.target.value,
-                });
-                onRefresh();
-              }}
-              className="rounded-md bg-gray-900 border border-gray-600 px-2 py-1 text-xs text-gray-200 focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="none">None</option>
-              <option value="pause_on_monster">Pause on Monster</option>
-              <option value="lure">Lure</option>
-              <option value="lure4">Lure 4</option>
-            </select>
-          </div>
-        </div>
-
         {/* Live Preview (recording) */}
         {recording.active && recording.waypoints.length > 0 && (
           <div>
             <h3 className="text-xs font-medium text-gray-400 mb-1">
-              Live Preview
+              Podgląd nagrywania
             </h3>
             <div className="rounded-md bg-gray-900 border border-gray-700 p-2 max-h-40 overflow-y-auto">
               <div className="space-y-0.5">
@@ -1011,13 +955,13 @@ function CavebotPanel({
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
                 <span className="text-sm text-emerald-300">
-                  Playing &quot;{playback.recording_name}&quot;
+                  Odtwarzanie &quot;{playback.recording_name}&quot;
                 </span>
                 <span className="text-xs text-gray-400 tabular-nums">
                   [{playback.index + 1}/{playback.total}]
                 </span>
                 {playback.loop && (
-                  <span className="text-xs text-emerald-500">Loop: ON</span>
+                  <span className="text-xs text-emerald-500">Pętla włączona</span>
                 )}
               </div>
               <button
@@ -1136,110 +1080,64 @@ function CavebotPanel({
   );
 }
 
+import BarrierBandPanel from "./BarrierBandPanel";
+
 export default function Dashboard() {
   const { state, mcpConnected, refresh, dashboardError } = useBot();
-  const [showProxySeq, setShowProxySeq] = useState(false);
 
-  return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
-      {dashboardError && <p role="alert" className="mb-4 rounded bg-amber-950 p-3 text-amber-200">{dashboardError}</p>}
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold tracking-tight">DBVictory Bot</h1>
-        <div className="flex items-center gap-2">
-          <StatusBadge label="MCP" connected={mcpConnected} />
-          <StatusBadge label="Game Login" connected={state?.connected ?? false} />
-          <StatusBadge label="DLL Injected" connected={state?.dll_injected ?? false} />
-          <StatusBadge label="DLL Bridge" connected={state?.dll_bridge_connected ?? false} />
-          {state?.proxy_sequence && (
-            <button
-              onClick={() => setShowProxySeq(!showProxySeq)}
-              className={`text-xs px-1.5 py-1 rounded transition-colors ${
-                showProxySeq ? "text-blue-300 bg-blue-900/30" : "text-gray-500 hover:text-gray-300"
-              }`}
-              title="Proxy connection details"
-            >
-              {showProxySeq ? "\u25B2" : "\u25BC"}
-            </button>
-          )}
-        </div>
+  const [view,setView]=useState<WorkspaceView>("cavebot");
+  const [showProxySeq,setShowProxySeq]=useState(false);
+
+  const [controlError,setControlError]=useState("");
+  const [controlBusy,setControlBusy]=useState(false);
+  const [search,setSearch]=useState("");
+  const [actionFilter,setActionFilter]=useState("all");
+  async function setEmergency(unlock=false) {
+    setControlBusy(true);setControlError("");
+    try {await (unlock ? unlockAutomation() : emergencyStop());await refresh();}
+    catch(err) {setControlError(err instanceof Error ? err.message : String(err));}
+    finally {setControlBusy(false);}
+  }
+  async function setPause() {
+    setControlBusy(true);setControlError("");
+    try {await (state?.automation_paused ? resumeAutomation() : pauseAutomation());await refresh();}
+    catch(e){setControlError(e instanceof Error ? e.message:String(e));}finally{setControlBusy(false);}
+  }
+  const potion=state?.actions.find(a=>a.name==="auto_potions");
+
+  const actions=(state?.actions ?? []).filter(a=>!["auto_potions","auto_barrier_band","speed_up","cavebot","cavebot2","adaptive_cavebot"].includes(a.name));
+  const shownActions=actions.filter(a=>(`${actionTitles[a.name] ?? ""} ${a.name} ${a.description}`).toLowerCase().includes(search.toLowerCase()) &&
+    (actionFilter==="all" || (actionFilter==="running" ? a.running : actionFilter==="enabled" ? a.enabled : !a.enabled)));
+
+  return <DashboardChrome view={view} onView={setView} state={state} mcpConnected={mcpConnected} busy={controlBusy}
+    onStop={()=>setEmergency()} onUnlock={()=>setEmergency(true)} onResume={setPause} onRefresh={refresh} error={controlError || dashboardError || ""}>
+    <section hidden={view!=="cavebot"} aria-label="Konfiguracja Cavebota V2"><CavebotWorkspace state={state} active={view==="cavebot"} onRefresh={refresh}/></section>
+    <section hidden={view!=="automation"} aria-label="Widok automatyki">
+      <AutomationStrip state={state} connected={mcpConnected} onRefresh={refresh} onSettings={()=>setView("automation")} onPause={setPause} busy={controlBusy}/>
+      {potion ? <PotionPanel action={potion} diagnostics={state?.potion_diagnostics} paused={state?.automation_paused ?? false} onRefresh={refresh}
+        legacyActions={actions.filter(a=>["auto_senzu","mana_recovery_20","mana_recovery_70"].includes(a.name))}/> :
+        <div className="empty-panel"><h2>Czekam na ustawienia reguł</h2><p>Pojawią się po połączeniu panelu z botem.</p></div>}
+      <BarrierBandPanel state={state} onRefresh={refresh}/>
+      <SpeedUpPanel state={state} onRefresh={refresh}/>
+      <ProfilePicker kind="bot" state={state} onRefresh={refresh}/>
+      <details className="additional-actions"><summary>Pozostałe akcje <span>{actions.filter(a=>a.enabled).length} włączonych</span></summary>
+      <div className="action-toolbar"><label className="search-field"><span aria-hidden="true">⌕</span><input aria-label="Szukaj akcji" placeholder="Szukaj akcji…" value={search} onChange={e=>setSearch(e.target.value)}/></label>
+        <select aria-label="Filtr akcji" value={actionFilter} onChange={e=>setActionFilter(e.target.value)}><option value="all">Wszystkie akcje</option><option value="running">Działające</option><option value="enabled">Włączone</option><option value="off">Wyłączone</option></select>
+        <span>{shownActions.length} z {actions.length}</span>
       </div>
-
-      {/* Proxy Connection Sequence */}
-      {showProxySeq && state?.proxy_sequence && (
-        <ConnectionSequence seq={state.proxy_sequence} onClose={() => setShowProxySeq(false)} />
-      )}
-
-      {/* Packet Stats */}
-      {state && (
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className={`rounded-lg border p-3 ${
-            (state.packets_from_server ?? 0) > 0
-              ? "border-emerald-700 bg-emerald-950/30"
-              : "border-red-700 bg-red-950/30"
-          }`}>
-            <p className="text-xs text-gray-400 uppercase tracking-wider">
-              Server Packets
-            </p>
-            <p className={`text-xl font-bold mt-1 tabular-nums ${
-              (state.packets_from_server ?? 0) > 0 ? "text-emerald-300" : "text-red-400"
-            }`}>
-              {(state.packets_from_server ?? 0).toLocaleString()}
-            </p>
-          </div>
-          <div className={`rounded-lg border p-3 ${
-            (state.packets_from_client ?? 0) > 0
-              ? "border-emerald-700 bg-emerald-950/30"
-              : "border-red-700 bg-red-950/30"
-          }`}>
-            <p className="text-xs text-gray-400 uppercase tracking-wider">
-              Client Packets
-            </p>
-            <p className={`text-xl font-bold mt-1 tabular-nums ${
-              (state.packets_from_client ?? 0) > 0 ? "text-emerald-300" : "text-red-400"
-            }`}>
-              {(state.packets_from_client ?? 0).toLocaleString()}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Player Stats */}
-      {state?.connected && state.player && (
-        <PlayerStats player={state.player} />
-      )}
-
-      {/* Creatures */}
-      {state?.connected && (
-        <CreatureList creatures={state.creatures ?? []} />
-      )}
-
-      {/* Cavebot */}
-      {state?.connected && state.cavebot && (
-        <CavebotPanel
-          cavebot={state.cavebot}
-          cavebotConfig={state.actions.find((a) => a.name === "cavebot")?.config}
-          onRefresh={refresh}
-        />
-      )}
-
-      {/* Actions */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          Actions
-        </h2>
-        {state && state.actions.length > 0 ? (
-          <div className="space-y-3">
-            {state.actions.map((a) => (
-              <ActionCard key={a.name} action={a} onRefresh={refresh} />
-            ))}
-          </div>
-        ) : state ? (
-          <p className="text-sm text-gray-500">
-            No actions found. Add .py files to the actions/ folder.
-          </p>
-        ) : null}
+      <div className="action-grid">{shownActions.map(a=><ActionCard key={a.name} action={a} onRefresh={refresh}/>)}</div>
+      {!shownActions.length && <div className="empty-panel"><h2>{state ? "Brak pasujących akcji" : "Czekam na połączenie z botem"}</h2><p>{state ? "Zmień filtr lub wpisaną nazwę." : "Lista pojawi się po otrzymaniu danych."}</p></div>}
+      </details>
+    </section>
+    <section hidden={view!=="diagnostics"} aria-label="Widok diagnostyki" className="space-y-5">
+      <details className="learned-drawer"><summary>Wyuczone przejścia</summary><TransitionLearningPanel map={state?.passive_map}/></details>
+      <div className="diagnostic-grid">
+        {[{label:"Panel / MCP",ok:mcpConnected},{label:"Sesja gry",ok:state?.connected},{label:"DLL w kliencie",ok:state?.dll_injected},{label:"Połączenie mostu",ok:state?.dll_bridge_connected}].map(s=><div key={s.label} className="diagnostic-card"><span>{s.label}</span><strong className={s.ok ? "text-emerald-300" : "text-gray-400"}>{s.ok ? "Aktywne" : "Nieaktywne"}</strong></div>)}
       </div>
-    </div>
-  );
+      <div className="diagnostic-grid two-columns"><div className="diagnostic-card"><span>Pakiety z serwera</span><strong>{(state?.packets_from_server ?? 0).toLocaleString("pl-PL")}</strong></div><div className="diagnostic-card"><span>Pakiety z klienta</span><strong>{(state?.packets_from_client ?? 0).toLocaleString("pl-PL")}</strong></div></div>
+      {state?.proxy_sequence && <div className="diagnostic-section"><button className="secondary-button" onClick={()=>setShowProxySeq(!showProxySeq)}>{showProxySeq ? "Ukryj etapy połączenia" : "Pokaż etapy połączenia"}</button>{showProxySeq && <ConnectionSequence seq={state.proxy_sequence} onClose={()=>setShowProxySeq(false)}/>}</div>}
+      {state?.connected && state.player && <PlayerStats player={state.player}/>}
+      <div className="diagnostic-section"><div className="section-caption"><div><h2>Lista stworzeń z DLL</h2><p>To osobny odczyt diagnostyczny. Typy postaci na pasywnej mapie pochodzą z pól klienta.</p></div></div><CreatureList creatures={state?.creatures ?? []}/></div>
+    </section>
+  </DashboardChrome>;
 }

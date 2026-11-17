@@ -13,8 +13,9 @@ import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit, parse_qs
 from dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
+from cavebot_combat import validate_combat
 
 log = logging.getLogger("dashboard_api")
 
@@ -70,9 +71,23 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── Helpers ────────────────────────────────────────────────────
     def _json_response(self, data: dict, status: int = 200):
+        # HTTP/1.0 closes after the response. On Windows, closing with unread
+        # request data can reset TCP before the peer receives our 4xx. Drain
+        # only small rejected bodies, with a strict time bound, never parse them.
+        if status>=400 and not getattr(self,"_body_read",False):
+            previous_timeout=self.connection.gettimeout()
+            try:
+                length=int(self.headers.get("Content-Length",0))
+                if 0<length<=16384:
+                    self.connection.settimeout(.2)
+                    self.rfile.read(length)
+                    self._body_read=True
+            except (OSError,ValueError):pass
+            finally:self.connection.settimeout(previous_timeout)
         body = json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length",str(len(body)))
         self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
@@ -81,16 +96,32 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         if length == 0:
             return {}
-        return json.loads(self.rfile.read(length))
+        body=self.rfile.read(length)
+        self._body_read=True
+        return json.loads(body)
 
     # ── Routes ─────────────────────────────────────────────────────
     def do_GET(self):
         if not self._authorize():
             return
+        if self.path == "/api/profiles":
+            store=getattr(_state,"profile_store",None)
+            if store is None:return self._json_response({"error":"Profile niedostępne."},503)
+            try:return self._json_response({"profiles":store.list()})
+            except (OSError,ValueError):return self._json_response({"error":"Nie można odczytać profili."},500)
+        if self.path == "/api/alerts":
+            center = getattr(_state, "alert_center", None)
+            if center is None:
+                return self._json_response({"error": "Alerty niedostępne."}, 503)
+            return self._json_response(center.snapshot())
         if self.path == "/api/state":
             return self._handle_get_state()
         if self.path == "/api/recordings":
             return self._handle_list_recordings()
+        if urlsplit(self.path).path == "/api/map/atlas":
+            return self._handle_atlas()
+        if self.path == "/api/map/drafts":
+            return self._handle_map_drafts()
         # GET /api/cavebot/actions_map/<name>
         parts = self.path.strip("/").split("/")
         if (len(parts) == 4 and parts[0] == "api" and parts[1] == "cavebot"
@@ -104,6 +135,67 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._authorize():
             return
+        if self.path == "/api/profiles":
+            try:
+                if not 0<int(self.headers.get("Content-Length",0))<=65536:raise ValueError("Profil jest zbyt duży.")
+                body=self._read_body()
+                if not isinstance(body,dict):raise ValueError("Nieprawidłowy profil.")
+                return self._run_control("_async_profiles",body)
+            except (ValueError,TypeError) as exc:return self._json_response({"error":str(exc)},400)
+        if self.path == "/api/alerts":
+            try:
+                if not 0 < int(self.headers.get("Content-Length", 0)) <= 4096:
+                    raise ValueError("Nieprawidłowy rozmiar ustawień alertów.")
+                body = self._read_body()
+                if not isinstance(body, dict) or body.get("command") not in {"configure", "acknowledge"}:
+                    raise ValueError("Nieprawidłowe polecenie alertów.")
+                return self._run_control("_async_alerts", body["command"], body)
+            except (ValueError, TypeError) as exc:
+                return self._json_response({"error": str(exc)}, 400)
+        if self.path == "/api/emergency-stop":
+            return self._run_control("_async_emergency_stop")
+        if self.path == "/api/automation/unlock":
+            return self._run_control("_async_unlock_automation")
+        if self.path == "/api/automation/pause":
+            return self._run_control("_async_pause_automation")
+        if self.path == "/api/automation/resume":
+            return self._run_control("_async_resume_automation")
+        if self.path == "/api/adaptive/preview":
+            try:
+                if not 0<int(self.headers.get("Content-Length",0))<=16384:raise ValueError('Nieprawidłowy rozmiar konfiguracji.')
+                body=self._read_body()
+                if not isinstance(body,dict):raise ValueError('Nieprawidłowa konfiguracja.')
+                return self._run_control('_async_adaptive_preview',body.get('combat'))
+            except (ValueError,TypeError) as exc:return self._json_response({'error':str(exc)},400)
+        if self.path == "/api/adaptive/control":
+            try:
+                if not 0<int(self.headers.get("Content-Length",0))<=16384:raise ValueError("Nieprawidłowy rozmiar żądania.")
+                body=self._read_body()
+                if not isinstance(body,dict) or body.get("command") not in {"start","start_combat","configure_combat","pause","resume","stop","discard_progress"}:raise ValueError("Nieznane polecenie V2.")
+                return self._run_control("_async_adaptive_control",body["command"],body)
+            except (ValueError,TypeError) as exc:return self._json_response({"error":str(exc)},400)
+        if self.path == "/api/potions/diagnostics":
+            body = self._read_body()
+            if type(body.get("enabled")) is not bool:
+                return self._json_response({"error": "enabled must be boolean"}, 400)
+            return self._run_control("_async_potion_diagnostics", body["enabled"])
+        if self.path == "/api/map/annotation":
+            monitor=getattr(_state,"passive_map_monitor",None)
+            if monitor is None:
+                return self._json_response({"error":"Podgląd mapy nie jest uruchomiony."},503)
+            try:
+                if not 0<int(self.headers.get("Content-Length",0))<=4096:
+                    return self._json_response({"error":"Opis pola ma nieprawidłowy rozmiar."},400)
+                message=monitor.save_annotation(self._read_body())
+                return self._json_response({"ok":True,"message":message})
+            except ValueError as exc:
+                return self._json_response({"error":str(exc)},400)
+            except Exception:
+                return self._json_response({"error":"Nie udało się zapisać opisu pola."},500)
+        if self.path == "/api/map/plan":
+            return self._handle_map_plan()
+        if self.path == "/api/map/drafts":
+            return self._handle_map_drafts(save=True)
         # POST /api/actions/{name}/toggle
         # POST /api/actions/{name}/restart
         parts = self.path.strip("/").split("/")
@@ -156,6 +248,19 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_delete_recording(name)
         self._json_response({"error": "not found"}, 404)
 
+    def _run_control(self, method, *args):
+        if _main_loop is None or _state is None:
+            return self._json_response({"error": "bot not started"}, 503)
+        future = asyncio.run_coroutine_threadsafe(getattr(sys.modules["__main__"], method)(*args), _main_loop)
+        try:
+            result = future.result(timeout=5)
+            self._json_response({"ok": True, "message": result})
+        except ValueError as exc:
+            self._json_response({"error": str(exc)}, 400)
+        except Exception as exc:
+            future.cancel()
+            self._json_response({"error": str(exc)}, 500)
+
     # ── GET /api/state ─────────────────────────────────────────────
     def _handle_get_state(self):
         body = _build_state_json().encode()
@@ -164,6 +269,104 @@ class _Handler(BaseHTTPRequestHandler):
         self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_atlas(self):
+        monitor=getattr(_state,"passive_map_monitor",None)
+        atlas=getattr(monitor,"atlas",None)
+        if atlas is None:return self._json_response({"error":"Atlas czeka na pierwszy odczyt mapy."},503)
+        try:
+            query=parse_qs(urlsplit(self.path).query)
+            if set(query)-{"x","y","z","radius"}:raise ValueError()
+            values={k:int(query[k][0]) for k in ("x","y","z")}
+            view=atlas.view(**values,radius=int(query.get("radius",[20])[0]))
+            # Enrich old cached cells using current profile evidence, still
+            # matching the last seen item IDs. This never claims a fresh state.
+            if getattr(monitor,"annotations",None):view["cells"]=monitor.annotations.annotate(view["cells"])
+            if getattr(monitor,"learner",None):view["cells"]=monitor.learner.annotate(view["cells"])
+            rows=list(monitor.learner.records.values()) if getattr(monitor,'learner',None) else []
+            view['route_transitions']=atlas.route_transitions(rows,view['cells'])
+            return self._json_response(view)
+        except (ValueError,KeyError,TypeError):return self._json_response({"error":"Nieprawidłowy obszar atlasu."},400)
+
+    def _handle_map_drafts(self,save=False):
+        atlas=getattr(getattr(_state,"passive_map_monitor",None),"atlas",None)
+        if atlas is None:return self._json_response({"error":"Atlas nie jest jeszcze dostępny."},503)
+        try:
+            draft_id=None
+            if save:
+                if not 0<int(self.headers.get("Content-Length",0))<=131072:raise ValueError("Szkic jest zbyt duży.")
+                body=self._read_body()
+                if body.get("scope")!=atlas.scope:raise ValueError("Profil atlasu się zmienił. Odśwież widok.")
+                controller=getattr(_state,'adaptive_cavebot',None)
+                if controller and controller.status in {'running','paused','ready'} and getattr(controller,'draft_id',None)==body.get('id'):
+                    raise ValueError('Zatrzymaj V2 przed zmianą lub usunięciem wykonywanej trasy.')
+                if body.get('operation') in {'delete','restore','configure','set_loop'}:
+                    atlas.change_draft(body.get('id'),body['operation'],body.get('combat'),body.get('loop'))
+                elif body.get('operation') is not None:raise ValueError('Nieznana operacja szkicu.')
+                else:draft_id=atlas.save_draft(body.get("name"),body.get("points"),body.get("id"),body.get("loop",True),body.get('expected_updated'),body.get('labels'),body.get('links'))
+            return self._json_response({"scope":atlas.scope,"drafts":atlas.drafts(),"trash":atlas.drafts(deleted=True),"saved_id":draft_id})
+        except (ValueError,TypeError,KeyError) as exc:return self._json_response({"error":str(exc)},400)
+        except Exception:return self._json_response({"error":"Nie udało się odczytać lub zapisać szkiców."},500)
+
+    def _handle_map_plan(self):
+        monitor=getattr(_state,"passive_map_monitor",None)
+        atlas=getattr(monitor,"atlas",None)
+        if atlas is None:return self._json_response({"error":"Atlas nie jest jeszcze dostępny."},503)
+        try:
+            if not 0<int(self.headers.get("Content-Length",0))<=131072:raise ValueError("Plan jest zbyt duży.")
+            body=self._read_body()
+            if body.get("scope")!=atlas.scope:raise ValueError("Profil atlasu się zmienił. Odśwież widok.")
+            original=None;interactions=[];recording=None;links=body.get("links")
+            observations=list(monitor.learner.records.values()) if monitor.learner else []
+            if "recording" in body:
+                import cavebot
+                from map_atlas import recording_points
+                name=body["recording"]
+                if name not in {r["name"] for r in cavebot.list_recordings()}:raise ValueError("Nie ma takiego nagrania.")
+                recording=cavebot.load_recording(name)
+                optimize=body.get('optimize',False)
+                if type(optimize) is not bool:raise ValueError('Nieprawidłowa opcja optymalizacji.')
+                points,original=recording_points(recording,observations,optimize=optimize)
+                from map_atlas import trace_links
+                trace=[row['pos'] for row in recording.get('observed_path',[]) if not row.get('break_before')]
+                links=trace_links(points,observations,trace) if not any(row.get('break_before') for row in recording.get('observed_path',[])) else []
+            else:points=body.get("points")
+            loop=body.get("loop",False)
+            if type(loop)is not bool:raise ValueError("Nieprawidłowa opcja pętli.")
+            result=atlas.plan(points,observations,original,loop=loop,links=links)
+            if recording is None and body.get('optimize') is True:
+                from map_atlas import recording_points
+                from map_atlas import validate_labels,remap_links
+                labels=validate_labels(body.get('labels'),len(points))
+                if not result['complete']:result['optimization_blocked']=True
+                else:
+                    optimized,original=recording_points({'observed_path':[{'pos':p} for p in result['path'][:result['return_start']+1]]},observations,optimize=True,keep_positions=[p for p,label in zip(points,labels) if label]+[p for link in result['links'] for p in points[link['from_index']:link['from_index']+2]])
+                    result=atlas.plan(optimized,observations,original,loop=loop,links=remap_links(result['links'],points,optimized))
+            if recording is not None:
+                from map_atlas import review_recorded_actions
+                interactions=review_recorded_actions(recording,result['transitions'])
+            result["recorded_actions"]=interactions[:128]
+            result["unmatched_recorded_actions"]=sum(r['matched_transition'] is None for r in interactions)
+            if result["avoid_tiles"]:
+                result["warning"]+=" Trasa obejmuje pola oznaczone jako omijane; mogą mieć efekty terenowe."
+            if recording is not None:
+                observed=isinstance(recording.get("observed_path"),list)
+                result["recording_source"]=recording.get("position_source","commands") if observed else "commands"
+                if not observed:
+                    result["warning"]+=" Starsze nagranie zapisuje żądania ruchu, nie potwierdzony ślad postaci."
+                    result["requires_action_review"]=True
+                if recording.get("trace_limited") or any(p.get("break_before") for p in recording.get("observed_path",[])):
+                    result["warning"]+=" Odczyt pozycji ma przerwy lub osiągnął limit zapisu; sprawdź przebieg."
+                    result["requires_action_review"]=True
+            result['requires_path_review']=bool(result.get('requires_action_review'))
+            if result['unmatched_recorded_actions']:
+                result["warning"]+=f" Nie przypisano {result['unmatched_recorded_actions']} czynności do potwierdzonych przejść; sprawdź je w szczegółach."
+                result["requires_action_review"]=True
+            return self._json_response(result)
+        except (ValueError,TypeError,KeyError) as exc:return self._json_response({"error":str(exc)},400)
+        except Exception:
+            log.exception("Preview planning failed")
+            return self._json_response({"error":"Nie udało się przygotować planu."},500)
 
     # ── POST /api/actions/{name}/toggle ────────────────────────────
     def _handle_toggle(self, name: str):
@@ -184,6 +387,8 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             result = future.result(timeout=5)
             log.info(f"Toggle result: {result}")
+            if result.startswith("Error:"):
+                return self._json_response({"error": result}, 409)
             self._json_response({"ok": True, "message": result})
         except Exception as e:
             log.error(f"Toggle error: {e}")
@@ -212,20 +417,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not body:
             self._json_response({"error": "empty body"}, 400)
             return
-        main_mod = sys.modules.get("__main__")
-        if main_mod is None or _state is None:
-            self._json_response({"error": "bot not started"}, 503)
-            return
-        save_settings = getattr(main_mod, "save_settings", None)
-        if save_settings is None:
-            self._json_response({"error": "save_settings not available"}, 500)
-            return
-        actions = _state.settings.setdefault("actions", {})
-        cfg = actions.setdefault(name, {})
-        cfg.update(body)
-        save_settings(_state.settings)
-        log.info(f"Action config updated: {name} -> {body}")
-        self._json_response({"ok": True, "config": cfg})
+        return self._run_control("_async_update_action_config", name, body)
 
     # ── DELETE /api/actions/{name} ───────────────────────────────
     def _handle_delete(self, name: str):
@@ -303,6 +495,8 @@ class _Handler(BaseHTTPRequestHandler):
         )
         try:
             result = future.result(timeout=5)
+            if not result.startswith("Playing recording"):
+                return self._json_response({"error": result}, 409)
             self._json_response({"ok": True, "message": result})
         except Exception as e:
             self._json_response({"error": str(e)}, 500)
@@ -569,6 +763,9 @@ def _build_state_json() -> str:
             "name": st.recording_name,
             "waypoint_count": len(rec_waypoints),
             "waypoints": rec_waypoints[-20:],
+            "position_count": len(getattr(st,"recording_observed_path",[])) if st.recording_active else 0,
+            "observed_path": list(getattr(st,"recording_observed_path",[])[-512:]) if st.recording_active else [],
+            "trace_limited": getattr(st,"recording_trace_limited",False) if st.recording_active else False,
         },
         "playback": {
             "active": st.playback_active,
@@ -586,6 +783,16 @@ def _build_state_json() -> str:
 
     return json.dumps({
         "connected": st.connected,
+        "pause_hotkey": st.pause_hotkey.snapshot() if getattr(st,"pause_hotkey",None) else None,
+        "profile_selection": {"combat":st.settings.get("selected_combat_profile"),"bot":st.settings.get("selected_bot_profile"),"routes":st.settings.get("route_combat_profiles",{})},
+        "alerts": st.alert_center.snapshot() if getattr(st, "alert_center", None) else None,
+        "passive_map": st.passive_map_monitor.snapshot() if getattr(st, "passive_map_monitor", None) else {
+            "status": "waiting", "message": "Czekam na uruchomienie pasywnego podglądu.", "cells": [], "passive": True, "stale": True},
+        "automation_paused": st.automation_paused,
+        "automation_pause_kind": st.automation_pause_kind,
+        "potion_diagnostics": st.potion_diagnostics.snapshot(),
+        "barrier_band": st.band_scheduler.snapshot(),
+        "speed_up": st.speed_scheduler.snapshot() if getattr(st,"speed_scheduler",None) else None,
         "actions": actions,
         "packets_from_server": pkt_server,
         "packets_from_client": pkt_client,
@@ -594,6 +801,8 @@ def _build_state_json() -> str:
         "dll_injected": dll_injected,
         "dll_bridge_connected": dll_bridge_running and dll_injected,
         "cavebot": cavebot_state,
+        "combat_profile": validate_combat(st.settings.get("combat_profile")),
+        "adaptive_cavebot": {**(st.adaptive_cavebot.snapshot() if getattr(st,"adaptive_cavebot",None) else {"status":"idle","reason":"Wybierz zapisany szkic."}),"preparing":getattr(st,"_adaptive_prepare_token",None) is not None},
         "proxy_sequence": proxy_sequence,
     })
 
@@ -675,6 +884,20 @@ def start_api(loop: asyncio.AbstractEventLoop, bot_state) -> None:
     global _main_loop, _state, _started
     _main_loop = loop
     _state = bot_state
+
+    if getattr(bot_state, "passive_map_monitor", None) is None:
+        from passive_map import PassiveMapMonitor
+        bot_state.passive_map_monitor = PassiveMapMonitor(bot_state)
+        bot_state.passive_map_monitor.start()
+
+    if not getattr(bot_state,"pause_hotkey",None):
+        from pause_hotkey import PauseHotkey
+        bot_state.pause_hotkey=PauseHotkey(loop,lambda:getattr(sys.modules["__main__"],"_async_toggle_all")())
+        bot_state.pause_hotkey.start()
+
+    if not getattr(bot_state, "_alert_monitor_future", None):
+        from game_alerts import monitor_alerts
+        bot_state._alert_monitor_future = asyncio.run_coroutine_threadsafe(monitor_alerts(bot_state), loop)
 
     if _started:
         return

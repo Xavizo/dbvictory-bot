@@ -82,17 +82,18 @@ def _dbg(msg):
         f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
 
 
-def _inject_fresh_dll():
+def _inject_fresh_dll(*, observer=False):
     """Copy the DLL to a unique temp name and inject it.
 
     LoadLibraryA keys on filename — re-injecting the same filename just bumps
     the refcount without calling DllMain.  A unique copy forces a fresh load.
     """
-    dll_source = _find_latest_dll()
-    if not dll_source:
+    dll_source = os.path.join(PROJECT_ROOT, "dll", "dbvobserver_marker_20261117.dll") if observer else _find_latest_dll()
+    if not dll_source or not os.path.isfile(dll_source):
         raise FileNotFoundError("No dbvbot*.dll found in dll/ directory")
     dll_dir = os.path.dirname(dll_source)
-    temp_name = f"dbvbot_live_{int(time.time())}.dll"
+    prefix = "dbvobserver" if observer else "dbvbot"
+    temp_name = f"{prefix}_live_{time.time_ns()}.dll"
     temp_path = os.path.join(dll_dir, temp_name)
     shutil.copy2(dll_source, temp_path)
     _dbg(f"injecting fresh DLL copy: {temp_name}")
@@ -102,6 +103,9 @@ def _inject_fresh_dll():
 
 def _send_init_commands(bridge, player_id):
     """Send full init sequence to DLL: offsets, init, hooks, scans, map mode."""
+    if getattr(bridge, "read_only", False):
+        _dbg("observer profile: generic commands disabled; visual marker capability only")
+        return
     # 1. Send offsets first (before any hooks that use them)
     offsets_cmd = _load_offsets()
     if offsets_cmd:
@@ -160,7 +164,7 @@ async def _connect_with_inject(bridge, bot):
     # Inject a fresh copy
     _dbg(f"[TIMING] injecting fresh DLL t={time.time()-t0:.1f}s")
     try:
-        _inject_fresh_dll()
+        _inject_fresh_dll(observer=bridge.read_only)
     except Exception as e:
         _dbg(f"[TIMING] injection failed t={time.time()-t0:.1f}s: {e}")
         return False
@@ -189,8 +193,26 @@ async def _connect_with_inject(bridge, bot):
     return False
 
 
+def _make_bridge():
+    from passive_map_win32 import ReadOnlyClient
+    source = ReadOnlyClient()
+    try:
+        return DllBridge(read_only=source.profile.observer)
+    finally:
+        source.close()
+
+
+def _marker_active(state, gs, proxy):
+    combat_actions={'adaptive_cavebot','auto_combat','auto_targeting','auto_targeting2','cavebot','cavebot2'}
+    tasks=getattr(state,'_action_tasks',{})
+    sample=getattr(gs,'client_snapshot',None)
+    return bool(proxy and state.game_proxy is proxy and proxy.logged_in and not state.automation_paused
+        and any(name in combat_actions and not task.done() for name,task in tasks.items())
+        and sample and sample.get('hp',0)>0 and 0<=time.monotonic()-sample.get('monotonic',-100)<.5)
+
+
 async def run(bot):
-    bridge = DllBridge()
+    bridge = _make_bridge()
     t_start = time.time()
     with open(DEBUG_LOG, "w") as f:
         f.write(f"=== dll_bridge started at {time.strftime('%H:%M:%S')} ===\n")
@@ -213,8 +235,20 @@ async def run(bot):
     state = sys.modules["__main__"].state
     gs = state.game_state
 
+    player_reader = None
+    player_source = None
+    if bridge.read_only:
+        from passive_map_win32 import ReadOnlyClient
+        from client_player_state import ClientPlayerReader
+        gs.client_state_required = True
+        player_source = ReadOnlyClient()
+        player_reader = ClientPlayerReader(player_source, bot.player_id)
+
     # Expose bridge on game_state so other actions (auto_targeting) can send commands
     gs.dll_bridge = bridge
+    marker_proxy=state.game_proxy if bridge.read_only else None
+    marker_callback=bridge.set_target_marker if bridge.read_only else None
+    if marker_callback is not None:marker_proxy.client_target_marker=marker_callback
 
     # Save player_id locally — gs.player_id can get corrupted mid-session
     # by mis-parsed packets (byte that looks like LOGIN_OR_PENDING opcode).
@@ -239,7 +273,15 @@ async def run(bot):
 
     try:
         while bot.is_connected:
+            if player_reader is not None:
+                try:
+                    gs.client_snapshot = player_reader.snapshot()
+                except Exception:
+                    # Existing samples expire after 500 ms; packet cache cannot override them.
+                    pass
             creatures = bridge.read_creatures()
+            if bridge.read_only:
+                bridge.refresh_target_marker(active=_marker_active(state,gs,marker_proxy))
             poll_count += 1
 
             if creatures is not None:
@@ -280,13 +322,12 @@ async def run(bot):
 
             now = time.time()
             if creatures is not None and len(creatures) > 0:
-                # Use packet_position as primary position source — DLL creature
-                # struct position is stale for the local player (Fix 19).
+                # Updated read-only profile has authoritative LocalPlayer coordinates.
                 pkt = gs.packet_position
-                px, py, pz = pkt if pkt[0] > 0 else gs.position if gs.position[0] > 0 else (0, 0, 0)
+                px, py, pz = gs.position if bridge.read_only else pkt if pkt[0] > 0 else gs.position if gs.position[0] > 0 else (0, 0, 0)
 
                 # Send packet-derived position to DLL for attack distance/floor check.
-                if px > 0 and py > 0 and poll_count % 6 == 0:
+                if not bridge.read_only and px > 0 and py > 0 and poll_count % 6 == 0:
                     bridge.send_command({"cmd": "set_player_pos", "x": px, "y": py, "z": pz})
 
                 # Tile scan disabled — scan_tileblocks blocks pipe thread too long
@@ -306,8 +347,8 @@ async def run(bot):
 
                 # Probe position offset: send once using packet_position (clean reference).
                 # Temporarily override set_player_pos with packet values so probe searches correctly.
-                pkt_pos = gs.packet_position if gs.packet_position[0] > 0 else gs.position
-                if not probe_sent and pkt_pos[0] > 0 and pkt_pos[1] > 0 and poll_count > 30:
+                pkt_pos = gs.position if bridge.read_only else gs.packet_position if gs.packet_position[0] > 0 else gs.position
+                if not bridge.read_only and not probe_sent and pkt_pos[0] > 0 and pkt_pos[1] > 0 and poll_count > 30:
                     # Send packet pos so probe searches for the correct values
                     bridge.send_command({"cmd": "set_player_pos",
                                          "x": pkt_pos[0], "y": pkt_pos[1], "z": pkt_pos[2]})
@@ -353,12 +394,9 @@ async def run(bot):
                             bot.log(f"[DLL] scan_global_pos: {sgp.get('matches',0)} matches, "
                                     f"addr={sgp.get('rva','?')}")
 
-                # Update position from DLL global memory (live, not stale)
-                dp = bridge.dll_pos
-                if dp[0] > 100 and dp[1] > 100:
-                    gs.position = dp
-                    gs.packet_position = dp
-                    px, py, pz = dp
+                # DLL px/py/pz may simply echo a previous set_player_pos
+                # command. Never feed that delayed value back into the packet
+                # tracker: it can undo newer server movement updates.
 
                 dll_creatures = {}
                 raw_count = 0
@@ -391,17 +429,14 @@ async def run(bot):
                     # Check both saved ID and current gs.player_id (can change mid-session)
                     if cid == my_player_id or cid == gs.player_id:
                         player_found = True
+                        gs.player_name = str(c.get("name", ""))[:64]
                         # Log player creature (position is stale — Fix 19)
                         if poll_count % 300 == 1:
                             _dbg(f"PLAYER FOUND: cid=0x{cid:08X} my_pid=0x{my_player_id:08X} "
                                  f"gs.pid=0x{gs.player_id:08X} dll=({cx},{cy},{cz}) pkt=({px},{py},{pz})")
-                        # Update HP from memory (creature health %)
-                        hp_pct = c.get("hp", 0)
-                        if gs.max_hp > 0 and 0 <= hp_pct <= 100:
-                            new_hp = round(hp_pct / 100 * gs.max_hp)
-                            if new_hp != gs.hp:
-                                _dbg(f"HP from memory: {gs.hp} -> {new_hp} ({hp_pct}%)")
-                                gs.hp = new_hp
+                        # Creature health is a rounded percentage and may be stale.
+                        # Exact HP comes from PLAYER_STATS; never overwrite it
+                        # with this independently polled cache.
                         continue
                     # Skip dead creatures (0% HP)
                     if c.get("hp", 0) <= 0:
@@ -440,7 +475,7 @@ async def run(bot):
 
                 # Diagnostic: dump raw bytes for POS_ZERO creatures (high refs = on-screen)
                 # Prioritize (0,0,0) creatures with refs >= 5, then valid-pos for comparison
-                if px > 0 and py > 0 and not dump_creature_pending and len(dump_creature_sent) < 8:
+                if not bridge.read_only and px > 0 and py > 0 and not dump_creature_pending and len(dump_creature_sent) < 8:
                     # Sort: POS_ZERO with high refs first, then valid pos
                     candidates = []
                     for c in creatures:
@@ -583,5 +618,8 @@ async def run(bot):
 
             await bot.sleep(POLL_INTERVAL)
     finally:
+        if marker_callback is not None and getattr(marker_proxy,'client_target_marker',None) is marker_callback:marker_proxy.client_target_marker=None
+        if player_source is not None:
+            player_source.close()
         bridge.disconnect()
         _dbg("stopped (pipe thread kept alive)")

@@ -1,0 +1,391 @@
+"""Bounded, read-only map inspection for the verified DBVClient_v5 build.
+
+Reads the client's decoded ThingType catalogue and live Tile objects. It never
+invokes client code, injects packets, patches memory, or controls cavebot.
+Unknown layouts/cells are reported explicitly rather than guessed.
+"""
+from collections import Counter
+from client_profiles import LEGACY, PROFILES
+import hashlib
+from pathlib import Path
+import struct
+import threading
+import time
+from map_navigation import navigation_features, load_confirmed_types, load_location_notes
+
+CLIENT_SHA256 = "828ea9e11c6890f92cc14956733bac3aa7b80f57bfd8bb8e225568780c6e4b40"
+DAT_SHA256 = "26e6342c67378183dd422d3a044a7ef159e27ebfe2af1594fae8e0a35f200c91"
+MAP_BLOCKS_RVA = 0xB6E470
+MAP_CENTER_RVA = 0xB6E61C
+ITEM_TYPES_RVA = 0xB6ED00
+TILE_VTABLE_RVA = 0x8BCFC0
+ITEM_VTABLE_RVA = 0x8B6890
+TYPE_VTABLE_RVA = 0x8BCF8C
+TRUE_GETTER_RVA = 0x6C940
+# Verified PE RTTI names and constant isNpc/isMonster/isPlayer/isLocalPlayer accessors.
+# These addresses are compared only; client functions are never executed.
+CREATURE_VTABLES = {0x8B6974:"player", 0x8B6A50:"self", 0x8BCCB0:"monster", 0x8BCD70:"npc"}
+U16_ATTRIBUTE_VTABLE_RVA = 0x8B6900
+WIDTH, HEIGHT = 18, 14
+FLAG_NAMES = {0: "ground", 3: "on_top", 4: "container", 6: "force_use", 7: "multi_use",
+              12: "not_walkable", 13: "not_moveable", 14: "blocks_projectiles",
+              15: "not_pathable", 16: "pickupable", 252: "floor_change"}
+
+
+class MapReadError(ValueError):
+    pass
+
+
+class MapChanged(MapReadError):
+    """A concurrent update, not a lost process connection."""
+
+
+def _u32(data, offset=0):
+    return struct.unpack_from("<I", data, offset)[0]
+
+
+def _vector(data, offset, stride, maximum):
+    first, last, capacity = struct.unpack_from("<III", data, offset)
+    if first == last == capacity == 0:
+        return 0, 0
+    if not (0x10000 <= first <= last <= capacity < 0x7FFE0000):
+        raise MapReadError("Nieprawidłowa struktura danych mapy.")
+    if (last - first) % stride or (capacity - first) % stride or (capacity - first) // stride > maximum:
+        raise MapReadError("Nieobsługiwany rozmiar danych mapy.")
+    return first, (last - first) // stride
+
+
+def inspect_dat(path):
+    """Identify the asset without treating opaque bytes as standard DAT flags."""
+    try:
+        path = Path(path)
+        if path.stat().st_size > 32 * 1024 * 1024:
+            return {"status": "too_large", "message": "Plik DAT przekracza limit odczytu."}
+        data = path.read_bytes()
+    except OSError:
+        return {"status": "unavailable", "message": "Plik DAT niedostępny."}
+    digest = hashlib.sha256(data).hexdigest()
+    return {"status": "opaque", "size": len(data), "sha256": digest,
+            "known_asset": any(p.dat_sha256 == digest for p in PROFILES.values()),
+            "confirmed_catalogue": digest == DAT_SHA256,
+            "message": "Plik DAT w niestandardowym formacie. Właściwości pochodzą z definicji załadowanych przez klienta."}
+
+
+def classify_tile(items, server_blocking):
+    flags = {f for item in items for f in item["flags"]}
+    stairs = "type_flag" if "floor_change" in flags else None
+    if server_blocking or "not_walkable" in flags:
+        kind = "blocked"
+    elif "ground" not in flags:
+        kind = "no_ground"
+    elif "not_pathable" in flags:
+        kind = "avoid"
+    else:
+        kind = "clear"
+    return kind, stairs
+
+
+class MapReader:
+    """Decoder separated from Win32 access so corrupt layouts are testable."""
+    def __init__(self, read, base, allow_confirmed=True, profile=LEGACY, asset_sha256=None):
+        self.profile = profile
+        self.read = read
+        self.base = base
+        asset_sha256 = asset_sha256 or profile.dat_sha256
+        self.navigation_types = load_confirmed_types(asset_sha256=asset_sha256) if allow_confirmed else {}
+        self.location_notes = load_location_notes(asset_sha256=asset_sha256) if allow_confirmed else {}
+
+    def _blocks(self, floor, wanted):
+        head, count = struct.unpack("<II", self.read(self.base + self.profile.map_blocks + floor * 8, 8))
+        if count > 256 or not 0x10000 <= head < 0x7FFE0000:
+            raise MapReadError("Nieprawidłowy indeks pól mapy.")
+        header = self.read(head, 16)
+        if header[13] != 1:
+            raise MapReadError("Nieobsługiwany indeks pól mapy.")
+        pending = [_u32(header, 4)]
+        visited, blocks = set(), {}
+        while pending:
+            node = pending.pop()
+            if node == head:
+                continue
+            if node in visited or len(visited) >= count:
+                raise MapChanged("Mapa zmieniła się podczas odczytu.")
+            visited.add(node)
+            raw = self.read(node, 20)
+            if raw[13] != 0:
+                raise MapReadError("Nieprawidłowy węzeł mapy.")
+            pending.extend([_u32(raw), _u32(raw, 8)])
+            key = _u32(raw, 16)
+            if key in wanted:
+                blocks[key] = self.read(node + 20, 8192)
+        if len(visited) != count:
+            raise MapReadError("Mapa zmieniła się podczas odczytu.")
+        return blocks
+
+    def _item(self, item_id, types, count, cache):
+        if item_id in cache:
+            return cache[item_id]
+        if not 100 <= item_id < count:
+            raise MapReadError("Nieznane ID obiektu.")
+        ptr = _u32(self.read(types + item_id * 8, 8))
+        raw = self.read(ptr, 44)
+        if (_u32(raw) != self.base + self.profile.type_vtable or raw[24] != 0
+                or struct.unpack_from("<H", raw, 26)[0] != item_id or raw[28] != 0):
+            raise MapReadError("Definicja obiektu nie pasuje do ID.")
+        attrs, size = _vector(raw, 32, 4, 256)
+        flags_raw = self.read(attrs, size * 4) if size else b""
+        flags = [name for index, name in FLAG_NAMES.items()
+                 if index < size and _u32(flags_raw, index * 4)]
+        result = {"id": item_id, "flags": flags}
+        # stdext::any::holder<uint16>: verified vtable, then the U16 payload.
+        # Optional help metadata must never turn a failed read into a guessed type.
+        for index, name in ((28,"minimap_color"), (29,"lens_help")):
+            if size > index and _u32(flags_raw, index * 4):
+                try:
+                    help_raw = self.read(_u32(flags_raw, index * 4), 6)
+                    if _u32(help_raw) == self.base + self.profile.u16_attribute_vtable:
+                        result[name] = struct.unpack_from("<H", help_raw, 4)[0]
+                except (MapReadError, struct.error):
+                    pass
+        cache[item_id] = result
+        return result
+
+    def _tile(self, ptr, xyz, types, type_count, cache):
+        raw = self.read(ptr, 84)
+        if _u32(raw) != self.base + self.profile.tile_vtable or struct.unpack_from("<III", raw, 56) != xyz:
+            raise MapReadError("Pole zmieniło położenie podczas odczytu.")
+        first, count = _vector(raw, 44, 8, 64)
+        things = self.read(first, count * 8) if count else b""
+        items, occupants = [], 0
+        occupant_types = Counter()
+        alert_players = []
+        for i in range(count):
+            thing = _u32(things, i * 8)
+            data = self.read(thing, 56)
+            vtable = _u32(data)
+            if vtable == self.base + self.profile.item_vtable:
+                # Verified getId accessor reads U16 at +0x35 (packed object).
+                item_id = struct.unpack_from("<H", data, 0x35)[0]
+                items.append({**self._item(item_id, types, type_count, cache), "stack": i})
+            elif self.base <= vtable < self.base + 0xC00000:
+                # isCreature() is a verified constant-true accessor, never called.
+                if _u32(self.read(vtable + 8 * 4, 4)) != self.base + self.profile.true_getter:
+                    raise MapReadError("Nieobsługiwany obiekt na polu.")
+                occupants += 1
+                creature_kind = dict(self.profile.creature_vtables).get(vtable-self.base,"unknown")
+                occupant_types[creature_kind] += 1
+                if creature_kind == "player":
+                    cid = _u32(self.read(thing + 0x38, 4)) if self.profile.observer else _u32(data, 0x34)
+                    if 0x10000000 <= cid < 0x40000000:
+                        alert_players.append({"id": cid})
+            else:
+                raise MapReadError("Nieprawidłowy typ obiektu na polu.")
+        # Detect container changes rather than publishing a mixed snapshot.
+        if self.read(ptr + 44, 24) != raw[44:68]:
+            raise MapReadError("Pole zmieniło się podczas odczytu.")
+        blocking = raw[82]
+        kind, stairs = classify_tile(items, blocking)
+        navigation = navigation_features(items, self.navigation_types)
+        note = self.location_notes.get(xyz)
+        if note and any(i["id"]==note["item_id"] for i in items):
+            navigation = [f for f in navigation if f["item_id"]!=note["item_id"]]
+            item = next(i for i in items if i["id"]==note["item_id"])
+            navigation.append({**note,"stack":item["stack"],"source":"confirmed_location",
+                               "door_state_hint":"closed" if "not_walkable" in item["flags"] else "open",
+                               "closing_policy":"unknown"})
+        if any(f["kind"] == "stairs" and f["source"] == "confirmed_id" for f in navigation):
+            stairs = "confirmed_id"
+        return {"x": xyz[0], "y": xyz[1], "z": xyz[2], "kind": kind,
+                "stairs": stairs, "items": items, "occupants": occupants,
+                "occupant_types":dict(occupant_types), "alert_players": alert_players,
+                "navigation": navigation,
+                "server_blocking": blocking, "ground_speed": struct.unpack_from("<H", raw, 80)[0]}
+
+    def snapshot(self):
+        started = time.perf_counter()
+        center = struct.unpack("<III", self.read(self.base + self.profile.map_center, 12))
+        x, y, z = center
+        if not (8 <= x <= 65525 and 6 <= y <= 65527 and z < 16):
+            raise MapReadError("Brak poprawnej pozycji klienta.")
+        origin = (x - 8, y - 6)
+        wanted = {((yy // 32) * 2048 + xx // 32)
+                  for xx in (origin[0], origin[0] + WIDTH - 1)
+                  for yy in (origin[1], origin[1] + HEIGHT - 1)}
+        blocks = self._blocks(z, wanted)
+        types_raw = self.read(self.base + self.profile.item_types, 12)
+        types, count = _vector(types_raw, 0, 8, 65536)
+        if count <= 10161:
+            raise MapReadError("Katalog obiektów nie został załadowany.")
+        cache, cells = {}, []
+        for yy in range(origin[1], origin[1] + HEIGHT):
+            for xx in range(origin[0], origin[0] + WIDTH):
+                cell = {"x": xx, "y": yy, "z": z, "kind": "unknown", "items": [], "occupants": 0, "stairs": None}
+                try:
+                    block = blocks.get((yy // 32) * 2048 + xx // 32)
+                    ptr = _u32(block, ((yy % 32) * 32 + xx % 32) * 8) if block else 0
+                    if ptr:
+                        cell = self._tile(ptr, (xx, yy, z), types, count, cache)
+                    else:
+                        cell["reason"] = "Pole nie jest załadowane przez klienta."
+                except (MapReadError, struct.error):
+                    cell["reason"] = "Odczyt pola niepełny; czekam na kolejną próbkę."
+                cells.append(cell)
+        if self.read(self.base + self.profile.map_center, 12) != struct.pack("<III", *center):
+            raise MapChanged("Pozycja zmieniła się podczas odczytu; czekam na następną próbkę.")
+        return {"status": "ready", "center": list(center), "origin": list(origin),
+                "width": WIDTH, "height": HEIGHT, "cells": cells,
+                "counts": dict(Counter(c["kind"] for c in cells)),
+                "catalogue_items": count, "captured_at": time.time(),
+                "read_ms": round((time.perf_counter() - started) * 1000, 1)}
+
+
+class PassiveMapMonitor:
+    """Keep memory I/O off the proxy event loop; no action scheduling."""
+    def __init__(self, state):
+        self.state = state
+        self._result = {"status": "waiting", "message": "Czekam na połączenie z grą.", "cells": []}
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="passive-map", daemon=True)
+        self.learner = None
+        self.annotations = None
+        self.atlas = None
+        self._learning_error = None
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=2)
+
+    def poll_interval(self):
+        task=getattr(self.state,"_action_tasks",{}).get("adaptive_cavebot")
+        return .05 if task and not task.done() else .25
+
+    def snapshot(self):
+        result = self._result
+        age = time.time() - result.get("captured_at", time.time())
+        learning = self.learner.snapshot() if self.learner else {"status":"waiting","total":0,"observed":0,"records":[],"passive":True}
+        if self._learning_error:
+            learning = {**learning,"status":"error","storage_error":self._learning_error}
+        return {**result, "learning":learning,
+                "annotation_scope":self.annotations.scope if self.annotations else None,
+                "annotation_error":self.annotations.error if self.annotations else None,
+                "annotation_editable":bool(self.annotations and not self.annotations.error and self.state.connected and result.get("status")=="ready" and age<=2),
+                "age_seconds": round(max(0, age), 2), "passive": True,
+                "stale": result.get("status") != "ready" or age > 2}
+
+    def save_annotation(self,body):
+        from map_annotations import validate_note, FIELDS
+        if not isinstance(body,dict) or set(body)!=FIELDS|{"scope","operation"} or body["operation"] not in ("save","remove"):
+            raise ValueError("Nieprawidłowe żądanie opisu pola.")
+        note=validate_note({k:body[k] for k in FIELDS})
+        store=self.annotations
+        result=self._result
+        if (not self.state.connected or store is None or body["scope"]!=store.scope or
+                result.get("status")!="ready" or time.time()-result.get("captured_at",0)>2):
+            raise ValueError("Mapa jest nieaktualna. Wybierz pole ponownie na żywo.")
+        cell=next((c for c in result["cells"] if [c["x"],c["y"],c["z"]]==note["position"]),None)
+        if not cell or cell["kind"]=="unknown" or not any(i["id"]==note["item_id"] for i in cell["items"]):
+            raise ValueError("Obiekt nie jest już widoczny na tym polu. Wybierz pole ponownie.")
+        store.save(note,remove=body["operation"]=="remove")
+        return "Usunięto własny opis." if body["operation"]=="remove" else "Zapisano własny opis pola."
+
+    def record_client_packet(self, opcode, reader):
+        if self.learner is None or not self.state.connected:
+            return
+        from transition_learning import decode_command
+        result = self._result
+        origin = result.get("center") if time.time()-result.get("captured_at",0)<0.8 else None
+        self.learner.enqueue(decode_command(opcode,reader,origin))
+
+    def reset_learning_session(self):
+        self._result = {"status":"waiting","message":"Czekam na połączenie z grą.","cells":[]}
+        if self.learner:
+            self.learner.reset()
+
+    def _read_interrupted(self, message, asset=None):
+        """Retain only a recent image. Never present it as live or learn from it."""
+        previous=self._result
+        if (self.state.connected and previous.get("cells")
+                and time.time()-previous.get("captured_at",0)<=2):
+            self._result={**previous,"status":"refreshing","message":message}
+        else:
+            self._result={"status":"unavailable","message":message,"cells":[],"asset":asset}
+
+    def _learn(self, result, asset):
+        # Failures in optional learning must not interrupt the map or game proxy.
+        try:
+            from transition_learning import TransitionLearner
+            proxy = getattr(self.state,"game_proxy",None)
+            scope = hashlib.sha256(f"{asset.get('client_sha256',CLIENT_SHA256)}|{asset.get('sha256')}|{getattr(proxy,'server_host','')}:{getattr(proxy,'server_port',0)}".encode()).hexdigest()
+            if self.learner is None or self.learner.scope != scope:
+                self.learner = TransitionLearner(Path(__file__).parent / "local_data",scope)
+            if self.annotations is None or self.annotations.scope != scope:
+                from map_annotations import MapAnnotations
+                self.annotations = MapAnnotations(Path(__file__).parent / "local_data",scope)
+            if self.atlas is None or self.atlas.scope != scope:
+                from map_atlas import MapAtlas
+                self.atlas = MapAtlas(Path(__file__).parent / "local_data",scope)
+            tasks = getattr(self.state,"_action_tasks",{})
+            auto_task = getattr(self.state,"_auto_task",None)
+            automated = (getattr(self.state,"playback_active",False) or (auto_task is not None and not auto_task.done())
+                         or any(name in tasks and not tasks[name].done() for name in ("cavebot","cavebot2","adaptive_cavebot")))
+            gs = getattr(self.state,"game_state",None)
+            dead = bool(getattr(gs,"stats_updated_at",0)) and getattr(gs,"hp",0)<=0
+            result = {**result,"cells":self.annotations.annotate(result["cells"])}
+            result = {**result,"cells":self.learner.annotate(result["cells"])}
+            self.learner.observe(result,active=not (automated or dead))
+            self._learning_error = None
+            result = {**result,"cells":self.learner.annotate(result["cells"])}
+            self.atlas.observe(result)
+        except Exception:
+            self._learning_error = "Uczenie przejść chwilowo niedostępne; podgląd mapy pozostaje aktywny."
+        return result
+
+    def _run(self):
+        source = None
+        asset = None
+        try:
+            while not self._stop.is_set():
+                try:
+                    if not self.state.connected:
+                        if self.learner:
+                            self.learner.reset()
+                            self.learner.observe(None)
+                        if source:
+                            source.close()
+                            source = None
+                        self._result = {"status": "waiting", "message": "Czekam na połączenie z grą.", "cells": []}
+                    else:
+                        if source is None:
+                            from passive_map_win32 import ReadOnlyClient
+                            source = ReadOnlyClient()
+                            asset = inspect_dat(source.path.parent / "bytes" / "things" / "file.dat")
+                            asset["client_sha256"] = source.profile.sha256
+                        result = MapReader(source.read, source.base, allow_confirmed=True, profile=source.profile, asset_sha256=asset.get("sha256")).snapshot()
+                        result = self._learn(result,asset)
+                        self._result = {**result, "asset": asset}
+                except MapChanged as exc:
+                    self._read_interrupted("Aktualizacja podczas ruchu — ostatni poprawny obraz.",asset)
+                    # Keep the read-only handle and pending learning. Retry promptly;
+                    # the learner itself rejects gaps beyond its time budget.
+                    if self._stop.wait(0.03): break
+                    continue
+                except Exception as exc:
+                    # No addresses, process contents, credentials or raw packets in UI/logs.
+                    message = str(exc) if isinstance(exc, MapReadError) else "Odczyt mapy niedostępny. Sprawdź klienta i jego wersję."
+                    self._read_interrupted(message,asset)
+                    if self.learner:
+                        self.learner.reset()
+                        self.learner.observe(None)
+                    if source:
+                        source.close()
+                        source = None
+                    if self._stop.wait(1.5):
+                        break
+                if self._stop.wait(self.poll_interval()):
+                    break
+        finally:
+            if source:
+                source.close()

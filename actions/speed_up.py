@@ -1,24 +1,5 @@
-"""Cast 'speed up' when not hasted (checks player icons bitmask)."""
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from constants import HASTE_ICON_BIT
-
-INTERVAL = 1  # seconds between checks
-
-
-def _get_game_state():
-    return sys.modules["__main__"].state.game_state
-
+"""Speed Up: losowy termin względem końca efektu, bez powtarzania co sekundę."""
+from speed_up import run_speed
 
 async def run(bot):
-    while True:
-        if bot.is_connected and bot.max_hp > 0:
-            gs = _get_game_state()
-            icons = getattr(gs, 'player_icons', 0)
-            is_hasted = (icons & HASTE_ICON_BIT) != 0
-            if not is_hasted:
-                await bot.say("speed up")
-                bot.log(f"Cast 'speed up' (icons=0x{icons:04X})")
-        await bot.sleep(INTERVAL)
+    await run_speed(bot)

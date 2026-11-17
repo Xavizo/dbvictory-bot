@@ -25,10 +25,10 @@ def http_api(monkeypatch):
     server = HTTPServer(("127.0.0.1", 0), api._Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    def request(method="GET", path="/api/state", **headers):
+    def request(method="GET", path="/api/state", body=None, **headers):
         conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
         try:
-            conn.request(method, path, headers=headers)
+            conn.request(method, path, body=body, headers=headers)
             response = conn.getresponse()
             return response.status, dict(response.getheaders()), response.read()
         finally:
@@ -40,8 +40,14 @@ def http_api(monkeypatch):
 
 
 @pytest.mark.parametrize("method,path", [
+    ("GET", "/api/profiles"), ("POST", "/api/profiles"),
+    ("GET", "/api/alerts"), ("POST", "/api/alerts"),
     ("GET", "/api/state"), ("POST", "/api/actions/power_up/toggle"),
     ("DELETE", "/api/actions/power_up"),
+    ("POST", "/api/emergency-stop"), ("POST", "/api/automation/unlock"),
+    ("POST", "/api/potions/diagnostics"),
+    ("POST", "/api/map/annotation"),
+    ("POST", "/api/map/drafts"), ("POST", "/api/adaptive/preview"),
 ])
 def test_unauthenticated_requests_are_rejected(http_api, method, path):
     request, mutations = http_api
@@ -63,6 +69,22 @@ def test_authentication_and_origin_enforced_before_mutation(http_api):
     assert response_headers["Access-Control-Allow-Origin"] == DASHBOARD_ORIGIN
     assert response_headers["Cache-Control"] == "no-store"
     assert mutations == ["power_up"]
+
+
+def test_annotation_endpoint_requires_origin_and_passes_only_valid_request(http_api,monkeypatch):
+    from types import SimpleNamespace
+    calls=[]
+    monitor=SimpleNamespace(save_annotation=lambda body:calls.append(body) or "saved")
+    monkeypatch.setattr(api,"_state",SimpleNamespace(passive_map_monitor=monitor))
+    request,_=http_api
+    headers={"Origin":DASHBOARD_ORIGIN,"Authorization":f"Bearer {SESSION_TOKEN}"}
+    path="/api/map/annotation"
+    assert request("POST",path,body='{}',**{**headers,"Origin":"https://evil.example"})[0]==403
+    assert not calls
+    assert request("POST",path,body='x'*4097,**headers)[0]==400
+    assert not calls
+    assert request("POST",path,body='{"operation":"save"}',**headers)[0]==200
+    assert calls==[{"operation":"save"}]
 
 
 def test_preflight_and_read_access(http_api):
@@ -102,3 +124,22 @@ def test_websocket_requires_origin_and_token_before_sending_state(monkeypatch):
             await server.wait_closed()
         assert not api._ws_clients
     asyncio.run(exercise())
+
+def test_alert_read_and_config_routes_keep_authentication(http_api,monkeypatch):
+    from types import SimpleNamespace
+    from game_alerts import AlertCenter
+    center=AlertCenter()
+    monkeypatch.setattr(api,'_state',SimpleNamespace(alert_center=center))
+    request,_=http_api
+    headers={'Origin':DASHBOARD_ORIGIN,'Authorization':f'Bearer {SESSION_TOKEN}'}
+    for method in ('GET','POST'):
+        assert request(method,'/api/alerts',body='{}' if method=='POST' else None,**{**headers,'Origin':'https://evil.example'})[0]==403
+    status,_,body=request('GET','/api/alerts',**headers)
+    assert status==200 and json.loads(body)['events']==[]
+    calls=[]
+    monkeypatch.setattr(api._Handler,'_run_control',lambda self,*args:(calls.append(args),self._json_response({'ok':True})))
+    assert request('POST','/api/alerts',body='{"command":"acknowledge","through":0}',**headers)[0]==200
+    assert calls==[('_async_alerts','acknowledge',{'command':'acknowledge','through':0})]
+    assert request('POST','/api/alerts',body='x'*4097,**headers)[0]==400
+    assert request('POST','/api/alerts',body='{"command":"start"}',**headers)[0]==400
+    assert len(calls)==1

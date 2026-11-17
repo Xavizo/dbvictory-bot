@@ -41,13 +41,13 @@
   },
   "packet_formats": {
     "player_stats": {
-      "size": 36,
+      "size": 36, "capacity_scale": 100, "allow_mana_over_max": true,
       "hp": 0, "max_hp": 4, "capacity": 8, "experience": 12,
       "level": 20, "level_percent": 22, "mana": 23, "max_mana": 27,
       "magic_level": 31, "magic_level_percent": 32, "soul": 33, "stamina": 34
     },
     "creature_health": { "size": 5, "creature_id": 0, "health": 4 },
-    "creature_move": { "size": 11 },
+    "creature_move": { "size": 13 },
     "creature_speed": { "size": 6, "creature_id": 0, "speed": 4 },
     "creature_light": { "size": 6 },
     "creature_skull": { "size": 5 },
@@ -67,10 +67,12 @@
     "position": { "size": 5, "x": 0, "y": 2, "z": 4 },
     "login_or_pending": {
       "player_id_size": 4,
-      "header_before_position": 4,
+      "header_before_position": 19,
+      "map_description_marker": 75,
       "map_description_search_window": 10
     },
     "map_description": { "position_x": 0, "position_y": 2, "position_z": 4 },
+    "floor_description": { "opcode": 75 },
     "tile_transform_thing": { "x": 1, "y": 3, "z": 5 }
   }
 }

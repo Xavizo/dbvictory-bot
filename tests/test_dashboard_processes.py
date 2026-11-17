@@ -31,7 +31,7 @@ def test_launch_refuses_unowned_port_and_passes_token_only_to_electron(monkeypat
     (build_dir / "BUILD_ID").write_text("test-build")
     monkeypatch.setattr(server, "__file__", str(tmp_path / "mcp_server.py"))
     monkeypatch.setattr(server, "os", SimpleNamespace(name="nt", environ={}))
-    monkeypatch.setattr(server.subprocess, "CREATE_NEW_CONSOLE", 16, raising=False)
+    monkeypatch.setattr(server.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.setattr("shutil.which", lambda _: r"C:\Program Files\nodejs\npm.cmd")
     monkeypatch.setattr(server, "_dashboard_processes", {})
     popen = Mock(side_effect=[Mock(), Mock()])
@@ -46,5 +46,7 @@ def test_launch_refuses_unowned_port_and_passes_token_only_to_electron(monkeypat
     assert next_call.args[0].endswith('run start')
     assert "DBV_DASHBOARD_TOKEN" not in next_call.kwargs["env"]
     assert electron_call.kwargs["env"]["DBV_DASHBOARD_TOKEN"] == SESSION_TOKEN
+    assert next_call.kwargs['creationflags'] == 0x08000000
+    assert electron_call.kwargs['creationflags'] == 0x08000000
     # Prevent atexit from touching mocked processes after monkeypatch teardown.
     server._dashboard_processes.clear()

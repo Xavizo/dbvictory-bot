@@ -21,6 +21,7 @@ class ClientOpcode(IntEnum):
     PONG = 0x1F
 
     # Movement
+    NEW_WALK = 0x45  # OTCv8 GameNewWalking (DBVClient_v5)
     AUTO_WALK = 0x64
     WALK_NORTH = 0x65
     WALK_EAST = 0x66

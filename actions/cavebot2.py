@@ -16,6 +16,7 @@ auto_combat is shared between v1 and v2.
 import sys
 import os
 import time
+from route_safety import route_entry
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -517,7 +518,7 @@ async def _execute_walk_to(bot, node, prefix="", exact=False):
     last_cancel_pos = None
     block_start_time = None
 
-    bot.log(f"{prefix} walk_to ({target[0]},{target[1]},{target[2]}) dist={dist}{' [exact]' if exact else ''}")
+    bot.log(f"{prefix} walk_to ({target[0]},{target[1]},{target[2]}) dist={dist}{' [exact]' if exact else ''} [ground-click item_id={item_id} stack=0]")
 
     # Phase 0: approach if beyond click range
     chebyshev = max(abs(current[0] - target[0]), abs(current[1] - target[1]))
@@ -1009,7 +1010,9 @@ async def _run_playback(bot):
     lure_ema = float(min_lure)
     stable_count = 0
 
+    completed_pass = False
     while state.playback_active:
+        await bot.sleep(0.1)
         if not bot.is_connected:
             await bot.sleep(1)
             continue
@@ -1028,6 +1031,12 @@ async def _run_playback(bot):
         actions_map = build_actions_map(rec)
         state.playback_actions_map = actions_map
         state.playback_total = len(actions_map)
+
+        entry_index, route_error = route_entry(actions_map, bot.position, restart=completed_pass)
+        if route_error:
+            bot.log(f"Playback stopped: {route_error}")
+            state.playback_active = False
+            break
 
         # Load or create telemetry
         if not hasattr(state, 'telemetry') or state.telemetry is None:
@@ -1067,9 +1076,10 @@ async def _run_playback(bot):
         if not hasattr(state, 'segment_stats'):
             state.segment_stats = {}
 
-        i = 0
+        i = entry_index
         consecutive_walk_failures = 0
         while i < len(actions_map):
+            await bot.sleep(0)  # always yield, including skipped nodes
             node = actions_map[i]
             if not state.playback_active or not bot.is_connected:
                 break
@@ -1089,22 +1099,14 @@ async def _run_playback(bot):
             player_z = player_pos[2]
             expected_z = _node_expected_z(node)
             if player_z != expected_z:
-                best_j = None
-                best_dist = float("inf")
-                for j in range(len(actions_map)):
-                    if _node_expected_z(actions_map[j]) == player_z:
-                        t = actions_map[j]["target"]
-                        d = max(abs(player_pos[0] - t[0]), abs(player_pos[1] - t[1]))
-                        if d < best_dist:
-                            best_dist = d
-                            best_j = j
-                if best_j is not None:
-                    bot.log(f"{prefix} Z mismatch, jumping to [{best_j+1}]")
-                    i = best_j
-                    continue
-                else:
-                    i += 1
-                    continue
+                best_j, route_error = route_entry(actions_map, player_pos)
+                if route_error:
+                    bot.log(f"Playback stopped: {route_error}")
+                    state.playback_active = False
+                    break
+                bot.log(f"{prefix} Floor changed, rejoining nearby node {best_j + 1}")
+                i = best_j
+                continue
 
             # ── Dead segment skipping ──
             if (skip_dead
@@ -1271,6 +1273,7 @@ async def _run_playback(bot):
         )
 
         if state.playback_active and state.playback_loop:
+            completed_pass = True
             state.playback_loop_count += 1
             loop_num = state.playback_loop_count
 

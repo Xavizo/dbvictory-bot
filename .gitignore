@@ -37,3 +37,9 @@ node_modules/
 
 # Electron
 electron_err.log
+
+# Local passive navigation observations
+local_data/
+
+# Local client spell catalogue and graphics
+/dashboard/public/local-spells/

@@ -1,6 +1,9 @@
 declare global {
   interface Window {
+    dbvAlerts?: {testSound:()=>Promise<boolean>};
+    dbvEditor?: {open:(draftId:string)=>Promise<boolean>};
     dbvAuth?: { getToken: () => Promise<string> };
+    dbvMap?: { copyCell: (text: string) => Promise<boolean>; copyPlan: (text: string) => Promise<boolean> };
   }
 }
 

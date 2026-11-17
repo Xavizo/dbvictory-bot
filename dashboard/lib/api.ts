@@ -2,6 +2,65 @@ import { authenticatedFetch } from "./auth";
 
 const API_BASE = "http://127.0.0.1:8089";
 
+export interface MapNavigationFeature {
+  kind: "stairs" | "ladder" | "descent" | "hole" | "covered_hole" | "rope_spot" | "door" | "level_gate" | "teleport" | "floor_change" | "passage";
+  item_id: number; stack: number; source: "confirmed_id" | "confirmed_location" | "client_hint" | "user_annotation" | "observed";
+  observation_count?:number;
+  behavior_hint?:"use_enters"|"open_then_step"|"unknown";
+  note?: string;
+  required_level?: number; requirement_source?: "user_report";
+  activation_hint?: "use" | "rope" | "step" | "shovel" | "fly_up" | "rope_or_fly_up" | "aio" | "open_if_closed";
+  direction_hint?: "up" | "down";
+  door_state_hint?: "open" | "closed" | "unknown";
+  closing_policy?: "unknown" | "automatic" | "manual" | "after_exit" | "observed_open";
+  lock_hint?: boolean;
+}
+
+export interface PassiveMapCell {
+  x: number; y: number; z: number;
+  kind: "clear" | "blocked" | "avoid" | "no_ground" | "unknown";
+  stairs: "confirmed_id" | "type_flag" | null;
+  occupants: number;
+  occupant_types?: Partial<Record<"player" | "self" | "npc" | "monster" | "unknown", number>>;
+  items: { id: number; flags: string[]; stack: number; lens_help?: number; minimap_color?: number }[];
+  navigation?: MapNavigationFeature[];
+  transitions?: MapTransitionLink[];
+  server_blocking?: number; ground_speed?: number; reason?: string;
+}
+
+export interface PassiveMapState {
+  preview?: boolean;
+  status: string; passive: boolean; stale: boolean;
+  cells: PassiveMapCell[]; message?: string;
+  center?: [number, number, number]; origin?: [number, number];
+  width?: number; height?: number; read_ms?: number;
+  age_seconds?: number; captured_at?: number; catalogue_items?: number;
+  asset?: { status: string; message: string; size?: number; known_asset?: boolean };
+  learning?: TransitionLearningState;
+  annotation_scope?: string | null; annotation_error?: string | null; annotation_editable?: boolean;
+}
+
+export type TransitionAction = "step" | "use" | "use_with" | "use_then_step" | "use_with_then_step" | "fly_up" | "unknown";
+export interface MapTransitionLink {
+  id: string; exit: [number, number, number]; action: TransitionAction;
+  direction: "up" | "down" | "same_floor"; count: number;
+}
+export interface TransitionObservation extends MapTransitionLink {
+  prepared_item_id?: number;
+  object_change?: {kind:"door"|"level_gate"|"passage";closed_id:number;open_id:number;
+    behavior:"open_then_step"|"use_enters"|"manual_close"|"closes_after_exit"|"stays_open"};
+  origin: [number, number, number]; entry: [number, number, number] | null;
+  item_id: number | null; tool_id: number | null; entry_items: number[];
+  evidence: "observed" | "review"; reason: string;
+  first_seen: number; last_seen: number; variable_exit: boolean;
+}
+export interface TransitionLearningState {
+  status: "waiting" | "learning" | "suspended" | "error";
+  total: number; observed: number; records: TransitionObservation[];
+  nearby_records?: TransitionObservation[];
+  storage_error?: string | null; file?: string; limit_reached?: boolean; passive: boolean;
+}
+
 export interface ActionInfo {
   name: string;
   enabled: boolean;
@@ -123,6 +182,9 @@ export interface CavebotState {
     name: string;
     waypoint_count: number;
     waypoints: WaypointInfo[];
+    position_count?: number;
+    observed_path?: {pos:[number,number,number];t:number;break_before?:boolean}[];
+    trace_limited?: boolean;
   };
   playback: {
     active: boolean;
@@ -159,8 +221,29 @@ export interface ProxySequence {
   timestamps?: Record<string, number | null>;
 }
 
+export type AlertKind = "private" | "default" | "player";
+export type AlertConfig = Record<AlertKind, {enabled:boolean;sound:boolean;scope:"always"|"cavebot"}>;
+export interface AlertState {
+  session:string;config:AlertConfig;latest_id:number;unread:number;cavebot_active:boolean;map_fresh:boolean;
+  chat_received:number;last_chat_at:number|null;
+  events:{id:number;kind:AlertKind;at:number;sender:string;text:string;sound:boolean;position?:number[]}[];
+}
+export const configureAlerts=(config:AlertConfig)=>control("/api/alerts",{command:"configure",config});
+export const acknowledgeAlerts=(through:number)=>control("/api/alerts",{command:"acknowledge",through});
+
 export interface BotState {
+  alerts?:AlertState|null;
+  pause_hotkey?:{registered:boolean;error:string|null;key:string}|null;
+  profile_selection?:{combat:string|null;bot:string|null;routes:Record<string,string>};
+  speed_up?:{status:string;remaining:number|null;offset:number|null;effect_active:boolean|null;confirmed:boolean;attempts:number};
+  combat_profile?: import("./cavebotModel").CombatConfig;
+  adaptive_cavebot?: {navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
+  passive_map?: PassiveMapState;
   connected: boolean;
+  automation_paused?: boolean;
+  automation_pause_kind?: "manual"|"emergency"|null;
+  potion_diagnostics?: PotionDiagnosticState;
+  barrier_band?: {status:string;equipped_id:number|null;stock:number|null;attempts:number};
   actions: ActionInfo[];
   packets_from_server: number;
   packets_from_client: number;
@@ -171,6 +254,35 @@ export interface BotState {
   cavebot?: CavebotState;
   proxy_sequence?: ProxySequence;
 }
+
+export interface PotionDiagnosticState {
+  active: boolean;
+  capacity?: number;
+  remaining_seconds?: number;
+  rows: { id?:number; item_id:number; mode:string; source?:string; time:string; gap_seconds:number|null;
+    hp_delta:number; ki_delta:number; status?:string; response?:string|null; reported_count?:number|null;
+    stock_delta?:number|null; stats_age_ms?:number|null }[];
+}
+
+async function control(path: string, body?: object): Promise<void> {
+  const res = await authenticatedFetch(`${API_BASE}${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const result = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+}
+
+export const pauseAutomation = () => control("/api/automation/pause");
+export const resumeAutomation = () => control("/api/automation/resume");
+export const emergencyStop = () => control("/api/emergency-stop");
+export const unlockAutomation = () => control("/api/automation/unlock");
+export const setPotionDiagnostics = (enabled: boolean) => control("/api/potions/diagnostics", { enabled });
+export interface MapAnnotationInput {
+  scope:string; operation:"save" | "remove"; position:[number,number,number]; item_id:number;
+  kind:string; required_level:number|null; activation_hint:string|null; note:string;
+}
+export const saveMapAnnotation = (data:MapAnnotationInput) => control("/api/map/annotation",data);
 
 export async function fetchState(): Promise<BotState> {
   const res = await authenticatedFetch(`${API_BASE}/api/state`);
@@ -189,7 +301,7 @@ export async function toggleAction(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error("Toggle failed:", res.status, err);
+    throw new Error(err.error || `HTTP ${res.status}`);
   }
 }
 
@@ -215,7 +327,7 @@ export async function updateActionConfig(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error("Config update failed:", res.status, err);
+    throw new Error(err.error || `HTTP ${res.status}`);
   }
 }
 
@@ -256,7 +368,7 @@ export async function playRecording(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error("Play recording failed:", res.status, err);
+    throw new Error(err.error || `HTTP ${res.status}`);
   }
 }
 

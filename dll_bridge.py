@@ -1,4 +1,4 @@
-"""
+r"""
 Named pipe client for communicating with the injected dbvbot.dll.
 
 The DLL creates \\.\pipe\dbvbot and serves creature data as newline-delimited
@@ -14,6 +14,30 @@ log = logging.getLogger("dll_bridge")
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+# ctypes defaults to a 32-bit int return value. HANDLE is pointer-sized,
+# including INVALID_HANDLE_VALUE on 64-bit Python.
+from ctypes import wintypes
+kernel32.CreateFileA.argtypes = [wintypes.LPCSTR, wintypes.DWORD, wintypes.DWORD,
+                                ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+kernel32.CreateFileA.restype = wintypes.HANDLE
+kernel32.SetNamedPipeHandleState.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD),
+                                           ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD)]
+kernel32.SetNamedPipeHandleState.restype = wintypes.BOOL
+kernel32.WaitNamedPipeA.argtypes = [wintypes.LPCSTR, wintypes.DWORD]
+kernel32.WaitNamedPipeA.restype = wintypes.BOOL
+kernel32.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                             ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+kernel32.ReadFile.restype = wintypes.BOOL
+kernel32.WriteFile.argtypes = kernel32.ReadFile.argtypes
+kernel32.WriteFile.restype = wintypes.BOOL
+kernel32.PeekNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                                  ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+                                  ctypes.POINTER(wintypes.DWORD)]
+kernel32.PeekNamedPipe.restype = wintypes.BOOL
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.CloseHandle.restype = wintypes.BOOL
+
+
 # Win32 constants
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
@@ -27,9 +51,14 @@ PIPE_NAME = b"\\\\.\\pipe\\dbvbot"
 class DllBridge:
     """Client for the dbvbot.dll named pipe."""
 
-    def __init__(self):
+    def __init__(self, *, read_only=False):
+        self.read_only = read_only
+        self.pipe_name = b"\\\\.\\pipe\\dbvbot_marker_20261117" if read_only else PIPE_NAME
         self._handle = None
         self._buffer = ""
+        self.marker_ready=False;self.marker_seen=0;self.marker_sequence=0
+        self.marker_desired=0;self.marker_sent_at=-1e9;self.marker_sent_id=None
+        self.client_target=0xFFFFFFFF;self.marked_target=0;self.marker_result=0
         self._extras = []   # non-creature JSON responses (scan results, etc.)
         self.dll_pos = (0, 0, 0)  # player position from DLL global memory scan
 
@@ -43,7 +72,7 @@ class DllBridge:
             return True
 
         handle = kernel32.CreateFileA(
-            PIPE_NAME,
+            self.pipe_name,
             GENERIC_READ | GENERIC_WRITE,
             0,       # no sharing
             None,    # default security
@@ -52,14 +81,16 @@ class DllBridge:
             None,    # no template
         )
 
-        if handle == INVALID_HANDLE_VALUE:
+        if handle is None or handle == INVALID_HANDLE_VALUE:
             err = ctypes.get_last_error()
             log.debug(f"Pipe not available (error {err})")
             return False
 
         # Set to byte read mode
         mode = ctypes.wintypes.DWORD(PIPE_READMODE_BYTE)
-        kernel32.SetNamedPipeHandleState(handle, ctypes.byref(mode), None, None)
+        if not kernel32.SetNamedPipeHandleState(handle, ctypes.byref(mode), None, None):
+            kernel32.CloseHandle(handle)
+            return False
 
         self._handle = handle
         self._buffer = ""
@@ -70,11 +101,15 @@ class DllBridge:
         """Check if the named pipe exists (DLL is loaded and running)."""
         if self._handle is not None:
             return True  # already connected
-        return bool(kernel32.WaitNamedPipeA(PIPE_NAME, 0))
+        if kernel32.WaitNamedPipeA(self.pipe_name, 1):
+            return True
+        # A busy pipe still exists; querying availability must not consume its
+        # sole connection or report an already-connected bridge as missing.
+        return ctypes.get_last_error() in (121, 231)  # SEM_TIMEOUT, PIPE_BUSY
 
     def send_command(self, cmd: dict) -> bool:
         """Send a JSON command to the DLL. Returns True on success."""
-        if self._handle is None:
+        if self.read_only or self._handle is None:
             return False
 
         data = (json.dumps(cmd) + "\n").encode("utf-8")
@@ -85,6 +120,29 @@ class DllBridge:
             self.disconnect()
             return False
         return True
+
+    def set_target_marker(self, creature_id):
+        """Called only after dispatch or manual cancellation; no pipe IO here."""
+        if type(creature_id) is not int or (creature_id and not 0x40000000<=creature_id<0x80000000):return False
+        self.marker_desired=creature_id
+        return True
+
+    def refresh_target_marker(self, *, active):
+        """Short visual lease; no native Game target or arbitrary commands."""
+        import time
+        now=time.monotonic()
+        if not active:self.marker_desired=0
+        ident=self.marker_desired
+        if (not self.read_only or self._handle is None or not self.marker_ready
+            or not 0<=now-self.marker_seen<.5 or self.client_target==0xFFFFFFFF):return False
+        if ident==self.marker_sent_id and now-self.marker_sent_at<.3:return False
+        self.marker_sequence+=1
+        data=f'M {ident} {self.client_target} {self.marker_sequence}\n'.encode('ascii')
+        written=ctypes.wintypes.DWORD(0)
+        ok=kernel32.WriteFile(self._handle,data,len(data),ctypes.byref(written),None)
+        if ok and written.value==len(data):
+            self.marker_sent_at=now;self.marker_sent_id=ident;return True
+        return False
 
     def read_creatures(self) -> list[dict] | None:
         """Non-blocking read of creature data from the pipe.
@@ -129,6 +187,14 @@ class DllBridge:
                 data = json.loads(line)
                 if "creatures" in data:
                     creatures = data["creatures"]
+                    if self.read_only:
+                        import time
+                        self.marker_ready=data.get('target_marker') is True
+                        self.marker_seen=time.monotonic()
+                        value=data.get('client_target')
+                        self.client_target=value if type(value)is int and 0<=value<=0xFFFFFFFF else 0xFFFFFFFF
+                        self.marked_target=data.get('marked_target',0)
+                        self.marker_result=data.get('target_marker_result',0)
                     # Store DLL-reported position (from global memory scan)
                     if "px" in data and data["px"] > 0:
                         self.dll_pos = (data["px"], data["py"], data["pz"])
@@ -149,7 +215,9 @@ class DllBridge:
         return extras
 
     def disconnect(self):
-        """Close the pipe handle."""
+        """Close the pipe handle; the visual lease expires in <= 1.2 s."""
+        self.marker_desired=0;self.marker_ready=False;self.marker_seen=0
+        self.marker_sent_id=None
         if self._handle is not None:
             try:
                 kernel32.CloseHandle(self._handle)
