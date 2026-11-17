@@ -11,6 +11,8 @@ import asyncio
 import struct
 import logging
 import time
+from collections import deque
+from command_delivery import CommandReceipt, QueuedCommand
 from crypto import (
     rsa_decrypt, rsa_encrypt, xtea_decrypt, xtea_encrypt,
     adler32_checksum, generate_proxy_rsa_keypair, get_default_rsa_key,
@@ -62,7 +64,11 @@ class OTProxy:
         self.on_login_success = None
         self.on_game_disconnected = None
         self.on_raw_server_data = None  # Called with full decrypted bytes
-        self._inject_queue = asyncio.Queue()
+        self._inject_queue = asyncio.Queue(maxsize=256)
+        self.command_delivery = True
+        self.session_generation = 0
+        self.command_sequence = 0
+        self.command_history = deque(maxlen=100)
         self.injections_paused = False
 
         # Stats
@@ -138,79 +144,44 @@ class OTProxy:
             self._server = None
 
     async def _handle_client_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        """Handle a new client connection."""
-        # Track this handler task so it can be cancelled on reset
-        self._connection_task = asyncio.current_task()
-        client_addr = writer.get_extra_info('peername')
-        mode = "LOGIN" if self.is_login_proxy else "GAME"
-        log.info(f"[{mode}] Client connected from {client_addr}")
-
-        # H6: If there's already an active session, close the old one first
-        if self.client_writer is not None:
-            log.warning(f"[{mode}] New connection while session active — closing old connection")
-            try:
-                self.client_writer.close()
-                await self.client_writer.wait_closed()
-            except Exception:
-                pass
-            if self.server_writer is not None:
-                try:
-                    self.server_writer.close()
-                    await self.server_writer.wait_closed()
-                except Exception:
-                    pass
-
-        self.client_reader = reader
-        self.client_writer = writer
-        self._ts_client_connected = time.time()
-        self.logged_in = False
-        self.xtea_keys = None
-
+        """Serialize ownership changes; an old handler cannot clear a newer session."""
+        if not hasattr(self,'_handover_lock'):self._handover_lock=asyncio.Lock()
+        generation=None
         try:
-            self.server_reader, self.server_writer = await asyncio.open_connection(
-                self.server_host, self.server_port
-            )
-            self._ts_server_connected = time.time()
-            log.info(f"[{mode}] Connected to server {self.server_host}:{self.server_port}")
-        except Exception as e:
-            log.error(f"[{mode}] Failed to connect to server: {e}")
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-            return
-
-        try:
-            if self.is_login_proxy:
-                await self._handle_login_session()
-            else:
-                await self._run_relay_loop()
+            async with self._handover_lock:
+                previous=self._connection_task
+                if previous and previous is not asyncio.current_task() and not previous.done():
+                    previous.cancel()
+                    await asyncio.gather(previous,return_exceptions=True)
+                self._connection_task=asyncio.current_task()
+                self.session_generation+=1;generation=self.session_generation
+                self.discard_commands('session_changed')
+                self.client_reader=reader;self.client_writer=writer
+                self.server_reader=None;self.server_writer=None
+                self.logged_in=False;self.xtea_keys=None
+                self._ts_client_connected=time.time()
+            self.server_reader,self.server_writer=await asyncio.open_connection(self.server_host,self.server_port)
+            self._ts_server_connected=time.time()
+            if self.is_login_proxy:await self._handle_login_session()
+            else:await self._run_relay_loop()
         except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            log.error(f"[{mode}] Error: {e}")
+            raise
+        except Exception as exc:
+            log.error('Proxy connection ended: %s',type(exc).__name__)
         finally:
-            log.info(f"[{mode}] Game connection ended, cleaning up")
-            self.logged_in = False
             writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-            if self.server_writer:
-                self.server_writer.close()
-                try:
-                    await self.server_writer.wait_closed()
-                except Exception:
-                    pass
-            self.client_writer = None
-            self.server_writer = None
-            if self.on_game_disconnected:
-                try:
-                    self.on_game_disconnected()
-                except Exception as e:
-                    log.error(f"[{mode}] on_game_disconnected callback error: {e}")
+            if generation is not None and self.session_generation==generation:
+                self.discard_commands('disconnected');self.logged_in=False;self.xtea_keys=None
+                server_writer=self.server_writer
+                self.client_writer=None;self.server_writer=None
+                if server_writer:server_writer.close()
+                if self.on_game_disconnected:
+                    try:self.on_game_disconnected()
+                    except Exception:log.exception('Game disconnect callback failed')
+                for stream in (writer,server_writer):
+                    if stream:
+                        try:await asyncio.wait_for(stream.wait_closed(),timeout=1)
+                        except (Exception,asyncio.CancelledError):pass
 
     async def _handle_login_session(self):
         """
@@ -597,21 +568,37 @@ class OTProxy:
 
     async def inject_to_server(self, payload: bytes, *, guard=None):
         """Inject a packet to the game server."""
-        if self.injections_paused:
-            return
-        if not self.logged_in or self.xtea_keys is None:
-            log.warning("Cannot inject: not logged in yet")
-            return
-        await self._inject_queue.put(('server', payload, guard) if guard is not None else ('server', payload))
+        return self.enqueue_command('server', payload, guard)
 
     async def inject_to_client(self, payload: bytes):
         """Inject a packet to the client."""
-        if self.injections_paused:
-            return
-        if not self.logged_in or self.xtea_keys is None:
-            log.warning("Cannot inject: not logged in yet")
-            return
-        await self._inject_queue.put(('client', payload))
+        return self.enqueue_command('client', payload)
+
+    def enqueue_command(self,target,payload,guard=None):
+        if not getattr(self,'command_delivery',False):
+            # Legacy adapters remain supported; production connections use receipts.
+            if not self.injections_paused and self.logged_in and self.xtea_keys is not None:
+                self._inject_queue.put_nowait((target,payload,guard) if guard is not None else (target,payload))
+            return None
+        self.command_sequence+=1
+        receipt=CommandReceipt(self.command_sequence,self.session_generation,target,payload[0] if payload else None)
+        self.command_history.append(receipt)
+        if self.injections_paused:receipt.finish('rejected','automation_paused')
+        elif not self.logged_in or self.xtea_keys is None:receipt.finish('rejected','not_connected')
+        elif not payload:receipt.finish('rejected','empty_payload')
+        elif self._inject_queue.full():receipt.finish('rejected','queue_full')
+        else:self._inject_queue.put_nowait(QueuedCommand(target,payload,guard,receipt))
+        return receipt
+
+    def discard_commands(self,reason):
+        while not self._inject_queue.empty():
+            queued=self._inject_queue.get_nowait()
+            receipt=getattr(queued,'receipt',None)
+            if receipt:receipt.finish('cancelled',reason)
+
+    def command_snapshot(self):
+        return dict(session=getattr(self,'session_generation',0),queued=self._inject_queue.qsize(),
+                    recent=[r.snapshot() for r in list(getattr(self,'command_history',()))[-20:]])
 
     def _notify_target_marker(self,payload):
         if len(payload)!=5 or payload[0]!=0xA1:return
@@ -625,36 +612,53 @@ class OTProxy:
         while True:
             queued = await self._inject_queue.get()
             target, payload = queued[:2]
+            receipt=getattr(queued,'receipt',None)
+            wrote=False
+            if receipt and receipt.status!='queued':continue
             if self.injections_paused:
+                if receipt:receipt.finish('cancelled','automation_paused')
                 continue
+            if receipt and receipt.session!=self.session_generation:
+                receipt.finish('cancelled','session_changed');continue
+            if receipt and time.monotonic()>receipt.expires:
+                receipt.finish('expired','deadline');continue
             try:
-                if len(queued)==3 and not queued[2]():
+                if len(queued)==3 and queued[2] is not None and not queued[2]():
+                    if receipt:receipt.finish('rejected','conditions_changed')
                     continue  # Cancelled/expired navigation must not outlive its owner.
                 encrypted = self._encrypt_game_packet(payload)
                 packet = self._wrap_packet(encrypted)
 
                 if target == 'server' and self.server_writer:
-                    self.server_writer.write(packet)
-                    await self.server_writer.drain()
+                    if receipt:receipt.write_started=True
+                    self.server_writer.write(packet);wrote=True
+                    await asyncio.wait_for(self.server_writer.drain(),timeout=1)
+                    if receipt:receipt.finish('dispatched')
                     self._notify_target_marker(payload)
                     log.info(f"Injected to server: opcode=0x{payload[0]:02X} len={len(payload)}B")
                 elif target == 'client' and self.client_writer:
-                    self.client_writer.write(packet)
-                    await self.client_writer.drain()
+                    if receipt:receipt.write_started=True
+                    self.client_writer.write(packet);wrote=True
+                    await asyncio.wait_for(self.client_writer.drain(),timeout=1)
+                    if receipt:receipt.finish('dispatched')
                     log.info(f"Injected to client: opcode=0x{payload[0]:02X} len={len(payload)}B")
                 else:
+                    if receipt:receipt.finish('rejected','writer_unavailable')
                     log.warning(f"Inject DROPPED: target={target} "
                                 f"server_writer={self.server_writer is not None} "
                                 f"client_writer={self.client_writer is not None}")
+            except asyncio.CancelledError:
+                if receipt:receipt.finish('unknown' if wrote or receipt.write_started else 'cancelled','dispatcher_stopped')
+                raise
             except Exception as e:
-                log.error(f"Injection error: {e}")
+                if receipt:receipt.finish('unknown' if wrote or receipt.write_started else 'failed',type(e).__name__)
+                log.error(f"Injection error: {type(e).__name__}")
 
     def pause_injections(self):
         """Latch off bot traffic without interrupting the user's relay connection."""
         self.injections_paused = True
         self._notify_target_marker(b'\xa1\0\0\0\0')
-        while not self._inject_queue.empty():
-            self._inject_queue.get_nowait()
+        self.discard_commands('automation_paused')
 
     async def send_emergency_stop(self):
         """Only cancellation packets may bypass the emergency latch."""

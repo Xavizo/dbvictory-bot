@@ -90,6 +90,40 @@ def test_equivalent_tools_are_selected_by_function():
     assert not transition_tools({**dig_edge(),'tool_id':3003})
 
 
+@pytest.mark.parametrize('slot',range(1,11))
+def test_tool_source_accepts_every_verified_equipment_slot(slot):
+    from adaptive_cavebot import tool_location
+    inventory=dict(slots={slot:8900},sources=[])
+    assert tool_location(inventory,[3003,8899,8900])==((65535,slot,0),8900,0)
+    assert tool_location(inventory,[3003,3457]) is None
+
+
+@pytest.mark.parametrize('moved_before_send',[False,True])
+def test_rope_uses_aio_from_slot_ten_and_rechecks_source(state,tmp_path,monkeypatch,moved_before_send):
+    import client_equipment
+    c,spot,e=configured(state,tmp_path);c.status='running'
+    fake_tools(monkeypatch,())
+    inventory=dict(slots={10:8900},sources=[])
+    monkeypatch.setattr(client_equipment,'EquipmentReader',lambda *args:SimpleNamespace(snapshot=lambda:inventory))
+    sent=[]
+    async def inject(payload,guard=None):
+        assert payload[:9]==bytes([0x83,0xff,0xff,10,0,0,0xc4,0x22,0])
+        assert guard()
+        if moved_before_send:
+            inventory['slots']={5:8900}
+            assert not guard()
+            raise ValueError('synthetic source moved')
+        sent.append(payload);state.game_state.position=tuple(e['exit'])
+    state.game_proxy.inject_to_server=inject
+    if moved_before_send:
+        with pytest.raises(ValueError,match='source moved'):
+            asyncio.run(c.transition(e,state.passive_map_monitor.snapshot()))
+        assert not sent and state.game_state.position==tuple(e['origin'])
+    else:
+        asyncio.run(c.transition(e,state.passive_map_monitor.snapshot()))
+        assert len(sent)==1 and state.game_state.position==tuple(e['exit'])
+
+
 def test_dig_can_substitute_separate_shovel_for_recorded_aio(state,tmp_path,monkeypatch):
     e=dig_edge(8900);hole=cell(*e['entry'],item=e['item_id'])
     c,_,_=setup(state,tmp_path,[cell(*e['origin']),hole,cell(*e['exit'])],[e['origin'],e['exit']],[e])

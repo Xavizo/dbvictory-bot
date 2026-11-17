@@ -220,12 +220,18 @@ async def run(bot):
     _dbg(f"[TIMING] run() START — waiting for connection & player_id")
 
     # Wait for bot connection and player_id
-    while not bot.is_connected or bot.player_id == 0:
+    while not bot.is_connected or (not bridge.read_only and bot.player_id == 0):
         await bot.sleep(1)
 
     _dbg(f"[TIMING] connected, player_id={bot.player_id:#010x} t={time.time()-t_start:.1f}s")
 
-    if not await _connect_with_inject(bridge, bot):
+    try:
+        connected = await _connect_with_inject(bridge, bot)
+    except BaseException:
+        bridge.disconnect()
+        raise
+    if not connected:
+        bridge.disconnect()
         _dbg(f"[TIMING] connect_with_inject FAILED t={time.time()-t_start:.1f}s")
         return
 
@@ -239,10 +245,20 @@ async def run(bot):
     player_source = None
     if bridge.read_only:
         from passive_map_win32 import ReadOnlyClient
-        from client_player_state import ClientPlayerReader
-        gs.client_state_required = True
+        from client_player_state import ClientPlayerReader, bind_local_player
         player_source = ReadOnlyClient()
-        player_reader = ClientPlayerReader(player_source, bot.player_id)
+        player_reader = ClientPlayerReader(player_source, 0)
+        try:
+            bound = await bind_local_player(bot, state, gs, player_reader)
+        except BaseException:
+            player_source.close()
+            bridge.disconnect()
+            raise
+        if not bound:
+            bot.log("[DLL] Brak potwierdzonej postaci dla bieżącego logowania.")
+            player_source.close()
+            bridge.disconnect()
+            return
 
     # Expose bridge on game_state so other actions (auto_targeting) can send commands
     gs.dll_bridge = bridge
@@ -272,13 +288,14 @@ async def run(bot):
     dump_creature_pending = False  # waiting for dump_creature response
 
     try:
-        while bot.is_connected:
+        while bot.is_connected and state.game_state is gs:
             if player_reader is not None:
                 try:
                     gs.client_snapshot = player_reader.snapshot()
-                except Exception:
+                    gs.client_state_error = None
+                except Exception as exc:
                     # Existing samples expire after 500 ms; packet cache cannot override them.
-                    pass
+                    gs.client_state_error = type(exc).__name__
             creatures = bridge.read_creatures()
             if bridge.read_only:
                 bridge.refresh_target_marker(active=_marker_active(state,gs,marker_proxy))

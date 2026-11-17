@@ -793,6 +793,7 @@ def _build_state_json() -> str:
         "potion_diagnostics": st.potion_diagnostics.snapshot(),
         "barrier_band": st.band_scheduler.snapshot(),
         "speed_up": st.speed_scheduler.snapshot() if getattr(st,"speed_scheduler",None) else None,
+        "commands": st.game_proxy.command_snapshot() if st.game_proxy and hasattr(st.game_proxy,'command_snapshot') else None,
         "actions": actions,
         "packets_from_server": pkt_server,
         "packets_from_client": pkt_client,

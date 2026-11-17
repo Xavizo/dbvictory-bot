@@ -35,16 +35,26 @@ class SpeedScheduler:
     def begin(self):
         self.status='Czekam na odczyt efektu';self.previous=None;self.pending=None
         self.end=None;self.due=None;self.offset=None;self.last_ack=0;self.last_sent=-1e9
-        self.attempts=0;self.confirmed=False
+        self.attempts=0;self.confirmed=False;self.receipt=None
 
     def _cycle(self, started, cfg):
         self.offset=self.draw(-cfg['before'],cfg['after'])
         self.end=started+cfg['duration'];self.due=max(self.last_sent+2,self.end+self.offset)
+        from command_delivery import confirm
+        confirm(getattr(self,'receipt',None),'haste_observed')
+        self.receipt=None
         self.pending=None;self.attempts=0;self.confirmed=True
 
     def inspect(self, sample, cfg, ack=0, now=None):
         now=time.monotonic() if now is None else now;cfg=validate_config(cfg)
-        if not fresh(sample,now):self.status='Czekam na świeży odczyt efektu';return False
+        if not fresh(sample,now):
+            if not sample or not 0<=now-sample.get('monotonic',-100)<=.5:
+                self.status='Brak świeżych danych postaci · Speed Up czeka na odczyt klienta'
+            elif sample.get('hp',0)<=0:
+                self.status='Speed Up wstrzymany · HP wynosi 0'
+            else:
+                self.status='Brak odczytu efektu przyspieszenia'
+            return False
         active=bool(sample['conditions']&2);newly_active=active and self.previous is False
         acknowledged=False
         if ack>self.last_ack:
@@ -96,9 +106,14 @@ async def run_speed(bot):
                                 and state.game_proxy is proxy and proxy.logged_in and state.game_state is gs and bot.player_id==pid
                                 and validate_config(state.settings.get('actions',{}).get(NAME,{}))==cfg
                                 and fresh(getattr(gs,'client_snapshot',None),time.monotonic()))
-                scheduler.sent()
-                await proxy.inject_to_server(build_say_packet('speed up'),guard=guard)
-                bot.log('Speed Up: wysłano jedną próbę; oczekiwanie na potwierdzenie efektu.')
+                from command_delivery import delivery,attempted
+                receipt=await delivery(await proxy.inject_to_server(build_say_packet('speed up'),guard=guard))
+                if attempted(receipt):
+                    scheduler.sent();scheduler.receipt=receipt
+                    bot.log('Speed Up: przekazano próbę; oczekiwanie na potwierdzenie efektu.')
+                else:
+                    scheduler.status='Speed Up nie wysłano: '+str(receipt.reason)
+                    scheduler.due=time.monotonic()+.5
             await bot.sleep(.1)
     finally:
         alive=False;scheduler.status='Wyłączony'

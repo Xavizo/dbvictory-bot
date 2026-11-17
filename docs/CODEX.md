@@ -1,5 +1,114 @@
 # Codex on Windows
 
+
+## Staged session and command architecture (2026-11-17)
+
+Rollback baseline is private GitHub tag `v1.0.0`, commit
+`c319808d8c260e240f6704fd2038c5340e8086ce`. This is a checkpoint with known
+issues, not a claim that every gameplay path has been validated. User settings,
+local atlas databases, private recordings, logs and exported client assets are
+excluded. The candidate is developed on `codex/session-command-lifecycles` in
+an isolated worktree. Do not deploy sources or reload engine modules during play.
+
+Stage 1: every accepted proxy connection owns a monotonically increasing session
+number and a new GameState. Connection handover awaits old relay cleanup. Action
+contexts and queued commands retain session identity; old commands cannot enter a
+reconnected session, even when the proxy object or player ID is reused. Delayed
+packet scans may update their captured state but cannot publish old chat or potion
+evidence to the new session. The already-prepared LocalPlayer/relogin fix is included.
+
+The bounded injection queue returns a CommandReceipt. States distinguish queued,
+dispatched, rejected, expired, cancelled, failed-before-write and unknown-after-write.
+The dispatcher rechecks TTL, session and live guard before writing. Action cancellation
+invalidates pending commands; a timeout/cancellation after write is uncertain and
+must not be treated as proof of failure or automatically retried as an item use.
+Cooldowns are reserved after possible dispatch, never after a definite rejection.
+A rejected/uncertain target selection does not authorize a spell on an older target.
+
+Transport dispatch is NOT server execution. Position acknowledgments, observed band
+equipment and Haste observations attach separate effect evidence where available.
+Targeted spells have no universal success ACK; do not invent one from socket drain
+or an HP delta. Potion diagnostics retain their existing typed server/count evidence.
+API state exposes only bounded command metadata, no payload or credentials.
+
+Stage 2: CavebotDomains supervises separate combat evaluation and navigation tasks.
+Combat publishes chase/return intents; one navigation worker executes all movement
+and transitions. Context-local command scopes prevent combat from inheriting another
+coroutine's movement guard or receipt. Healing is a separate existing action task
+with its own session-bound guarded dispatch; neither cavebot worker cancels it.
+
+An uncertain transition holds movement for explicit review and does not repeat a
+tool. Combat stays active when its own fresh inputs permit it. Temporary observer
+gaps wait for fresh inputs. A combat programming error holds route movement and
+reports a fault while healing remains independent. Global Stop/Pause, disconnect,
+identity change and death still stop both cavebot workers. Ending a non-loop route
+ends movement, while independently enabled combat continues. Existing enable flags,
+profiles, routes and cooldown settings are not migrated or implicitly enabled.
+
+The UI is now named Cavebot; internal adaptive_cavebot IDs and stored schemas remain
+compatible. The run bar reports movement, combat and potion task states separately.
+The pending UI section controls, private-chat mode fix, equipment-slot AiO lookup
+and post-combat return fix are retained in this candidate.
+
+This is task isolation within the existing process/event loop, not OS-process
+isolation. CPU-heavy decrypt/parser work and proxy lifetime remain a later stage.
+Synthetic tests cannot prove game server acceptance or eliminate client crash risk.
+Before installation: preserve current settings and saved drafts, coordinate logout,
+stop the old session, install the validated bundle, then restart with movement and
+combat OFF. First verify read-only identity/HP/Ki/map, then coordinate any live test.
+
+## Prepared section controls, chat mapping, recovery and relogin identity (2026-11-17)
+
+This package is staged separately; do not reload engine modules during gameplay.
+Coordinate logout before switching the engine. Preserve current settings and
+do not restart navigation/combat as a side effect. The panel has matching native
+checkboxes (custom appearance) above the movement/combat labels; MonsterRules
+uses the same collapsible details section as shared spells. Editing semantics,
+profile bindings and action enable flags are unchanged.
+
+The previous alert parser confused internal MessageModes with DBV wire values.
+Read-only verification of the pinned 8c15e00a...a54f5e8 client showed PrivateFrom
+wire 6 (not 4), GM private 14, and NPC wire 4/5. parseTalk at RVA 1A99xx uses
+U32 statement, string name, U16 level and converted U8 mode in this session.
+The feature flags and bounded mode tree were read without message content.
+Known NPC/channel/monster speech is now consumed without alerting, so a following
+private message remains parseable. Unknown custom modes and opaque map data
+still stop sequential scanning; never byte-scan chat out of those payloads.
+Live private-message delivery remains to be verified after session replacement.
+
+No-target combat drops an old return anchor once the player is already on the
+current route cursor. This prevents waiting forever for an old blocked/offscreen
+fight tile after route recovery. A real off-route chase retains its return path.
+Manual movement grace no longer latches a sub-limit lure group into stationary
+combat. Unreachable return paths now expose the usual tile blockage diagnostic;
+combat snapshots include return_anchor. Live observation showed a return wait,
+but did not establish the user's log item as the terrain cause.
+
+Tool lookup checks all ten verified inventory slots, including AiO 8900 observed
+in slot 10, as well as open containers. Inventory positions use (65535,slot,0)
+and are revalidated with the item ID before dispatch. No items are moved/equipped
+and actionbar shortcuts are not treated as inventory. Slot-10 use is covered by
+synthetic transport tests; server acceptance remains a coordinated live check.
+
+Speed Up diagnosis: the user reconnected at 17:38; the server assigned a new
+LocalPlayer ID, while the bridge retained the previous ID. HP/Ki stayed 0/0 and
+Speed Up never sent a cast. The pinned client's getter signatures, current
+HP/Ki and Haste condition bit were verified by bounded read-only reads.
+
+Each login now gets a new GameState; disconnect cancels the internal bridge too.
+On the observer profile the bridge identifies the unique LocalPlayer vtable on
+the verified center tile, validates ID/stats twice, then pins that ID for the
+session. Packet parsing cannot replace this verified identity. User actions wait
+for identity binding before capturing an ID. A delayed old login callback cannot
+start actions in a newer session. Action settings and emergency-pause flags are
+preserved; navigation remains excluded from automatic login startup.
+
+The candidate reader was checked against the live client without injecting,
+casting, moving or altering runtime state. Tests cover reconnect, torn/ambiguous
+identity, stale callbacks, passive-reader cancellation and synthetic Speed Up
+dispatch after binding. Actual automatic renewal and a second live login remain
+to be checked after the coordinated session switch. No engine hot reload.
+
 ## Pending combined package (2026-11-17, after 15:30)
 
 These sources are prepared and tested separately from the active game session.

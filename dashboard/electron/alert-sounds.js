@@ -17,15 +17,21 @@ function createSoundConsumer(playSound, now=Date.now) {
     consume(state, players=[]) {
       if(!state||typeof state.session!=='string'||!Number.isSafeInteger(state.latest_id)||!Array.isArray(state.events))return;
       if(state.session!==session){session=state.session;cursor=state.latest_id;queue=[];lastPlayer=-Infinity;}
-      else {
+      if(state.paused){
+        cursor=state.latest_id;queue=[];lastPlayer=-Infinity;
+        return;
+      }
+      const silencedThrough=state.silenced_through??0;
+      cursor=Math.max(cursor,silencedThrough);
+      if(state.latest_id>cursor){
         for(const e of state.events){
           const age=now()/1000-e.at;
           if(Number.isSafeInteger(e.id)&&e.id>cursor&&e.id<=state.latest_id&&['private','default'].includes(e.kind)&&
-              allowed(state,e.kind)&&age>=0&&age<10)queue.push({kind:e.kind,expires:now()+30000});
+              allowed(state,e.kind)&&age>=0&&age<10)queue.push({id:e.id,kind:e.kind,expires:now()+30000});
         }
         cursor=Math.max(cursor,state.latest_id);queue=queue.slice(-100);
       }
-      queue=queue.filter(e=>e.expires>=now()&&allowed(state,e.kind));
+      queue=queue.filter(e=>e.id>silencedThrough&&e.expires>=now()&&allowed(state,e.kind));
       if(queue.length&&now()-lastMessage>=700){if(playSound('message')!==false){queue.shift();lastMessage=now();}return;}
       if(!players.length||!allowed(state,'player')){lastPlayer=-Infinity;return;}
       if(now()-lastPlayer>=5000&&now()-lastMessage>=700&&playSound('player')!==false)lastPlayer=now();
@@ -36,6 +42,19 @@ function createSoundConsumer(playSound, now=Date.now) {
 
 function startAlertSounds({token,fetchImpl,beep,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now}) {
   const consumer=createSoundConsumer(beep,now);let stopped=false,timer,request;
+  // Older engines have independent alert preferences but no session-wide mute.
+  let panelPaused=false, legacySession=null, silencedThrough=0, lastId=0, resumedAt=null;
+  function panelPause(value) {
+    if (value !== undefined) {
+      if (typeof value !== 'boolean') throw new TypeError('Invalid alert pause');
+      if (value!==panelPaused) {
+        panelPaused=value;
+        silencedThrough=lastId;
+        resumedAt=value?null:now()/1000;
+      }
+    }
+    return {paused:panelPaused, session:legacySession, through:silencedThrough};
+  }
   async function poll(){
     if(stopped||!token)return;
     try{
@@ -43,12 +62,31 @@ function startAlertSounds({token,fetchImpl,beep,setTimer=setTimeout,clearTimer=c
       try{
         const response=await fetchImpl('http://127.0.0.1:8089/api/state',{
           headers:{Authorization:`Bearer ${token}`,Origin:'http://127.0.0.1:4747'},cache:'no-store',redirect:'error',signal:request.signal});
-        if(response.ok){const data=await response.json();if(!stopped)consumer.consume(data.alerts,visiblePlayers(data,now()));}
+        if(response.ok){
+          const data=await response.json();
+          if(!stopped && data.alerts){
+            let alerts=data.alerts;
+            if(typeof alerts.paused!=='boolean'){
+              if(legacySession!==alerts.session){legacySession=alerts.session;silencedThrough=0;}
+              lastId=alerts.latest_id;
+              if(panelPaused)silencedThrough=lastId;
+              else if(resumedAt!==null){
+                for(const e of alerts.events??[]){
+                  if(e.at<=resumedAt)silencedThrough=Math.max(silencedThrough,e.id);
+                }
+              }
+              alerts={...alerts,paused:panelPaused,silenced_through:silencedThrough};
+            } else {
+              panelPaused=false;
+            }
+            consumer.consume(alerts,alerts.paused?[]:visiblePlayers(data,now()));
+          }
+        }
       }finally{clearTimer(timeout);request=null;}
     }catch{/* No chat or credentials in logs. No repetition without a fresh response. */}
     if(!stopped){timer=setTimer(poll,750);timer?.unref?.();}
   }
   void poll();
-  return {testSound:consumer.testSound,stop(){stopped=true;request?.abort();clearTimer(timer);}};
+  return {panelPause,testSound:()=>!panelPaused&&consumer.testSound(),stop(){stopped=true;request?.abort();clearTimer(timer);}};
 }
 module.exports={createSoundConsumer,startAlertSounds,visiblePlayers};

@@ -117,14 +117,14 @@ class CombatRuntime:
         self.wave_turn=None;self.manual_target=0;self.manual_target_at=0
         self.blocker_id=0;self.blocker_since=None
         self.engaged_count=0;self.nearby_count=0;self.transition_clear_since=None;self.group_clear_since=None
-        self.stalled_targets={}
+        self.stalled_targets={};self.defer_movement=False;self.movement_intent=None
 
     def snapshot(self):
         lure=None
         if self.policy_mode=='lure' and not self.owner.combat_only:
             lure=dict(following=len(self.pursuit.following),goal=self.config['lure_count'],
                       waiting=self.lure_waiting,stop_reason=self.lure_stop_reason,engaged=self.engaged_count,nearby=self.nearby_count)
-        return dict(phase=self.phase,target=self.target,enabled=self.config['enabled'],lure=lure,
+        return dict(phase=self.phase,target=self.target,enabled=self.config['enabled'],lure=lure,return_anchor=self.anchor,
                     spells=self.spell_checks,last_spell_attempt=self.last_spell_attempt)
 
     def reset_lure(self):
@@ -246,11 +246,22 @@ class CombatRuntime:
         if not self.sent_target or self.manual_override:return
         from protocol import build_attack_packet
         owner=self.owner;generation=owner.generation;stamp=time.monotonic()
-        self.sent_target=0
+        from session_lifetime import SessionLease
+        from command_delivery import delivery,attempted
+        lease=SessionLease(owner.state)
         if owner.state.connected:
-            await owner.state.game_proxy.inject_to_server(build_attack_packet(0),guard=lambda:
-                getattr(owner.state,'adaptive_cavebot',None) is owner and owner.generation==generation and
+            receipt=await delivery(await owner.state.game_proxy.inject_to_server(build_attack_packet(0),guard=lambda:
+                lease.valid() and getattr(owner.state,'adaptive_cavebot',None) is owner and owner.generation==generation and
                 time.monotonic()-stamp<.5 and not self.manual_override)
+            )
+            if attempted(receipt):self.sent_target=0
+
+    async def request_step(self,target,validate=None):
+        if not self.defer_movement:
+            return await self.owner.step(target,validate=validate)
+        self.movement_intent=dict(origin=list(self.owner.state.game_state.position),target=list(target),
+                                  validate=validate,expires=time.monotonic()+.5)
+        return True
 
     async def tick(self,sample,at_transition=False,allow_movement=True):
         """True consumes this iteration; False allows one normal route step."""
@@ -288,13 +299,19 @@ class CombatRuntime:
         if current is None:
             self.spell_checks=evaluate_spells(cfg['spells'],o.state.game_state,candidates,None,now,self.deadlines,self.cast_after,sample)
             await self.cancel_attack();self.target=None;self.phase='route';self.reset_lure();self.battle_started=None;self.last_health=None;self.policy_mode=None
+            # Local recovery/route progression already placed us on the current
+            # leg. An older fight anchor must not pull us back or wait forever
+            # on an offscreen/now-blocked tile (e.g. a log or a closed door).
+            if not o.combat_only and o.path and pos==o.path[o.index]:
+                self.anchor=None
             if allow_movement and self.anchor and pos!=self.anchor:
                 self.phase='return';o.reason='Powrót na trasę po walce.'
                 path=detour(sample['cells'],pos,self.anchor)
                 if not path or len(path)<2:
-                    o.reason='Powrót po walce: czekam na wolne pole; walka pozostaje aktywna.'
+                    o.describe_blockage(sample,self.anchor)
+                    o.reason='Powrót po walce — '+o.reason
                     await asyncio.sleep(.05);return True
-                if not await o.step(path[1]):o.reason='Powrót po walce: ponownie sprawdzam pozycję.'
+                if not await self.request_step(path[1]):o.reason='Powrót po walce: ponownie sprawdzam pozycję.'
                 return True
             self.anchor=None
             return False
@@ -328,7 +345,7 @@ class CombatRuntime:
         if blocker and self.lure_stop_reason:
             blocker=None;self.blocker_id=0;self.blocker_since=None
         self.lure_waiting=False
-        if not luring and not blocker and self.battle_started is None:
+        if not luring and not blocker and self.battle_started is None and (mode!='lure' or self.lure_stop_reason):
             self.battle_started=now;self.progress_at=now
             if self.anchor is None and not o.combat_only:self.anchor=pos
         progress=(current['id'],current['health'])
@@ -349,7 +366,11 @@ class CombatRuntime:
             await self.cancel_attack()
         elif self.sent_target!=cid:
             if await o.send(build_attack_packet(cid),lambda:self.still_target(cid),skip_if_changed=True):
-                self.sent_target=cid
+                if getattr(getattr(o,'last_receipt',None),'status','dispatched')=='dispatched':
+                    self.sent_target=cid
+            if self.sent_target!=cid:
+                o.reason='Wybór celu nie został wysłany jednoznacznie — ponawiam ocenę.'
+                return True  # do not cast a targeted spell at an older server target
         gs=o.state.game_state
         self.spell_checks=evaluate_spells(policy['spells'],gs,candidates,current,now,self.deadlines,self.cast_after,sample)
         if not can_attack:
@@ -369,11 +390,18 @@ class CombatRuntime:
                 # Queue guards re-run after our cooldown has been reserved.
                 # Revalidate live conditions, not that newly reserved deadline.
                 return evaluate_spell(spell,gs,targets,target,sample=self.owner.map_now())['conditions_met']
-            sent=await o.send(build_say_packet(spell['words']),spell_allowed,skip_if_changed=True)
+            try:sent=await o.send(build_say_packet(spell['words']),spell_allowed,skip_if_changed=True)
+            except asyncio.CancelledError:
+                pending=getattr(o,'last_receipt',None)
+                if pending is not None and pending.attempted:
+                    stamp=time.monotonic()
+                    self.deadlines[key]=stamp+spell['cooldown'];self.cast_after=stamp+spell['cooldown']
+                    self.last_spell_attempt=dict(words=spell['words'],at=time.time(),status=pending.status)
+                raise
             if sent:
                 stamp=time.monotonic()
                 self.deadlines[key]=stamp+spell['cooldown'];self.cast_after=stamp+spell['cooldown']
-                self.last_spell_attempt=dict(words=spell['words'],at=time.time(),status='queued')
+                self.last_spell_attempt=dict(words=spell['words'],at=time.time(),status=getattr(getattr(o,'last_receipt',None),'status','dispatched'))
             else:
                 self.spell_checks[index].update(ready=False,selected=False,reason='Warunki zmieniły się — ponowię ocenę')
             break
@@ -417,7 +445,7 @@ class CombatRuntime:
             o.reason=f'Dystans: {current["name"]} · {current["distance"]} → {gap_distance} SQM.' if mode=='distance' else f'Pościg: {current["name"]}.'
             def movement_allowed():
                 return any(c['id']==cid and (mode!='distance' or distance(path[1],c['position'])>=min(c['distance'],gap_distance)) for c in self.candidates())
-            if not await o.step(path[1],validate=movement_allowed):o.reason='Ruch w walce nie potwierdził kroku — sprawdzam ponownie.'
+            if not await self.request_step(path[1],validate=movement_allowed):o.reason='Ruch w walce nie potwierdził kroku — sprawdzam ponownie.'
         elif o.combat_only and not can_attack:
             self.phase='distance';o.reason=f'{current["name"]}: za blisko ({current["distance"]}/{gap_distance} SQM). Ruch pozostaje ręczny.'
             await asyncio.sleep(.05)

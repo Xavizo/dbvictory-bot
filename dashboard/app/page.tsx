@@ -1,6 +1,7 @@
 "use client";
 
 import { useBot } from "@/lib/useBot";
+import RouteReplayPanel from "./RouteReplayPanel";
 import SpeedUpPanel from "./SpeedUpPanel";
 import ProfilePicker from "./ProfilePicker";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -1111,7 +1112,7 @@ export default function Dashboard() {
 
   return <DashboardChrome view={view} onView={setView} state={state} mcpConnected={mcpConnected} busy={controlBusy}
     onStop={()=>setEmergency()} onUnlock={()=>setEmergency(true)} onResume={setPause} onRefresh={refresh} error={controlError || dashboardError || ""}>
-    <section hidden={view!=="cavebot"} aria-label="Konfiguracja Cavebota V2"><CavebotWorkspace state={state} active={view==="cavebot"} onRefresh={refresh}/></section>
+    <section hidden={view!=="cavebot"} aria-label="Konfiguracja Cavebota"><CavebotWorkspace state={state} active={view==="cavebot"} onRefresh={refresh}/></section>
     <section hidden={view!=="automation"} aria-label="Widok automatyki">
       <AutomationStrip state={state} connected={mcpConnected} onRefresh={refresh} onSettings={()=>setView("automation")} onPause={setPause} busy={controlBusy}/>
       {potion ? <PotionPanel action={potion} diagnostics={state?.potion_diagnostics} paused={state?.automation_paused ?? false} onRefresh={refresh}
@@ -1135,6 +1136,7 @@ export default function Dashboard() {
         {[{label:"Panel / MCP",ok:mcpConnected},{label:"Sesja gry",ok:state?.connected},{label:"DLL w kliencie",ok:state?.dll_injected},{label:"Połączenie mostu",ok:state?.dll_bridge_connected}].map(s=><div key={s.label} className="diagnostic-card"><span>{s.label}</span><strong className={s.ok ? "text-emerald-300" : "text-gray-400"}>{s.ok ? "Aktywne" : "Nieaktywne"}</strong></div>)}
       </div>
       <div className="diagnostic-grid two-columns"><div className="diagnostic-card"><span>Pakiety z serwera</span><strong>{(state?.packets_from_server ?? 0).toLocaleString("pl-PL")}</strong></div><div className="diagnostic-card"><span>Pakiety z klienta</span><strong>{(state?.packets_from_client ?? 0).toLocaleString("pl-PL")}</strong></div></div>
+      <RouteReplayPanel state={state} online={mcpConnected}/>
       {state?.proxy_sequence && <div className="diagnostic-section"><button className="secondary-button" onClick={()=>setShowProxySeq(!showProxySeq)}>{showProxySeq ? "Ukryj etapy połączenia" : "Pokaż etapy połączenia"}</button>{showProxySeq && <ConnectionSequence seq={state.proxy_sequence} onClose={()=>setShowProxySeq(false)}/>}</div>}
       {state?.connected && state.player && <PlayerStats player={state.player}/>}
       <div className="diagnostic-section"><div className="section-caption"><div><h2>Lista stworzeń z DLL</h2><p>To osobny odczyt diagnostyczny. Typy postaci na pasywnej mapie pochodzą z pól klienta.</p></div></div><CreatureList creatures={state?.creatures ?? []}/></div>

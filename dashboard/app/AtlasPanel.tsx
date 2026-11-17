@@ -381,7 +381,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
       onRemoveWaypoint={browseOnly?undefined:index=>updatePoints(removeAnchor(points,index))}
       onTransition={!browseOnly&&(menuCell.navigation?.length||atlas?.route_transitions?.some(t=>t.entry.join(',')===tileMenu.key))?()=>openTransition([menuCell.x,menuCell.y,menuCell.z]):undefined}
       routeLocked={busy||!!optimization||!!recorder?.active||simPlaying}/>}
-    <div className="route-workflow route-icon-toolbar" role="group" aria-label="Narzędzia waypointów"><strong>{routeEnabledControl??"Waypointy"} <small>{points.length||""}</small></strong>
+    <div className="route-workflow route-icon-toolbar" role="group" aria-label="Narzędzia waypointów"><div className="route-toolbar-heading">{routeEnabledControl??<strong>Waypointy</strong>}{points.length>0&&<small>{points.length} pkt</small>}</div>
       {embedded&&<MapTool icon="map" label="Otwórz mapę" disabled={recorder?.active} onClick={editHere}/>}
       <MapTool icon={recorder?.active?"stop":"record"} label={recorder?.active?"Zakończ nagranie":"Nagrywaj waypointy"} className={recorder?.active?"recording-button":"record-button"} disabled={busy||(!recorder?.active&&(!state?.connected||["running","paused","ready"].includes(state?.adaptive_cavebot?.status??"")))} onClick={recordToggle}/>
       {saveButton}<MapTool icon="play" label="Szybka symulacja" disabled={busy||!plan?.path.length||recorder?.active||!!optimization} onClick={simulate}/>

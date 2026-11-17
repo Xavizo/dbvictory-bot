@@ -42,6 +42,8 @@ class GameState:
     def __init__(self):
         self.client_state_required = False
         self.client_snapshot = None
+        self.client_player_id = 0
+        self.session_id = 0
         # Player identity
         self.player_id: int = 0  # creature ID of the player (from 0x0A)
 
@@ -557,7 +559,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
             return -1
         end, message = parsed
         callback = getattr(gs, "alert_chat_callback", None)
-        if callback:
+        if callback and message['kind'] is not None:
             try:
                 callback(message, gs)
             except Exception:
@@ -614,7 +616,9 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
             return -1
         new_pid = struct.unpack_from('<I', data, pos)[0]
         # Guard: only accept player_id in valid player range (0x10xxxxxx)
-        if 0x10000000 <= new_pid < 0x20000000 or gs.player_id == 0:
+        if gs.client_player_id:
+            pass  # Identity is pinned to the verified LocalPlayer for this login.
+        elif 0x10000000 <= new_pid < 0x20000000 or gs.player_id == 0:
             gs.player_id = new_pid
             log.info(f"LOGIN: player_id=0x{gs.player_id:08X}")
         else:
@@ -842,7 +846,9 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
 def _parse(opcode: int, reader, gs: GameState) -> None:
     """Legacy single-opcode parser (used by first-opcode callback)."""
     if opcode == ServerOpcode.LOGIN_OR_PENDING:
-        gs.player_id = reader.read_u32()
+        new_pid = reader.read_u32()
+        if not gs.client_player_id:
+            gs.player_id = new_pid
         log.info(f"LOGIN: player_id={gs.player_id}")
     elif opcode == ServerOpcode.CREATURE_HEALTH:
         creature_id = reader.read_u32()

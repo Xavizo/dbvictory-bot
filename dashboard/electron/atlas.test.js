@@ -94,7 +94,7 @@ function component(file,imports={}) {
   const mod={exports:{}};
   new Function('exports','require',ts.transpileModule(fs.readFileSync(require.resolve(file),'utf8'),
     {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)
-    (mod.exports,spec=>imports[spec] ?? (spec === "./AlertBell" ? component("../app/AlertBell.tsx", {"@/lib/api":{}}) : spec === "./ProfilePicker" ? component("../app/ProfilePicker.tsx", {"@/lib/auth":{}}) : require(spec)));
+    (mod.exports,spec=>imports[spec] ?? (spec === "./SessionStats" ? component("../app/SessionStats.tsx") : spec === "./ActivationCheckbox" ? component("../app/ActivationCheckbox.tsx") : spec === "./AlertBell" ? component("../app/AlertBell.tsx", {"@/lib/api":{}}) : spec === "./ProfilePicker" ? component("../app/ProfilePicker.tsx", {"@/lib/auth":{}}) : require(spec)));
   return mod.exports;
 }
 const spellPicker=component('../app/SpellPicker.tsx',{'@/lib/spellCatalogue':component('../lib/spellCatalogue.ts')});
@@ -187,12 +187,22 @@ test('active cavebot has separate visible pause and stop controls outside scroll
   const React=require('react'),render=require('react-dom/server').renderToStaticMarkup;
   const props={state:{actions:[],adaptive_cavebot:{status:'running',total:12,index:3,name:'Trasa testowa',loops:2,reason:'Nawigacja'}},connected:true,onRefresh:()=>{}};
   let html=render(React.createElement(bar.default,props));
-  assert.match(html,/DZIAŁA/);assert.match(html,/Pauza V2/);assert.match(html,/Zatrzymaj V2/);
+  assert.match(html,/DZIAŁA/);assert.match(html,/Pauza/);assert.match(html,/Zatrzymaj/);
   props.state.adaptive_cavebot.status='paused';html=render(React.createElement(bar.default,props));
-  assert.match(html,/PAUZA/);assert.match(html,/Wznów V2/);
+  assert.match(html,/PAUZA/);assert.match(html,/Wznów/);
   const shell=render(React.createElement(chrome.default,{...props,view:'automation',mcpConnected:true}));
   assert.ok(shell.indexOf('cavebot-run-bar')<shell.indexOf('workspace-scroll'));
   props.state.adaptive_cavebot.status='idle';assert.equal(render(React.createElement(bar.default,props)),'');
+});
+
+test('navigation hold is displayed independently from active combat and healing',()=>{
+  const bar=component('../app/CavebotRunBar.tsx',{'@/lib/auth':{authenticatedFetch:()=>{throw Error('render only');}}});
+  const React=require('react'),render=require('react-dom/server').renderToStaticMarkup;
+  const state={actions:[{name:'auto_potions',running:true}],adaptive_cavebot:{status:'running',total:3,reason:'Ruch czeka',
+    navigation_hold:'Brak potwierdzenia przejścia',domains:{movement:{status:'held',reason:'Brak potwierdzenia przejścia'},combat:{status:'running',reason:null}}}};
+  const html=render(React.createElement(bar.default,{state,connected:true,onRefresh:()=>{}}));
+  assert.match(html,/Ruch: wstrzymany/);assert.match(html,/Walka: działa/);assert.match(html,/Mikstury: działa/);
+  assert.match(html,/Sprawdź przejście ponownie/);assert.match(html,/Zatrzymaj/);
 });
 
 test('stair selection adds approach and exit, repairs a stair anchor, and undo preserves previous floor',()=>{
@@ -263,7 +273,7 @@ test('one Start uses movement only when enabled and waypoints exist, retaining c
   assert.equal(v2StartRequest(true,route,{...combat,enabled:false},true,'scope').command,'start');
 });
 
-test('main workspace has one Start, a default-on movement switch, and always-visible waypoints',()=>{
+test('main workspace has one Start, a default-on movement checkbox, and always-visible waypoints',()=>{
   const workspace=component('../app/CavebotWorkspace.tsx',{
     '@/lib/cavebotModel':component('../lib/cavebotModel.ts'),
     '@/lib/auth':{authenticatedFetch:()=>{throw Error('render must not start actions');}},
@@ -274,7 +284,7 @@ test('main workspace has one Start, a default-on movement switch, and always-vis
   });
   const html=require('react-dom/server').renderToStaticMarkup(require('react').createElement(workspace.default,{state:null,active:true,onRefresh:()=>{}}));
   assert.equal((html.match(/▶ Uruchom/g)||[]).length,1);
-  assert.match(html,/role="switch"[^>]*checked/);assert.match(html,/Poruszaj się po trasie/);assert.match(html,/brak waypointów/);
+  assert.match(html,/type="checkbox"[^>]*checked/);assert.match(html,/Aktywuj ruch/);assert.match(html,/Aktywuj walkę/);assert.match(html,/Brak waypointów/);
   assert.match(html,/Waypoint editor/);assert.doesNotMatch(html,/Trasa \+ walka|Start samej walki|v2-mode-switch/);
 });
 
@@ -292,13 +302,13 @@ test('combat can start with an invalid unsaved sketch only when route movement i
   const render=()=>elements(host.render(Workspace,props));
   await render().find(n=>n.type===Atlas).props.onDraftSaved('invalid');requests.length=0;
   let nodes=render();nodes.find(n=>n.type===Atlas).props.onEditingChange(true);
-  nodes.find(n=>n.type==='input'&&n.props.role==='switch').props.onChange({target:{checked:true}});
+  nodes.find(n=>n.props.label==='Aktywuj walkę').props.onChange(true);
   // Supply a matching monster through the actual rule editor callback.
   nodes=render();nodes.find(n=>Array.isArray(n.props.rules)).props.onChange([{pattern:'Wolf*',action:'attack',priority:50}]);
   let atlas=render().find(n=>n.type===Atlas);
   assert.equal(render().find(n=>n.props.className==='v2-start').props.disabled,true,'route still requires saved points/configuration');
-  const checkbox=elements(atlas.props.routeEnabledControl).find(n=>n.type==='input');
-  assert.equal(checkbox.props.checked,true);checkbox.props.onChange({target:{checked:false}});
+  const checkbox=atlas.props.routeEnabledControl;
+  assert.equal(checkbox.props.checked,true);checkbox.props.onChange(false);
   nodes=render();assert.ok(nodes.some(n=>n.props.role==='status'&&JSON.stringify(n.props.children).includes('Niezapisany szkic')));
   const start=nodes.find(n=>n.props.className==='v2-start');assert.equal(start.props.disabled,false);
   assert.equal(nodes.find(n=>n.type==='button'&&n.props.children==='Zapisz walkę').props.disabled,false);

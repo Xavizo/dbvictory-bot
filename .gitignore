@@ -43,3 +43,7 @@ local_data/
 
 # Local client spell catalogue and graphics
 /dashboard/public/local-spells/
+
+# Local build backups and newly recorded gameplay routes
+/dashboard/.next-*/
+/recordings/atlas_*.json

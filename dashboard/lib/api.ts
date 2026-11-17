@@ -72,6 +72,7 @@ export interface ActionInfo {
 }
 
 export interface PlayerInfo {
+  stats_age?: number;
   hp: number;
   max_hp: number;
   mana: number;
@@ -224,20 +225,30 @@ export interface ProxySequence {
 export type AlertKind = "private" | "default" | "player";
 export type AlertConfig = Record<AlertKind, {enabled:boolean;sound:boolean;scope:"always"|"cavebot"}>;
 export interface AlertState {
+  paused?:boolean;silenced_through?:number;
   session:string;config:AlertConfig;latest_id:number;unread:number;cavebot_active:boolean;map_fresh:boolean;
   chat_received:number;last_chat_at:number|null;
   events:{id:number;kind:AlertKind;at:number;sender:string;text:string;sound:boolean;position?:number[]}[];
 }
 export const configureAlerts=(config:AlertConfig)=>control("/api/alerts",{command:"configure",config});
 export const acknowledgeAlerts=(through:number)=>control("/api/alerts",{command:"acknowledge",through});
+export const setAlertsPaused=(paused:boolean)=>control("/api/alerts",{command:"set_paused",paused});
 
 export interface BotState {
+  commands?: {session:number} | null;
+  session_statistics?: {
+    source?: "panel";
+    status:"waiting"|"active"|"stale"|"ended"|"error";
+    elapsed_seconds:number;start_level:number|null;level:number|null;levels_gained:number|null;
+    xp_gained:number|null;xp_per_hour:number|null;window_seconds:number;window_target_seconds:number;
+    sample_age_seconds:number|null;
+  };
   alerts?:AlertState|null;
   pause_hotkey?:{registered:boolean;error:string|null;key:string}|null;
   profile_selection?:{combat:string|null;bot:string|null;routes:Record<string,string>};
   speed_up?:{status:string;remaining:number|null;offset:number|null;effect_active:boolean|null;confirmed:boolean;attempts:number};
   combat_profile?: import("./cavebotModel").CombatConfig;
-  adaptive_cavebot?: {navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
+  adaptive_cavebot?: {domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
   passive_map?: PassiveMapState;
   connected: boolean;
   automation_paused?: boolean;

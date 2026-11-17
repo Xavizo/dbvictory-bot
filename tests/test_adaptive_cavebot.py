@@ -255,7 +255,7 @@ def test_invalid_guard_does_not_break_proxy_injection_worker():
 def test_legacy_actions_and_generic_v2_toggle_cannot_launch_navigation(state,monkeypatch):
     for name in ('cavebot','cavebot2','adaptive_cavebot'):
         assert asyncio.run(server._async_toggle_action(name,True)).startswith('Error:')
-        assert 'V2' in asyncio.run(server._async_restart_action(name))
+        assert 'Cavebot' in asyncio.run(server._async_restart_action(name))
     for name in ('cavebot','cavebot2'):assert 'wyłączony' in server._start_action(name)
     state.settings['actions']={n:{'enabled':True} for n in ('cavebot','cavebot2','adaptive_cavebot','eat_food')}
     calls=[];monkeypatch.setattr(server,'_start_action',lambda name:calls.append(name))
@@ -304,7 +304,7 @@ def test_acknowledged_walking_does_not_inherit_item_use_delay(state,tmp_path,mon
     clock=[100.0];sleeps=[];positions=[]
     monkeypatch.setattr(module,'time',SimpleNamespace(monotonic=lambda:clock[0],time=time.time))
     async def sleep(seconds):sleeps.append(seconds);clock[0]+=seconds
-    monkeypatch.setattr(module.asyncio,'sleep',sleep)
+    monkeypatch.setattr(module,'asyncio',SimpleNamespace(sleep=sleep,CancelledError=asyncio.CancelledError))
     async def ack(payload,guard=None):
         assert guard()
         positions.append(state.game_state.position)

@@ -11,4 +11,7 @@ contextBridge.exposeInMainWorld("dbvMap", {
 
 contextBridge.exposeInMainWorld("dbvEditor", { open: (draftId) => ipcRenderer.invoke("dbv:open-route-editor", draftId) });
 
-contextBridge.exposeInMainWorld("dbvAlerts", {testSound: () => ipcRenderer.invoke("dbv:test-alert-sound")});
+contextBridge.exposeInMainWorld("dbvAlerts", {
+  testSound: () => ipcRenderer.invoke("dbv:test-alert-sound"),
+  panelPause: value => ipcRenderer.invoke("dbv:panel-alert-pause", value),
+});

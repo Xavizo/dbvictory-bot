@@ -47,12 +47,17 @@ class ClientPlayerReader:
         if _u32(raw)!=self.source.base+UPDATED.tile_vtable or struct.unpack_from('<III',raw,56)!=center:
             raise MapReadError("Pozycja gracza zmienia się.")
         first,count=_vector(raw,44,8,64)
+        candidates = []
         for i in range(count):
             ptr=_u32(self.source.read(first+i*8,8))
             obj=self.source.read(ptr,0x3C)
-            if _u32(obj)==self.source.base+0x8BA9B0 and _u32(obj,0x38)==self.player_id:
-                return ptr
-        raise MapReadError("Lokalny gracz chwilowo niedostępny.")
+            pid = _u32(obj,0x38)
+            if (_u32(obj)==self.source.base+0x8BA9B0 and 0x10000000<=pid<0x20000000
+                    and (not self.player_id or pid==self.player_id)):
+                candidates.append(ptr)
+        if len(candidates)==1:
+            return candidates[0]
+        raise MapReadError("Brak jednoznacznej tożsamości lokalnego gracza.")
 
     def snapshot(self):
         s=self.source
@@ -62,7 +67,9 @@ class ClientPlayerReader:
         try:
             if self.ptr is None: self.ptr=self._locate(center)
             obj=s.read(self.ptr,0x3C)
-            if _u32(obj)!=s.base+0x8BA9B0 or _u32(obj,0x38)!=self.player_id:
+            pid = _u32(obj,0x38)
+            if (_u32(obj)!=s.base+0x8BA9B0 or not 0x10000000<=pid<0x20000000
+                    or (self.player_id and pid!=self.player_id)):
                 raise MapReadError("Zmieniła się tożsamość lokalnego gracza.")
             # Constructor and getters verified statically; compared with game UI.
             raw=s.read(self.ptr+0x540,80)
@@ -81,7 +88,7 @@ class ClientPlayerReader:
             if not (0<=hp<=maximum<=2**31-1 and maximum>0 and 0<=mana<=2**31-1 and
                     0<max_mana<=2**31-1 and 1<=level<=5000 and 0<=magic<=5000):
                 raise MapReadError("Statystyki przekraczają sprawdzony zakres.")
-            if s.read(self.ptr+0x540,80)!=raw or s.read(self.ptr,4)!=obj[:4]:
+            if s.read(self.ptr+0x540,80)!=raw or s.read(self.ptr,0x3C)!=obj:
                 raise MapReadError("Statystyki zmieniły się podczas odczytu.")
             # An unstable/unknown facing must only inhibit directional spells,
             # never discard otherwise valid healing statistics.
@@ -99,10 +106,36 @@ class ClientPlayerReader:
                         conditions = {"conditions":_u32(flags),"movement_speed":struct.unpack('<H',speed)[0]}
                 except (MapReadError, struct.error):
                     pass  # Optional effect reads never invalidate healing values.
-            return {**conditions,"hp":int(hp),"max_hp":int(maximum),"mana":int(mana),"max_mana":int(max_mana),
+            if not self.player_id:
+                if s.read(s.base+UPDATED.map_center,12)!=struct.pack("<III",*center):
+                    raise MapReadError("Pozycja zmieniła się podczas identyfikacji.")
+                self.player_id=pid
+            return {**conditions,"player_id":pid,"hp":int(hp),"max_hp":int(maximum),"mana":int(mana),"max_mana":int(max_mana),
                     "level":int(level),"magic_level":int(magic),"position":center,
                     "direction":direction,
                     "stats_updated_at":time.time(),"monotonic":time.monotonic(),"source":"client"}
         except (MapReadError, struct.error):
             self.ptr=None
             raise
+
+
+async def bind_local_player(bot, state, gs, reader):
+    """Bind one verified LocalPlayer for this login, never an old packet ID."""
+    gs.client_state_required = True
+    gs.client_snapshot = None
+    gs.client_state_error = "Czekam na postać w kliencie"
+    for _ in range(150):
+        if not bot.is_connected or state.game_state is not gs:
+            return False
+        try:
+            sample = reader.snapshot()
+        except (MapReadError, struct.error) as exc:
+            gs.client_state_error = str(exc)
+            await bot.sleep(.2)
+            continue
+        gs.client_player_id = reader.player_id
+        gs.player_id = reader.player_id
+        gs.client_snapshot = sample
+        gs.client_state_error = None
+        return True
+    return False

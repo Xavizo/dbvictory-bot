@@ -8,8 +8,9 @@ export default function MonsterRules({rules,onChange,movement,disabled=false}:{r
   const [editing,setEditing]=useState<number|null>(null);
   function update(index:number,patch:Partial<MonsterRule>){onChange(rules.map((rule,i)=>i===index?{...rule,...patch}:rule));}
   function reorder(index:number,delta:number){onChange(moveRule(rules,index,delta));setEditing(index+delta);}
-  return <div className="monster-rules">
-    <h3>Potwory <button disabled={rules.length>=32} onClick={()=>onChange([...rules,defaultMonsterRule()])}>＋ Dodaj</button></h3>
+  return <details className="v2-options monster-rules">
+    <summary>Potwory <span>{rules.length}</span></summary>
+    <div className="monster-rules-actions"><button disabled={disabled||rules.length>=32} onClick={()=>onChange([...rules,defaultMonsterRule()])}>＋ Dodaj potwora</button></div>
     {!rules.length&&<p className="v2-inline-note">Dodaj nazwę potwora lub wzorzec, np. Wolf*.</p>}
     {!!rules.length&&<div className="v2-rule-caption"><span>Potwór · pierwsza pasująca reguła</span><span title="0–100, większy = ważniejszy">Priorytet ↑</span></div>}
     {rules.map((rule,i)=>{
@@ -44,5 +45,5 @@ export default function MonsterRules({rules,onChange,movement,disabled=false}:{r
         </div>}
       </div>;
     })}
-  </div>;
+  </details>;
 }

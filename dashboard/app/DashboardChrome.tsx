@@ -4,13 +4,14 @@ import { useEffect, useRef, useState, useCallback, type ReactNode, type CSSPrope
 import type { BotState } from "@/lib/api";
 import CavebotRunBar from "./CavebotRunBar";
 import AlertBell from "./AlertBell";
+import SessionStats from "./SessionStats";
 import dynamic from "next/dynamic";
 const GlobalAtlas=dynamic(()=>import("./GlobalAtlas"),{ssr:false});
 
 export type WorkspaceView = "automation" | "cavebot" | "diagnostics";
 const workspaces: {id:WorkspaceView;nav:string;path:string}[] = [
   {id:"automation",nav:"Automatyka",path:"M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6"},
-  {id:"cavebot",nav:"Cavebot V2",path:"M5 6a2 2 0 104 0 2 2 0 00-4 0zm10 12a2 2 0 104 0 2 2 0 00-4 0zM7 8v5a3 3 0 003 3h4a3 3 0 000-6h-2"},
+  {id:"cavebot",nav:"Cavebot",path:"M5 6a2 2 0 104 0 2 2 0 00-4 0zm10 12a2 2 0 104 0 2 2 0 00-4 0zM7 8v5a3 3 0 003 3h4a3 3 0 000-6h-2"},
   {id:"diagnostics",nav:"Diagnostyka",path:"M3 12h4l3-8 4 16 3-8h4"},
 ];
 function Icon({path}:{path:string}) {
@@ -44,7 +45,7 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
         <span title={preview ? "Dane syntetyczne" : connected ? "Sesja gry aktywna" : "Gra rozłączona"}><i className={`status-dot ${connected && !preview ? "online" : ""}`}/>{preview ? "Demo" : "Gra"}</span>
         <span title={state?.dll_bridge_connected ? "Most DLL połączony" : "Most DLL nieaktywny"}><i className={`status-dot ${state?.dll_bridge_connected ? "online" : ""}`}/>DLL</span>
       </div>
-      <AlertBell alerts={state?.alerts} connected={mcpConnected}/>
+      <AlertBell alerts={state?.alerts} connected={mcpConnected} onRefresh={onRefresh}/>
       <span className={`automation-pill ${paused ? "paused" : running.length ? "active" : ""}`}>{paused ? "PAUZA" : `Aktywne: ${running.length}`}</span>
       <button className="emergency-button" disabled={busy || !mcpConnected} onClick={onStop} title="Awaryjny STOP. Pause/Break: pauza i wznowienie poprzednich akcji."><span aria-hidden="true">■</span> STOP <small>wszystkie akcje</small></button>
     </header>
@@ -60,6 +61,7 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
       {w.id==="automation" && state?.actions.find(a=>a.name==="auto_potions")?.running && <i className="status-dot online"/>}
       {w.id==="cavebot" && state?.actions.some(a=>a.name==="adaptive_cavebot" && a.running) && <i className="status-dot online"/>}
     </button>)}<button className="atlas-launcher" aria-label="Otwórz atlas i mapę" aria-haspopup="dialog" onClick={()=>setAtlasOpen(true)}><Icon path="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2V5zm6-2v16m6-14v16"/><span>Atlas</span></button></nav>
+    <SessionStats stats={state?.session_statistics}/>
     {atlasOpen&&<GlobalAtlas state={state} onRefresh={onRefresh} onClose={closeAtlas}/>}
     <CavebotRunBar state={state} connected={mcpConnected} onRefresh={onRefresh}/>
     <div className="workspace-scroll" ref={scrollRef}>

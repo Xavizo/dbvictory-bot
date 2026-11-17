@@ -232,6 +232,8 @@ class BotContext:
     def __init__(self, action_name: str = ""):
         self._log = logging.getLogger("action")
         self._action_name = action_name
+        from session_lifetime import SessionLease
+        self._session = SessionLease(state)
 
     # ── connection ──────────────────────────────────────────────────
     @property
@@ -239,11 +241,19 @@ class BotContext:
         return state.connected
 
     # ── low-level ───────────────────────────────────────────────────
-    async def inject_to_server(self, packet: bytes) -> None:
-        if state.automation_paused:
+    async def inject_to_server(self, packet: bytes, *, guard=None):
+        self.last_receipt=None
+        if state.automation_paused or not self._session.valid():
             raise asyncio.CancelledError()
         if state.game_proxy:
-            await state.game_proxy.inject_to_server(packet)
+            from command_delivery import delivery
+            from session_lifetime import SessionLease, current_task, task_alive
+            lease=SessionLease(state); owner=current_task()
+            def allowed():
+                return (self._session.valid() and lease.valid() and task_alive(owner)
+                        and not state.automation_paused and (guard is None or guard()))
+            self.last_receipt=await state.game_proxy.inject_to_server(packet,guard=allowed)
+            return await delivery(self.last_receipt)
 
     async def sleep(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
@@ -389,11 +399,11 @@ def _start_action(name: str) -> str | None:
     """Load an action script and launch its run(bot) as a background task.
     Returns an error string on failure, None on success."""
     if name in {"cavebot","cavebot2"}:
-        return "Ten starszy silnik jest wyłączony. Użyj Cavebot Adaptacyjny V2."
+        return "Ten starszy silnik jest wyłączony. Użyj Cavebot."
     if name=="adaptive_cavebot":
         controller=getattr(state,"adaptive_cavebot",None)
         if controller is None or controller.status not in {"ready","paused"} or not controller.path:
-            return "Wybierz zapisaną trasę i użyj Start w Cavebot Adaptacyjny V2."
+            return "Wybierz zapisaną trasę i użyj Start w Cavebot."
         try:
             controller.guard()
             if not controller.combat_only and list(state.game_state.position)!=controller.path[controller.index]:return "Pozycja zmieniła się podczas pauzy. Uruchom od początku trasy."
@@ -432,6 +442,14 @@ def _start_action(name: str) -> str | None:
     async def _wrapper():
         try:
             log.info(f"[action:{name}] Started")
+            if name not in INTERNAL_ACTIONS:
+                session = state.game_state
+                while (state.connected and state.game_state is session
+                       and (not session.player_id or (session.client_state_required
+                            and not session.client_player_id))):
+                    await asyncio.sleep(.05)
+                if not state.connected or state.game_state is not session:
+                    return
             await mod.run(ctx)
             state._action_completed.add(name)
         except asyncio.CancelledError:
@@ -738,7 +756,7 @@ async def _async_adaptive_control(command: str, config: dict | None=None) -> dic
     task=state._action_tasks.get(name)
     if command=='configure_combat':
         from cavebot_combat import validate_combat
-        if task and not task.done():raise ValueError('Zatrzymaj V2 przed zmianą profilu walki.')
+        if task and not task.done():raise ValueError('Zatrzymaj przed zmianą profilu walki.')
         state.settings['combat_profile']=validate_combat((config or {}).get('combat'))
         selected=state.settings.get('selected_combat_profile')
         if selected:
@@ -806,7 +824,7 @@ async def _async_adaptive_control(command: str, config: dict | None=None) -> dic
 async def _async_restart_action(name: str) -> str:
     """Stop and re-start an action. Returns a status message."""
     if name in {"cavebot","cavebot2","adaptive_cavebot"}:
-        return "Użyj Start/Wznów w Cavebot Adaptacyjny V2."
+        return "Użyj Start/Wznów w Cavebot."
     if name == "auto_barrier_band":
         try: validate_band_config(state.settings.get("actions", {}).get(name, {}))
         except ValueError as exc: return f"Error: {exc}"
@@ -1372,6 +1390,11 @@ async def start_bot() -> str:
                 pass
 
     def on_login_success(keys):
+        # New identity/stats/conditions for every login, including reconnects.
+        state.game_state = GameState()
+        login_state = state.game_state
+        login_state.client_state_required = observer
+        login_state.session_id = getattr(state.game_proxy,'session_generation',0)
         monitor = getattr(state, "passive_map_monitor", None)
         if monitor:
             monitor.reset_learning_session()
@@ -1392,7 +1415,8 @@ async def start_bot() -> str:
                 if (state.game_proxy and state.game_proxy.logged_in
                         and state.game_proxy.server_writer is not None):
                     break
-            if not state.connected or not state.game_proxy.logged_in:
+            if (not state.connected or not state.game_proxy.logged_in
+                    or state.game_state is not login_state):
                 return
             n = _start_all_enabled_actions()
             log.info(f"on_login_success: {n} action(s) auto-started")
@@ -1410,14 +1434,16 @@ async def start_bot() -> str:
         loop = asyncio.get_event_loop()
         gs = state.game_state
         def scan_and_observe():
-            gs.alert_chat_callback = lambda message, source: state.alert_center.observe_chat(message, state, source)
-            gs.potion_message_callback = state.potion_diagnostics.observe_message
+            gs.alert_chat_callback = lambda message, source: state.alert_center.observe_chat(message, state, source) if gs is state.game_state else None
+            gs.potion_message_callback = lambda *args, **kwargs: state.potion_diagnostics.observe_message(*args, **kwargs) if gs is state.game_state else None
+            if gs is not state.game_state:return
             scan_packet(data, gs)
-            state.potion_diagnostics.observe_stats(gs)
+            if gs is state.game_state:state.potion_diagnostics.observe_stats(gs)
         loop.run_in_executor(_scan_pool, scan_and_observe)
 
     def on_disconnect():
         state._adaptive_prepare_token=None
+        state.potion_diagnostics.invalidate_inventory()
         monitor = getattr(state, "passive_map_monitor", None)
         if monitor:
             monitor.reset_learning_session()
@@ -1428,8 +1454,7 @@ async def start_bot() -> str:
         state.game_state.lure_active = False
         state.game_state.force_target = None
         for name in list(state._action_tasks):
-            if name not in INTERNAL_ACTIONS:
-                _stop_action(name)
+            _stop_action(name)  # The passive reader also belongs to this login.
         if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Rozłączono — wymagany ponowny Start.")
         if state._auto_task:
             state._auto_task.cancel()
@@ -1608,7 +1633,7 @@ async def autowalk(direction: str, steps: int = 100, delay: float = 0.5) -> str:
     """
     navigation=state._action_tasks.get("adaptive_cavebot")
     if navigation and not navigation.done():
-        return "Zatrzymaj Cavebot Adaptacyjny V2 przed uruchomieniem auto-walk."
+        return "Zatrzymaj Cavebot przed uruchomieniem auto-walk."
     if state.automation_paused:
         return "Emergency pause is active. Unlock it first."
     if not state.connected:
@@ -1888,6 +1913,9 @@ async def get_status() -> str:
 
     auto = "running" if (state._auto_task and not state._auto_task.done()) else "idle"
     status += f"\nAuto-walk: {auto}"
+    if state.game_proxy and hasattr(state.game_proxy,'command_snapshot'):
+        commands=state.game_proxy.command_snapshot()
+        status += f"\nSession: {commands['session']} · queued commands: {commands['queued']}"
 
     return f"=== Component Status ===\n{status}"
 

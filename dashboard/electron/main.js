@@ -137,6 +137,10 @@ app.whenReady().then(() => {
   createWindow();
   const audio = createNotificationAudio({fallback:()=>electron.shell.beep()});
   const sounds = startAlertSounds({token:sessionToken, fetchImpl:fetch, beep:kind=>audio.play(kind), setTimer:setTimeout});
+  ipcMain.handle("dbv:panel-alert-pause", (event, value) => {
+    if (!trustedSender(event)) throw new Error("Untrusted sender");
+    return sounds.panelPause(value);
+  });
   ipcMain.handle("dbv:test-alert-sound", event => {
     if (!trustedSender(event)) throw new Error("Untrusted sender");
     return sounds.testSound();

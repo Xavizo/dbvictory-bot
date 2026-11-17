@@ -3,6 +3,7 @@ import asyncio
 import time
 import logging
 import random
+from contextvars import ContextVar
 from copy import copy,deepcopy
 from route_identity import navigation_revision,same_route
 from collections import deque
@@ -13,6 +14,9 @@ from navigation_tools import supported_transition,transition_tools
 
 class MovementDeferred(ValueError):
     """No ordinary step sent: retry from a fresh map while combat stays alive."""
+
+class InputsUnavailable(ValueError):
+    """Temporary observer gap; wait without changing the user's enable flags."""
 
 log=logging.getLogger(__name__)
 NAME="adaptive_cavebot"
@@ -84,13 +88,38 @@ def tool_location(snapshot,tool_ids):
     for iid in tool_ids:
         for row in snapshot['sources']:
             if row['item_id']==iid:return (65535,64|row['container'],row['index']),iid,row['index']
-        for slot in (5,6):
+        # DBV exposes AiO in equipment slot 10. All ten slots are read
+        # with the same verified inventory accessor and use the same wire
+        # position (65535, slot, 0); no hotkey/source guessing is needed.
+        for slot in range(1,11):
             if snapshot['slots'].get(slot)==iid:return (65535,slot,0),iid,0
     return None
 
 
 class AdaptiveCavebot:
+    # Scope follows the coroutine, never another concurrently running domain.
+    @property
+    def _route_command(self):return self._route_context.get()[0]
+    @_route_command.setter
+    def _route_command(self,value):self._route_context.set((value,self._route_context.get()[1]))
+    @property
+    def _route_boundary(self):return self._route_context.get()[1]
+    @_route_boundary.setter
+    def _route_boundary(self,value):self._route_context.set((self._route_context.get()[0],value))
+    @property
+    def _route_attempt(self):return self._attempt_context.get()
+    @_route_attempt.setter
+    def _route_attempt(self,value):self._attempt_context.set(value)
+    @property
+    def last_receipt(self):return self._receipt_context.get()
+    @last_receipt.setter
+    def last_receipt(self,value):self._receipt_context.set(value)
+
     def __init__(self,state):
+        self._route_context=ContextVar('route_command',default=(False,False))
+        self._attempt_context=ContextVar('route_attempt',default=None)
+        self._receipt_context=ContextVar('command_receipt',default=None)
+        self.domains=None;self.combat_command_at=0;self.session_lease=None
         self.state=state;self.status="idle";self.reason="Wybierz zapisany szkic.";self.path=[];self.edges=[]
         self.index=0;self.loop_start=0;self.laps=0;self.loop=True;self.name="";self.scope=None;self.min_hp=30;self.last_command=0
         self.blocked={};self.failures=0;self.logs=deque(maxlen=40);self.generation=0
@@ -114,7 +143,7 @@ class AdaptiveCavebot:
             if c['index']==self.index:self.last_waypoint=c['waypoint']
 
     def snapshot(self):
-        return {"status":self.status,"reason":self.reason,"navigation_hold":self.navigation_hold,"name":self.name,"index":self.index,"total":len(self.path),
+        return {"status":self.status,"reason":self.reason,"domains":self.domains.snapshot() if self.domains else None,"navigation_hold":self.navigation_hold,"name":self.name,"index":self.index,"total":len(self.path),
                 "mode":"combat" if self.combat_only else "route","scope":self.scope,"waypoint":self.waypoint_progress(),"resumable":bool(self.path and self.status in {"idle","paused","ready"}),"loops":self.laps,"loop":self.loop,"draft_id":self.draft_id,"combat":self.combat.snapshot(),"approach_remaining":max(0,self.loop_start-self.index) if self.path else 0,"position":self.path[self.index] if self.path else None,"logs":list(self.logs),"recovery_count":self.recovery_count,"blockage":self.blockage}
 
     def pause(self,reason):
@@ -136,27 +165,28 @@ class AdaptiveCavebot:
         if self.index+1<len(self.path) and pos==self.path[self.index+1]:
             self.index+=1;self.mark_waypoint()
         elif pos!=self.path[self.index]:
-            raise ValueError('Pozycja zmieniła się. Zatrzymaj V2 i uruchom ponownie; walka pozostaje aktywna.')
+            raise ValueError('Pozycja zmieniła się. Zatrzymaj i uruchom ponownie; walka pozostaje aktywna.')
         self.navigation_hold=None;self.reason='Ponownie sprawdzam przejście.'
 
-    def guard(self):
+    def guard(self,combat=False):
         st=self.state;gs=st.game_state
+        if self.session_lease and not self.session_lease.valid():raise ValueError("Sesja zmieniła się — uruchom automat ponownie.")
         if not st.connected:raise ValueError("Brak połączenia z grą.")
         if not st.game_proxy.logged_in or st.game_proxy.xtea_keys is None:raise ValueError("Połączenie proxy nie jest gotowe do ruchu.")
         if st.automation_paused:raise ValueError("Automatyka jest wstrzymana.")
-        if getattr(st,"recording_active",False):raise ValueError("Zatrzymaj nagrywanie przed uruchomieniem trasy.")
+        if not combat and getattr(st,"recording_active",False):raise ValueError("Zatrzymaj nagrywanie przed uruchomieniem trasy.")
         snapshot=getattr(gs,"client_snapshot",None)
         if getattr(gs,"client_state_required",False) and (not snapshot or not 0<=time.monotonic()-snapshot["monotonic"]<=.5):
-            raise ValueError("Brak świeżej pozycji i HP.")
+            raise InputsUnavailable("Brak świeżej pozycji i HP.")
         if not getattr(gs,"client_state_required",False) and not 0<=time.time()-getattr(gs,'stats_updated_at',0)<=2:
-            raise ValueError("Brak świeżych statystyk.")
-        if gs.max_hp<=0 or gs.hp<=0 or 100*gs.hp/gs.max_hp<self.min_hp:raise ValueError("HP poniżej progu pauzy nawigacji.")
+            raise InputsUnavailable("Brak świeżych statystyk.")
+        if gs.max_hp<=0 or gs.hp<=0 or not combat and 100*gs.hp/gs.max_hp<self.min_hp:raise ValueError("HP poniżej progu pauzy nawigacji.")
         monitor=getattr(st,"passive_map_monitor",None)
-        if not monitor or not monitor.atlas or monitor.atlas.scope!=self.scope:raise ValueError("Zmienił się profil atlasu.")
+        if not combat and (not monitor or not monitor.atlas or monitor.atlas.scope!=self.scope):raise ValueError("Zmienił się profil atlasu.")
         for name,task in st._action_tasks.items():
-            if name in LEGACY and not task.done():raise ValueError("Inny silnik ruchu jest uruchomiony.")
+            if not combat and name in LEGACY and not task.done():raise ValueError("Inny silnik ruchu jest uruchomiony.")
             if self.combat.config['enabled'] and name in {'auto_targeting','auto_targeting2','auto_combat','auto_rune_and_spell','aoe_spell'} and not task.done():raise ValueError('Inna akcja walki jest uruchomiona.')
-        if getattr(st,"_auto_task",None) and not st._auto_task.done():raise ValueError("Inny automatyczny ruch jest uruchomiony.")
+        if not combat and getattr(st,"_auto_task",None) and not st._auto_task.done():raise ValueError("Inny automatyczny ruch jest uruchomiony.")
 
     def prepare_combat_only(self,config):
         # This mode never owns movement and does not need a saved route.
@@ -437,28 +467,35 @@ class AdaptiveCavebot:
             if (sample.get('status')=='ready' and not sample.get('stale') and
                     sample.get('age_seconds',99)<.6 and list(sample.get('center',[]))==list(self.state.game_state.position)):
                 return sample
-            if time.monotonic()>=deadline:raise ValueError("Mapa chwilowo nieaktualna; nawigacja wstrzymana.")
+            if time.monotonic()>=deadline:raise InputsUnavailable("Mapa chwilowo nieaktualna; nawigacja czeka na odczyt.")
             await asyncio.sleep(.01)
 
     async def send(self,payload,validate=None,skip_if_changed=False,defer_movement=False):
+        self.last_receipt=None
         if self.combat_only and (not payload or payload[0] not in {ClientOpcode.ATTACK,ClientOpcode.SAY,*TURN_OPCODES}):
             raise ValueError('Tryb samej walki nie może wysyłać ruchu ani używać obiektów.')
         # Position acknowledgment and fresh terrain already gate every step.
         # Do not impose the old 200 ms item-use interval on ordinary walking.
         interval=.04 if payload and payload[0] in WALK_OPCODES else .2
         route_command=self._route_command;boundary=self._route_boundary;motion=self.motion_generation
-        await asyncio.sleep(max(0,interval-(time.monotonic()-self.last_command)))
-        self.guard()
+        combat_command=bool(payload and payload[0] in {ClientOpcode.ATTACK,ClientOpcode.SAY,*TURN_OPCODES})
+        previous=self.combat_command_at if combat_command else self.last_command
+        await asyncio.sleep(max(0,interval-(time.monotonic()-previous)))
+        self.guard(combat=combat_command)
         if self.status!='running':raise ValueError(self.reason)
-        self.last_command=time.monotonic();sent=self.last_command;generation=self.generation
+        sent=time.monotonic();generation=self.generation
+        if combat_command:self.combat_command_at=sent
+        else:self.last_command=sent
         origin=list(self.state.game_state.position)
+        from session_lifetime import SessionLease,current_task,task_alive
+        lease=SessionLease(self.state);owner=current_task() if getattr(self.state.game_proxy,'command_delivery',False) else None
         attempt=dict(valid=None,checks=0,sent=sent)
         if route_command:self._route_attempt=attempt
         def allowed():
             try:
-                self.guard()
-                valid=(self.status=='running' and self.generation==generation and time.monotonic()-sent<.5 and
-                    (self.combat_only or list(self.state.game_state.position)==origin) and
+                self.guard(combat=combat_command)
+                valid=(lease.valid() and task_alive(owner) and self.status=='running' and self.generation==generation and time.monotonic()-sent<.5 and
+                    (combat_command and payload[0] in {ClientOpcode.ATTACK,ClientOpcode.SAY} or self.combat_only or list(self.state.game_state.position)==origin) and
                     (not route_command or (motion==self.motion_generation and time.monotonic()>=self.manual_until and self.combat.route_step_allowed(boundary))) and
                     (validate is None or validate()))
             except Exception:valid=False
@@ -472,14 +509,24 @@ class AdaptiveCavebot:
             if route_command:raise MovementDeferred('Ponownie sprawdzam grupę i drogę; walka aktywna.')
             if defer_movement and payload and payload[0] in WALK_OPCODES:return False
             raise ValueError('Warunki ruchu zmieniły się przed wysłaniem; wstrzymano trasę.')
-        await self.state.game_proxy.inject_to_server(payload,guard=allowed)
+        from command_delivery import delivery,attempted
+        receipt=await self.state.game_proxy.inject_to_server(payload,guard=allowed)
+        self.last_receipt=receipt
+        await delivery(receipt)
+        if receipt is not None:
+            attempt['receipt']=receipt
+            if not attempted(receipt):
+                attempt['valid']=False
+                self.logs.append(f'Komenda {receipt.id}: {receipt.status} ({receipt.reason}).')
+                if route_command:raise MovementDeferred('Krok nie został wysłany — sprawdzam drogę; walka aktywna.')
+                return False
         return True
 
     def map_now(self):
         sample=self.state.passive_map_monitor.snapshot()
         if (sample.get('status')!='ready' or sample.get('stale') or sample.get('age_seconds',99)>.6 or
                 list(sample.get('center',[]))!=list(self.state.game_state.position)):
-            raise ValueError('Mapa nie jest aktualna.')
+            raise InputsUnavailable('Mapa nie jest aktualna.')
         return sample
 
     async def wait_position(self,expected,origin,timeout=2.5,intermediate=None,recover=False):
@@ -488,7 +535,10 @@ class AdaptiveCavebot:
             self.guard()
             if self.status!='running':raise ValueError(self.reason)
             pos=list(self.state.game_state.position)
-            if pos==expected:return True
+            if pos==expected:
+                from command_delivery import confirm
+                confirm(attempt.get("receipt") if attempt else getattr(self,"last_receipt",None),"position_observed")
+                return True
             if attempt and (attempt['valid'] is False or attempt['checks']<2 and time.monotonic()-attempt['sent']>.6):
                 raise MovementDeferred('Krok nie został wysłany — ponownie sprawdzam drogę; walka aktywna.')
             if motion!=self.motion_generation or time.monotonic()<self.manual_until:
@@ -534,7 +584,7 @@ class AdaptiveCavebot:
                 tools=transition_tools(edge)
                 reader=EquipmentReader(ClientPlayerReader(source,self.state.game_state.player_id),tools)
                 inventory=await asyncio.to_thread(reader.snapshot);location=tool_location(inventory,tools)
-                if not location:raise ValueError('Brak łopaty 3457 lub AiO 8899/8900 w otwartym plecaku albo ręce. Otwórz plecak z narzędziem.')
+                if not location:raise ValueError('Brak łopaty 3457 lub AiO 8899/8900 w ekwipunku i otwartych plecakach. Załóż narzędzie albo otwórz jego plecak.')
                 where,tool,stack=location;obj=next(i for i in tile['items'] if i['id']==closed)
                 def ready_to_dig():
                     current,open_now=read_hole(self.map_now())
@@ -575,7 +625,7 @@ class AdaptiveCavebot:
             source=ReadOnlyClient();tools=transition_tools(edge)
             reader=EquipmentReader(ClientPlayerReader(source,self.state.game_state.player_id),tools)
             inventory=await asyncio.to_thread(reader.snapshot);location=tool_location(inventory,tools)
-            if not location:raise ValueError('Brak rope 3003 lub AiO 8899/8900 w otwartym plecaku albo ręce. Otwórz plecak z narzędziem.')
+            if not location:raise ValueError('Brak rope 3003 lub AiO 8899/8900 w ekwipunku i otwartych plecakach. Załóż narzędzie albo otwórz jego plecak.')
             where,tool,stack=location
             def ready_to_use():
                 fresh,_=read_spot(self.map_now())
@@ -676,95 +726,12 @@ class AdaptiveCavebot:
                 if self.combat.manual_override:self.combat.sent_target=0
                 self.pause('Ręczny ruch, atak lub użycie obiektu — V2 wstrzymany.')
         proxy.register_client_packet_callback(manual)
-        manual_position=list(self.state.game_state.position)
+        from session_lifetime import SessionLease
+        from automation_domains import CavebotDomains
+        self.session_lease=SessionLease(self.state)
+        self.domains=CavebotDomains(self)
         try:
-            while self.status=='running':
-                self.reason='Dojście do najbliższego osiągalnego waypointu.' if self.index<self.loop_start else 'Nawigacja po trasie.'
-                sample=await self.fresh_map();pos=list(self.state.game_state.position)
-                if self.navigation_hold:
-                    await self.combat.tick(sample,at_transition=True,allow_movement=False)
-                    if self.status!='running' or not self.navigation_hold:continue
-                    self.reason='Ruch wstrzymany: '+self.navigation_hold+' Walka aktywna.'
-                    await asyncio.sleep(.05);continue
-                if not self.combat_only and time.monotonic()<self.manual_until:
-                    if pos!=manual_position:self.manual_until=time.monotonic()+.3
-                    manual_position=pos
-                    await self.combat.tick(sample,allow_movement=False)
-                    await asyncio.sleep(.05);continue
-                if not self.combat_only and pos!=self.path[self.index]:
-                    if not self.recover_local(sample):
-                        await self.combat.tick(sample,allow_movement=False)
-                        self.reason='Powrót do trasy: czekam na wolne pole; walka aktywna.'
-                        await asyncio.sleep(.05)
-                    continue
-                self.tolerate_waypoint(sample)
-                at_transition=self.route_boundary(sample)
-                if self.combat_only:self.path=[pos];self.index=0
-                try:
-                    if await self.combat.tick(sample,at_transition):continue
-                except MovementDeferred as exc:
-                    self.reason=str(exc);await asyncio.sleep(.05);continue
-                if self.combat_only:
-                    self.reason=('Ręcznie wybrany cel poza warunkami walki — czekam.' if self.combat.manual_target else
-                                 'Czekam na pasującego potwora. Ruch pozostaje ręczny.')
-                    await asyncio.sleep(.05);continue
-                pos=list(self.state.game_state.position)
-                if pos!=self.path[self.index]:
-                    self.recover_local(await self.fresh_map());continue
-                if self.index>=len(self.path)-1:
-                    self.laps+=1
-                    if not self.loop:self.status='complete';self.reason='Trasa zakończona. Powtarzanie wyłączone.';break
-                    self.index=self.loop_start;self.variation_until=self.index;self.mark_waypoint();continue
-                # Combat may have awaited attack/spell pacing; use current terrain.
-                sample=await self.fresh_map()
-                self.vary_leg(sample)
-                target=self.path[self.index+1]
-                edge=next((e for e in self.edges if e['origin']==pos and e['exit']==target),None)
-                if edge:
-                    self._route_command=True;self._route_boundary=True
-                    try:await self.transition(edge,sample)
-                    except MovementDeferred as exc:
-                        self.reason=str(exc);await asyncio.sleep(.05);continue
-                    except ValueError as exc:
-                        # Keep authorized combat alive, but never blindly repeat
-                        # a tool/door operation whose outcome is uncertain.
-                        self.guard();self.map_now()
-                        if not self.combat.config['enabled']:raise
-                        self.navigation_hold=str(exc);self.logs.append('Ruch: '+str(exc));continue
-                    finally:self._route_command=False;self._route_boundary=False
-                else:
-                    now=time.monotonic();self.blocked={p:t for p,t in self.blocked.items() if t>now}
-                    tiles={(c['x'],c['y'],c['z']):c for c in sample['cells']}
-                    if not step_clear(sample['cells'],pos,target,self.blocked):
-                        # Rejoin within the next eight ordinary steps, never skip a transition.
-                        candidates=[]
-                        limit=min(len(self.path),self.index+9,self.loop_start+1 if self.index<self.loop_start else len(self.path))
-                        limit=self.checkpoint_limit(limit)
-                        for j in range(self.index+1,limit):
-                            p=self.path[j]
-                            if p[2]!=pos[2] or any(e['origin']==self.path[j-1] and e['exit']==p for e in self.edges):break
-                            if walkable(tiles.get(tuple(p))):candidates.append(j)
-                        found=False
-                        for j in reversed(candidates):
-                            local=detour(sample['cells'],pos,self.path[j],self.blocked)
-                            if local:
-                                self.replace_path(self.index+1,j,local[1:]);target=self.path[self.index+1];found=True;break
-                        if not found:
-                            if not self.combat.config['enabled'] and not any(t.get('occupants',0) for t in sample['cells']):
-                                raise ValueError('Brak widocznego obejścia przeszkody; sprawdź trasę.')
-                            self.describe_blockage(sample,target)
-                            await asyncio.sleep(.1);continue
-                    self._route_command=True;self._route_boundary=at_transition
-                    try:arrived=await self.step(target)
-                    except MovementDeferred as exc:
-                        self.reason=str(exc);await asyncio.sleep(.05);continue
-                    finally:self._route_command=False;self._route_boundary=False
-                    if not arrived:
-                        self.failures+=1;self.blocked[tuple(target)]=time.monotonic()+1
-                        self.describe_blockage(await self.fresh_map(),target)
-                        if self.failures>=3:self.reason='Brak potwierdzenia kroku — sprawdzam obejście; walka aktywna.'
-                        continue
-                self.index+=1;self.mark_waypoint();self.failures=0;self.blockage=None
+            await self.domains.run()
         except ValueError as exc:self.pause(str(exc))
         except asyncio.CancelledError:
             if self.status=='running':self.pause('Nawigacja zatrzymana.')
@@ -775,3 +742,104 @@ class AdaptiveCavebot:
         finally:
             proxy.unregister_client_packet_callback(manual)
             await self.combat.cancel_attack()
+
+    async def _navigation_loop(self):
+        manual_position=list(self.state.game_state.position)
+        while self.status=="running":
+            if self.domains.movement_state=='complete':
+                await asyncio.sleep(.05);continue
+            self.reason='Dojście do najbliższego osiągalnego waypointu.' if self.index<self.loop_start else 'Nawigacja po trasie.'
+            sample=await self.fresh_map();pos=list(self.state.game_state.position)
+            if self.navigation_hold:
+                self.domains.movement_state="held"
+                if self.status!='running' or not self.navigation_hold:continue
+                self.reason='Ruch wstrzymany: '+self.navigation_hold+' Walka aktywna.'
+                await asyncio.sleep(.05);continue
+            if not self.combat_only and time.monotonic()<self.manual_until:
+                if pos!=manual_position:self.manual_until=time.monotonic()+.3
+                manual_position=pos
+                self.domains.movement_state="waiting"
+                await asyncio.sleep(.05);continue
+            if not self.combat_only and pos!=self.path[self.index]:
+                if self.combat.config['enabled'] and self.combat.anchor is not None:
+                    # Chase/retreat owns this temporary excursion; its return
+                    # intent uses this same executor, never a competing walker.
+                    await self.domains.consume_movement(sample,False)
+                    await asyncio.sleep(.01);continue
+                if not self.recover_local(sample):
+                    self.domains.movement_state="waiting"
+                    self.reason='Powrót do trasy: czekam na wolne pole; walka aktywna.'
+                    await asyncio.sleep(.05)
+                continue
+            self.tolerate_waypoint(sample)
+            at_transition=self.route_boundary(sample)
+            if self.combat_only:self.path=[pos];self.index=0
+            try:
+                if await self.domains.consume_movement(sample,at_transition):continue
+            except MovementDeferred as exc:
+                self.reason=str(exc);await asyncio.sleep(.05);continue
+            if self.combat_only:
+                self.reason=('Ręcznie wybrany cel poza warunkami walki — czekam.' if self.combat.manual_target else
+                             'Czekam na pasującego potwora. Ruch pozostaje ręczny.')
+                await asyncio.sleep(.05);continue
+            pos=list(self.state.game_state.position)
+            if pos!=self.path[self.index]:
+                self.recover_local(await self.fresh_map());continue
+            if self.index>=len(self.path)-1:
+                self.laps+=1
+                if not self.loop:
+                    self.domains.movement_state='complete';self.reason='Trasa zakończona. Powtarzanie wyłączone.'
+                    if not self.combat.config['enabled']:self.status='complete';break
+                    await asyncio.sleep(.05);continue
+                self.index=self.loop_start;self.variation_until=self.index;self.mark_waypoint();continue
+            # Combat may have awaited attack/spell pacing; use current terrain.
+            sample=await self.fresh_map()
+            self.vary_leg(sample)
+            target=self.path[self.index+1]
+            edge=next((e for e in self.edges if e['origin']==pos and e['exit']==target),None)
+            if edge:
+                self._route_command=True;self._route_boundary=True
+                try:await self.transition(edge,sample)
+                except MovementDeferred as exc:
+                    self.reason=str(exc);await asyncio.sleep(.05);continue
+                except ValueError as exc:
+                    # Keep authorized combat alive, but never blindly repeat
+                    # a tool/door operation whose outcome is uncertain.
+                    # Once a transition started, an observation gap is an
+                    # uncertain operation, not permission to use the tool again.
+                    if not self.combat.config['enabled']:raise ValueError(str(exc)) from exc
+                    self.navigation_hold=str(exc);self.logs.append('Ruch: '+str(exc));continue
+                finally:self._route_command=False;self._route_boundary=False
+            else:
+                now=time.monotonic();self.blocked={p:t for p,t in self.blocked.items() if t>now}
+                tiles={(c['x'],c['y'],c['z']):c for c in sample['cells']}
+                if not step_clear(sample['cells'],pos,target,self.blocked):
+                    # Rejoin within the next eight ordinary steps, never skip a transition.
+                    candidates=[]
+                    limit=min(len(self.path),self.index+9,self.loop_start+1 if self.index<self.loop_start else len(self.path))
+                    limit=self.checkpoint_limit(limit)
+                    for j in range(self.index+1,limit):
+                        p=self.path[j]
+                        if p[2]!=pos[2] or any(e['origin']==self.path[j-1] and e['exit']==p for e in self.edges):break
+                        if walkable(tiles.get(tuple(p))):candidates.append(j)
+                    found=False
+                    for j in reversed(candidates):
+                        local=detour(sample['cells'],pos,self.path[j],self.blocked)
+                        if local:
+                            self.replace_path(self.index+1,j,local[1:]);target=self.path[self.index+1];found=True;break
+                    if not found:
+                        if not self.combat.config['enabled'] and not any(t.get('occupants',0) for t in sample['cells']):
+                            raise ValueError('Brak widocznego obejścia przeszkody; sprawdź trasę.')
+                        self.describe_blockage(sample,target)
+                        await asyncio.sleep(.1);continue
+                self._route_command=True;self._route_boundary=at_transition
+                try:arrived=await self.step(target)
+                except MovementDeferred as exc:
+                    self.reason=str(exc);await asyncio.sleep(.05);continue
+                finally:self._route_command=False;self._route_boundary=False
+                if not arrived:
+                    self.failures+=1;self.blocked[tuple(target)]=time.monotonic()+1
+                    self.describe_blockage(await self.fresh_map(),target)
+                    if self.failures>=3:self.reason='Brak potwierdzenia kroku — sprawdzam obejście; walka aktywna.'
+                    continue
+            self.index+=1;self.mark_waypoint();self.failures=0;self.blockage=None

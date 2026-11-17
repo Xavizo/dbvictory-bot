@@ -118,16 +118,18 @@ def test_config_rejects_bad_types(bad):
     with pytest.raises(ValueError):validate_config(bad)
 
 
-def talk(mode=4,name='Visitor',text='Hello',statement=7):
+def talk(mode=6,name='Visitor',text='Hello',statement=7):
     def string(value):
         raw=value.encode();return struct.pack('<H',len(raw))+raw
-    return b'\xaa'+struct.pack('<I',statement)+string(name)+struct.pack('<HB',320,mode)+(struct.pack('<HHB',100,100,7) if mode in (1,2,3) else b'')+string(text)
+    extra=(struct.pack('<HHB',100,100,7) if mode in (1,2,3,4,5,19,20,28) else
+           struct.pack('<H',7) if mode in (7,8,13,15) else struct.pack('<I',9) if mode==9 else b'')
+    return b'\xaa'+struct.pack('<I',statement)+string(name)+struct.pack('<HB',320,mode)+extra+string(text)
 
 
-@pytest.mark.parametrize('mode',[1,2,3,4])
+@pytest.mark.parametrize('mode',[1,2,3,6,14])
 def test_talk_parsed_only_at_sequential_boundary(mode):
     data=talk(mode);end,parsed=parse_talk(data,1)
-    assert end==len(data) and parsed['kind']==('private' if mode==4 else 'default')
+    assert end==len(data) and parsed['kind']==('private' if mode in (6,14) else 'default')
     gs=GameState();events=[];gs.alert_chat_callback=lambda m,g:events.append(m)
     scan_packet(data+talk(mode,statement=8),gs);assert len(events)==2
     events.clear();scan_packet(b'\xff'+data,gs);assert not events
@@ -135,12 +137,33 @@ def test_talk_parsed_only_at_sequential_boundary(mode):
         assert parse_talk(data[:i],1) is None
 
 
-def test_talk_rejects_unknown_spell_and_npc_modes_and_bounds_strings():
-    for mode in [5,9,10,11,12,255]:assert parse_talk(talk(mode),1) is None
+def test_talk_rejects_unknown_modes_and_bounds_strings():
+    for mode in [0,16,255]:assert parse_talk(talk(mode),1) is None
     assert parse_talk(talk(name='x'*65),1) is None
     assert parse_talk(talk(text='x'*4097),1) is None
     assert parse_talk(talk(text='a\x00b'),1) is None
     assert len(parse_talk(talk(text='x'*800),1)[1]['text'])==512
+
+
+@pytest.mark.parametrize('mode',[4,5,7,8,9,10,11,12,13,15,19,20,28])
+def test_dbv_nonalert_speech_does_not_hide_a_bundled_private_message(mode):
+    ignored=talk(mode)
+    end,message=parse_talk(ignored,1)
+    assert end==len(ignored) and message['kind'] is None
+    gs=GameState();events=[];gs.alert_chat_callback=lambda m,g:events.append(m)
+    scan_packet(ignored+talk(6,statement=8),gs)
+    assert len(events)==1 and events[0]['kind']=='private' and events[0]['statement']==8
+    for length in range(len(ignored)):
+        assert parse_talk(ignored[:length],1) is None
+
+
+def test_dbv_wire_private_reaches_alert_center_without_player_being_visible():
+    center,state,_=setup();gs=state.game_state
+    gs.alert_chat_callback=lambda message,source:center.observe_chat(message,state,source)
+    scan_packet(talk(6)+talk(14,statement=8),gs)
+    assert center.chat_received==2
+    assert [event['kind'] for event in center.events]==['private','private']
+    assert not center.known_players
 
 
 def test_settings_persist_only_alert_preferences_and_history_stays_in_memory(monkeypatch,tmp_path):

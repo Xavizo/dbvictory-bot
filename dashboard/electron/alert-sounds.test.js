@@ -31,11 +31,50 @@ test('busy audio retries messages, current preferences cancel queued messages, s
  now+=750;c.consume(snapshot([event(3)],{config:{...config,private:{...config.private,sound:false}}}));assert.equal(sounds,1);
  c.consume(snapshot([event(4,{at:60})]));assert.equal(sounds,1);
 });
+test('global pause silences chat and player repeats and discards queued sounds even between polls',()=>{
+ for(const pollWhilePaused of [false,true]){
+  let now=100000;const sounds=[],c=createSoundConsumer(k=>sounds.push(k),()=>now);
+  c.consume(snapshot());
+  c.consume(snapshot([event(1),event(2)]));
+  assert.deepEqual(sounds,['message']);
+  if(pollWhilePaused){
+   now+=5000;c.consume(snapshot([event(1),event(2)],{paused:true,silenced_through:2}),[12]);
+   assert.deepEqual(sounds,['message']);
+  }
+  now+=750;c.consume(snapshot([event(1),event(2)],{paused:false,silenced_through:2}));
+  assert.deepEqual(sounds,['message']);
+  c.consume(snapshot([event(3,{at:now/1000})],{paused:false,silenced_through:2}));
+  now+=5000;c.consume(snapshot([event(3)],{paused:false,silenced_through:2}),[12]);
+  assert.deepEqual(sounds,['message','message','player']);
+ }
+});
 test('only fresh aligned map with typed players permits repeat sound',()=>{
  const data={connected:true,player:{position:[10,10,7]},passive_map:{status:'ready',stale:false,captured_at:100,center:[10,10,7],cells:[{z:7,alert_players:[{id:0x10000002}]},{z:6,alert_players:[{id:0x10000003}]}]}};
  assert.deepEqual(visiblePlayers(data,100000),[0x10000002]);
  for(const map of [{...data.passive_map,stale:true},{...data.passive_map,captured_at:90},{...data.passive_map,center:[11,10,7]}])assert.deepEqual(visiblePlayers({...data,passive_map:map},100000),[]);
  assert.deepEqual(visiblePlayers({...data,connected:false},100000),[]);
+});
+
+test('panel mute on an older engine silences the tray and resumes on new chat',async()=>{
+  let t=100000,state=snapshot();
+  const timers=[],heard=[];
+  const p=startAlertSounds({token:'test',now:()=>t,beep:k=>heard.push(k),
+    fetchImpl:async()=>({ok:true,json:async()=>({alerts:state})}),
+    setTimer:(fn,ms)=>{timers.push({fn,ms});return 0;},clearTimer:()=>{}});
+  const tick=async()=>{
+    t+=750;
+    await timers.splice(timers.findIndex(a=>a.ms===750),1)[0].fn();
+  };
+  await new Promise(r=>setImmediate(r));
+  assert.equal(p.panelPause(true).paused,true);
+  state=snapshot([event(1)]);await tick();
+  assert.equal(p.panelPause().through,1);
+  assert.equal(p.testSound(),false);
+  p.panelPause(false);await tick();
+  state=snapshot([event(1),event(2,{at:t/1000})]);await tick();
+  assert.deepEqual(heard,['message']);
+  assert.throws(()=>p.panelPause('on'),TypeError);
+  p.stop();
 });
 test('fixed authenticated state polling cancels on quit without changing actions',async()=>{
  const calls=[],timers=[];

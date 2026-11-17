@@ -26,7 +26,7 @@ class BandScheduler:
 
     def begin(self):
         self.pending=None;self.attempts=0;self.empty_since=None;self.empty_stamp=None
-        self.status='Czekam na wyposażenie.'
+        self.status='Czekam na wyposażenie.';self.receipt=None
 
     def inspect(self,snapshot,config,now=None):
         now=time.monotonic() if now is None else now
@@ -35,6 +35,8 @@ class BandScheduler:
             self.status='Czekam na świeży odczyt wyposażenia.';self.empty_since=None;return None
         slots=snapshot['slots'];self.equipped_id=slots.get(slot);self.stock=len(snapshot['sources'])
         if self.equipped_id in BAND_IDS:
+            from command_delivery import confirm
+            confirm(getattr(self,"receipt",None),"band_equipped")
             self.status='Bariera aktywna' if self.equipped_id==3088 else 'Band założony · oczekiwanie na aktywację'
             self.pending=None;self.attempts=0;self.empty_since=None;return None
         if self.equipped_id != 0:
@@ -94,9 +96,10 @@ async def run_band(bot):
                     except Exception:return False
                 packet=build_move_item_packet((65535,0x40|request['container'],request['index']),3051,
                                               request['index'],(65535,request['slot'],0),1)
-                # Reserve before await, and limit unconfirmed attempts even if the queue rejects one.
-                scheduler.sent()
-                await proxy.inject_to_server(packet,guard=guard)
+                from command_delivery import delivery,attempted
+                receipt=await delivery(await proxy.inject_to_server(packet,guard=guard))
+                if attempted(receipt):scheduler.sent();scheduler.receipt=receipt
+                else:scheduler.status='Nie wysłano założenia banda: '+str(receipt.reason)
             await bot.sleep(.25)
     finally:
         alive=False

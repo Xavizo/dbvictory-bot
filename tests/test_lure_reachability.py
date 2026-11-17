@@ -109,14 +109,21 @@ def test_route_rechecks_combat_after_blocked_path_and_resumes_when_clear(state,t
     cells[1].update(occupants=1,occupant_types={'player':1})
     walked=connect_fake_walk(state,c);calls=[]
     original=c.combat.tick
-    async def tick(sample,at_transition=False):
+    async def tick(sample,at_transition=False,**kwargs):
         calls.append(c.status)
         if len(calls)==3:cells[1].update(occupants=0,occupant_types={})
-        return await original(sample,at_transition)
+        return await original(sample,at_transition,**kwargs)
     c.combat.tick=tick
-    asyncio.run(asyncio.wait_for(c.run(),2))
+    async def scenario():
+        task=asyncio.create_task(c.run())
+        try:
+            async with asyncio.timeout(2):
+                while not c.domains or c.domains.movement_state!='complete':await asyncio.sleep(.01)
+            assert c.status=='running' and not task.done()  # combat is independently enabled
+        finally:c.pause('test');await asyncio.wait_for(task,1)
+    asyncio.run(scenario())
     assert len(calls)>=4 and all(v=='running' for v in calls)
-    assert c.status=='complete' and len(walked)==2
+    assert len(walked)==2
 
 def test_loop_toggle_updates_only_execution_option(state,tmp_path):
     c,cells,draft=setup(state,tmp_path);atlas=state.passive_map_monitor.atlas

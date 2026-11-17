@@ -1,5 +1,6 @@
 """Priority healing rules and bounded passive observations of manual item use."""
 import math
+import asyncio
 import random
 import re
 import threading
@@ -158,8 +159,25 @@ async def run_potions(bot):
                     packet = build_use_on_creature_packet(0xFFFF, 0, 0, item_id, 0, gs.player_id)
                 else:
                     packet = build_use_item_packet(0xFFFF, 0, 0, item_id, 0, 0)
+                from command_delivery import attempted
+                def allowed():
+                    if bot.state.game_state is not gs or not bot.is_connected:return False
+                    latest=validate_config(bot.state.settings.get("actions",{}).get("auto_potions",{}),require_cooldowns=True)
+                    if latest!=cfg:return False
+                    snapshot=getattr(gs,'client_snapshot',None)
+                    if getattr(gs,'client_state_required',False) and (not snapshot or not 0<=time.monotonic()-snapshot['monotonic']<=.5):return False
+                    return scheduler.next_rule(cfg,gs,time.monotonic(),time.time())==rule
+                try:receipt=await bot.inject_to_server(packet,guard=allowed)
+                except asyncio.CancelledError:
+                    pending=getattr(bot,'last_receipt',None)
+                    if pending is not None and pending.attempted:
+                        scheduler.record_item_use(item_id,cfg,time.monotonic(),stamp,rule=rule)
+                    raise
+                if not attempted(receipt):
+                    bot.log(f"Rule {rule['id']}: not sent ({receipt.reason})")
+                    await bot.sleep(.05)
+                    continue
                 bot.state.potion_diagnostics.record_use(item_id, rule["mode"], gs, source="auto")
-                await bot.inject_to_server(packet)
                 scheduler.record_item_use(item_id, cfg, time.monotonic(), stamp, rule=rule)
                 if item_id == 8465 and getattr(bot.state, "playback_active", False):
                     bot.state.playback_senzu_used += 1
