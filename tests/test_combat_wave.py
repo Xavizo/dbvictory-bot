@@ -170,7 +170,9 @@ def test_manual_selection_continues_combat_pins_target_and_invalidates_queue(sta
             _,_,old_guard=state.game_proxy._inject_queue.get_nowait();assert old_guard()
             for cb in list(state.game_proxy._client_packet_callbacks):cb(ClientOpcode.ATTACK,PacketReader(struct.pack('<I',second)))
             assert c.status=='running' and not old_guard()
-            await asyncio.sleep(.07)
+            async with asyncio.timeout(1):
+                while c.combat.target['id']!=second or c.combat.sent_target!=second:
+                    await asyncio.sleep(.01)
             assert c.combat.target['id']==second and c.combat.sent_target==second
             assert c.status=='running' and state.game_state.position==(10,10,7)
             # Cancel/escape is still an explicit way to stop automation.

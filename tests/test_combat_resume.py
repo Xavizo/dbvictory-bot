@@ -3,7 +3,8 @@ import asyncio
 import json
 import time
 from copy import deepcopy
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from types import SimpleNamespace
 import pytest
 import mcp_server as server
 from route_identity import same_route,navigation_revision
@@ -17,7 +18,8 @@ def test_combat_save_preserves_path_cursor_and_spell_cooldowns_without_starting(
     old=deepcopy(c.route_draft);path=deepcopy(c.path);cursor=c.waypoint_progress()
     c.combat.cast_after=time.monotonic()+1;c.combat.deadlines={'shinretsuha':time.monotonic()+2}
     cfg=dict(enabled=True,mode='lure',lure_count=3,rules=[dict(pattern='*',action='attack',priority=50)],spells=[])
-    atlas.change_draft(draft,'configure',cfg,False)
+    with patch('map_atlas.time', SimpleNamespace(time=lambda: old['updated'] + 1)):
+        atlas.change_draft(draft,'configure',cfg,False)
     saved=atlas.drafts()[0]
     assert saved['updated']!=old['updated'] and same_route(saved,old)
     assert saved['navigation_revision']==cursor['navigation_revision']

@@ -95,9 +95,10 @@ def test_unoptimized_wiggle_keeps_every_turn_and_backtrack(tmp_path):
     assert len(points)<len(path) and original==path
 
 
-def test_two_editor_windows_cannot_silently_overwrite_a_newer_sketch(tmp_path):
+def test_two_editor_windows_cannot_silently_overwrite_a_newer_sketch(tmp_path,monkeypatch):
     atlas=MapAtlas(tmp_path,'d'*64);points=[[10,10,7],[11,10,7]]
     draft=atlas.save_draft('one',points);before=atlas.drafts()[0]['updated']
+    monkeypatch.setattr('map_atlas.time.time',lambda:before+1)
     atlas.save_draft('newer',points,draft,False,expected_updated=before)
     with pytest.raises(ValueError,match='innym oknie'):
         atlas.save_draft('stale',[[10,10,7],[12,10,7]],draft,True,expected_updated=before)
