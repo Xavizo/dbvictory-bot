@@ -23,7 +23,7 @@ async def call(session, name, args=None):
     assert not result.isError, result.content
     if result.structuredContent is not None:
         return result.structuredContent
-    if name.startswith("fixture_") and name != "fixture_exit":
+    if name == "session_recovery_preview" or (name.startswith("fixture_") and name != "fixture_exit"):
         return json.loads(result.content[0].text)
     return None
 
@@ -44,13 +44,24 @@ async def engine(tree, folder, env, *, abrupt_exit=False):
                     await asyncio.sleep(.02)
 
 
-async def probe(tree, folder, abrupt):
+async def probe(tree, folder, abrupt, hold_potion_receipt=False):
     manager = LocalTransportSession()
     reader = writer = None
     local = (tree / "transport_control.py").is_file()
     service = await asyncio.start_server(echo, LOCAL, 0)
     try:
         upstream = service.sockets[0].getsockname()[1]
+        async def observation(hp, x):
+            if not local:
+                return {}
+            async with asyncio.timeout(3):
+                while (status := manager.snapshot())["state"] != "connected":
+                    await asyncio.sleep(.01)
+            sample = dict(connection_id=status["connection_id"], player_id=101, hp=hp, max_hp=100,
+                          position=[x, 10, 7])
+            writer.write(json.dumps(sample).encode() + b"\n")
+            await writer.drain()
+            return {"observation": json.loads(await reader.readline())}
         async with controller_endpoint(manager, upstream) as env, engine(tree, folder, env, abrupt_exit=abrupt) as first:
             if local:
                 initial = await call(first, "start_local_transport", {"upstream_port": upstream})
@@ -58,7 +69,9 @@ async def probe(tree, folder, abrupt):
                 writer.write(b"before")
                 await writer.drain()
                 assert await reader.readexactly(6) == b"before"
-            before = await call(first, "fixture_prime")
+            before = await call(first, "fixture_prime", {**await observation(42, 10),
+                                "hold_potion_receipt": hold_potion_receipt})
+            preview = await call(first, "session_recovery_preview") if (tree / "recovery_preview.py").exists() else None
             started = time.perf_counter()
         async with controller_endpoint(manager, upstream) as env, engine(tree, folder, env) as second:
             if local:
@@ -69,9 +82,10 @@ async def probe(tree, folder, abrupt):
                 assert await reader.readexactly(5) == b"after"
             cold = await call(second, "fixture_inspect")
             ready_ms = (time.perf_counter() - started) * 1000
-            observed = await call(second, "fixture_observe_again")
+            observed = await call(second, "fixture_observe_again", await observation(37, 12))
             observed_ms = (time.perf_counter() - started) * 1000
             restarted = await call(second, "fixture_restart_healing")
+            resumed = await call(second, "fixture_finish_route") if observed["waypoint"] else None
     finally:
         service.close()
         if writer:
@@ -80,13 +94,15 @@ async def probe(tree, folder, abrupt):
         await manager.stop()
         await service.wait_closed()
     writes = [json.loads(line) for line in (folder / "writes.jsonl").read_text().splitlines()]
-    return dict(before=before, cold=cold, observed=observed, restarted=restarted,
-                ready_ms=ready_ms, observed_ms=observed_ms, writes=writes)
+    return dict(before=before, cold=cold, observed=observed, restarted=restarted, resumed=resumed,
+                ready_ms=ready_ms, observed_ms=observed_ms, writes=writes, preview=preview,
+                held_receipt=hold_potion_receipt)
 
 
-@pytest.fixture(scope="module", params=[False, True], ids=["graceful", "abrupt"])
+@pytest.fixture(scope="module", params=[(False, False), (True, False), (True, True)],
+                ids=["graceful", "abrupt", "abrupt_before_potion_receipt"])
 def handover(tmp_path_factory, request):
-    return asyncio.run(asyncio.wait_for(probe(ROOT, tmp_path_factory.mktemp("restart"), request.param), 35))
+    return asyncio.run(asyncio.wait_for(probe(ROOT, tmp_path_factory.mktemp("restart"), *request.param), 35))
 
 
 def test_restart_uses_fresh_observations_and_does_not_replay_old_queue(handover):
@@ -100,16 +116,27 @@ def test_restart_uses_fresh_observations_and_does_not_replay_old_queue(handover)
     original = [event for pid, event, _ in handover["writes"] if pid == before["pid"]]
     replacement = [event for pid, event, _ in handover["writes"] if pid == cold["pid"]]
     assert sorted(original) == ["potion", "walk", "walk"]
-    assert "walk" not in replacement
+    assert handover["restarted"]["writes"] == 0
+    assert replacement == ["walk"]  # the explicitly resumed route only
     assert all(event != "queued-only" for _, event, _ in handover["writes"])
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="The worker does not yet retain the confirmed route cursor")
 def test_restarted_engine_recovers_the_confirmed_waypoint(handover):
     assert handover["observed"]["waypoint"] == handover["before"]["waypoint"]
+    assert handover["resumed"]["status"] == "complete"
+    assert handover["resumed"]["position"] == [13, 10, 7]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Potion cooldown reservations currently live in the engine process")
 def test_restart_respects_already_dispatched_potion(handover):
     uses = [stamp for _, event, stamp in handover["writes"] if event == "potion"]
     assert uses and all(b - a >= 60 for a, b in zip(uses, uses[1:]))
+
+
+def test_passive_rehearsal_reports_current_progress_without_writes(handover):
+    sample = handover["preview"]
+    assert (sample["hp"], sample["position"]) == (42, [11, 10, 7])
+    assert (sample["last_waypoint"], sample["next_waypoint"]) == (2, 3)
+    if handover["held_receipt"]:
+        assert not sample["potion_seconds"]  # the passive sample includes only observed uses
+    else:
+        assert 0 < sample["potion_seconds"]["10161"] <= 60

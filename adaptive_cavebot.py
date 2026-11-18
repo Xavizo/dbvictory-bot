@@ -139,6 +139,8 @@ class AdaptiveCavebot:
         self.blocked={};self.failures=0;self.logs=deque(maxlen=40);self.generation=0
         self.recovery_attempts=deque(maxlen=3);self.recovery_count=0
         self.checkpoints=[];self.route_draft=None;self.last_waypoint=None;self.tolerated_waypoints=0
+        self._saved_plan = None
+        self._unresolved_destination = None
         self.navigation_hold=None
         self.variation_until=0;self.blockage=None;self._blockage_key=None;self._blockage_at=0
         self.manual_until=0;self.motion_generation=0;self.recovery_next_at=0;self._route_command=False;self._route_boundary=False;self._route_attempt=None
@@ -159,6 +161,52 @@ class AdaptiveCavebot:
         for c in self.checkpoints:
             if c['index']==self.index:self.last_waypoint=c['waypoint']
 
+    def session_cursor(self, pending=None):
+        plan = dict(path=self.path, edges=self.edges, checkpoints=self.checkpoints, loop_start=self.loop_start,
+                    scope=self.scope, draft_id=self.draft_id, loop=self.loop, min_hp=self.min_hp)
+        cursor = dict(index=self.index, last_waypoint=self.last_waypoint, laps=self.laps,
+                      tolerated_waypoints=self.tolerated_waypoints, pending=pending,
+                      revision=navigation_revision(self.route_draft))
+        return cursor, plan
+
+    def save_session_cursor(self, pending=None):
+        journal = getattr(self.state.game_state, "engine_journal", None)
+        if journal is None or self.combat_only or not self.route_draft:
+            return
+        cursor, plan = self.session_cursor(pending)
+        changed = plan != self._saved_plan
+        if changed:
+            plan = deepcopy(plan)
+        journal.save_route(cursor, plan if changed else None)
+        if changed:
+            self._saved_plan = plan
+
+    @classmethod
+    def from_session_cursor(cls, state):
+        journal = getattr(state.game_state, "engine_journal", None)
+        monitor = getattr(state, "passive_map_monitor", None)
+        if journal is None or monitor is None or not monitor.atlas:
+            return None
+        saved = journal.route()
+        if not saved or saved["scope"] != monitor.atlas.scope:
+            return None
+        draft = next((d for d in monitor.atlas.drafts() if d["id"] == saved["draft_id"]), None)
+        if not draft or navigation_revision(draft) != saved["revision"]:
+            return None
+        controller = cls(state)
+        for key in ("path", "edges", "checkpoints", "loop_start", "scope", "draft_id", "loop",
+                    "index", "last_waypoint", "laps", "tolerated_waypoints"):
+            setattr(controller, key, saved[key])
+        controller.route_draft = deepcopy(draft)
+        controller.name = draft["name"]
+        controller.min_hp = saved["min_hp"]
+        controller.guard()
+        controller.map_now()
+        controller._unresolved_destination = saved["pending"]
+        controller.status = "paused"
+        controller.reason = "Odzyskano postęp po restarcie. Możesz wznowić trasę."
+        return controller
+
     def snapshot(self):
         return {"status":self.status,"reason":self.reason,"domains":self.domains.snapshot() if self.domains else None,"navigation_hold":self.navigation_hold,"name":self.name,"index":self.index,"total":len(self.path),
                 "mode":"combat" if self.combat_only else "route","scope":self.scope,"waypoint":self.waypoint_progress(),"resumable":bool(self.path and self.status in {"idle","paused","ready"}),"loops":self.laps,"loop":self.loop,"draft_id":self.draft_id,"combat":self.combat.snapshot(),"approach_remaining":max(0,self.loop_start-self.index) if self.path else 0,"position":self.path[self.index] if self.path else None,"logs":list(self.logs),"recovery_count":self.recovery_count,"blockage":self.blockage}
@@ -171,6 +219,10 @@ class AdaptiveCavebot:
         self.generation+=1;self.status="idle";self.reason=reason;self.navigation_hold=None
         if not preserve_progress:
             self.path=[];self.edges=[];self.index=0;self.checkpoints=[];self.last_waypoint=None;self.route_draft=None
+            journal = getattr(self.state.game_state, "engine_journal", None)
+            if journal is not None and journal.current():
+                journal.save_route(None)
+            self._saved_plan = None
         elif self.path and not self.combat_only:
             self.reason='Zatrzymano. Postęp trasy zachowany — możesz wznowić.' 
         self.combat.reset_lure();self.combat.battle_started=None;self.combat.last_health=None
@@ -187,6 +239,8 @@ class AdaptiveCavebot:
 
     def guard(self,combat=False):
         st=self.state;gs=st.game_state
+        if getattr(gs, "engine_recovery_required", False) and not getattr(gs, "engine_journal", None):
+            raise InputsUnavailable("Czekam na potwierdzenie sesji.")
         if self.session_lease and not self.session_lease.valid():raise ValueError("Sesja zmieniła się — uruchom automat ponownie.")
         if not st.connected:raise ValueError("Brak połączenia z grą.")
         if not st.game_proxy.logged_in or st.game_proxy.xtea_keys is None:raise ValueError("Połączenie proxy nie jest gotowe do ruchu.")
@@ -301,11 +355,15 @@ class AdaptiveCavebot:
     async def resume_candidate(self):
         self.guard();self.map_now()
         if self.combat_only:return self
+        if (self._unresolved_destination is not None and
+                list(self.state.game_state.position) != self._unresolved_destination):
+            raise ValueError("Brak potwierdzenia ostatniego ruchu. Sprawdź pozycję przed wznowieniem.")
         atlas=self.state.passive_map_monitor.atlas
         draft=next((d for d in atlas.drafts() if d['id']==self.draft_id),None)
         if not same_route(draft,self.route_draft):
             raise ValueError('Zmieniono waypointy, przejścia lub pętlę. Odrzuć postęp i uruchom zmienioną trasę od nowa.')
         c=copy(self)
+        c._unresolved_destination = None
         # Apply saved combat changes only on explicit resume. Keep spell/global
         # cooldown deadlines; new target/lure state must use the new rules.
         config=validate_combat(self.state.settings.get('combat_profile',draft.get('combat')))
@@ -596,7 +654,8 @@ class AdaptiveCavebot:
         def allowed():
             try:
                 self.guard(combat=combat_command)
-                valid=(lease.valid() and task_alive(owner) and self.status=='running' and self.generation==generation and time.monotonic()-sent<.5 and
+                journal = getattr(lease.game, "engine_journal", None)
+                valid=(lease.valid() and (journal is None or journal.current()) and task_alive(owner) and self.status=='running' and self.generation==generation and time.monotonic()-sent<.5 and
                     (combat_command and payload[0] in {ClientOpcode.ATTACK,ClientOpcode.SAY} or self.combat_only or list(self.state.game_state.position)==origin) and
                     (not route_command or (motion==self.motion_generation and time.monotonic()>=self.manual_until and self.combat.route_step_allowed(boundary))) and
                     (validate is None or validate()))
@@ -846,6 +905,7 @@ class AdaptiveCavebot:
         if not self.path or (not self.combat_only and distance(self.state.game_state.position,self.path[self.index])!=0):
             raise ValueError("Pozycja zmieniła się podczas pauzy. Uruchom trasę od początku.")
         self.generation+=1;self.status='running';self.reason='Nawigacja po trasie.'
+        self.save_session_cursor()
         if self.combat.manual_override:self.combat.sent_target=0
         self.combat.manual_override=False
         proxy=self.state.game_proxy
@@ -944,6 +1004,9 @@ class AdaptiveCavebot:
                     continue
                 self.laps+=1
                 if not self.loop:
+                    journal = getattr(self.state.game_state, "engine_journal", None)
+                    if journal is not None:
+                        journal.save_route(None)
                     self.domains.movement_state='complete';self.reason='Trasa zakończona. Powtarzanie wyłączone.'
                     if not self.combat.config['enabled']:self.status='complete';break
                     await asyncio.sleep(.05);continue
@@ -955,6 +1018,7 @@ class AdaptiveCavebot:
             edge=next((e for e in self.edges if e['origin']==pos and e['exit']==target),None)
             if edge:
                 self._route_command=True;self._route_boundary=True
+                self.save_session_cursor(pending=target)
                 try:await self.transition(edge,sample)
                 except MovementDeferred as exc:
                     self.reason=str(exc);await asyncio.sleep(.05);continue
@@ -995,6 +1059,7 @@ class AdaptiveCavebot:
                         self.describe_blockage(sample,target)
                         await asyncio.sleep(.1);continue
                 self._route_command=True;self._route_boundary=at_transition
+                self.save_session_cursor(pending=target)
                 try:arrived=await self.step(target)
                 except MovementDeferred as exc:
                     self.reason=str(exc);await asyncio.sleep(.05);continue
@@ -1006,3 +1071,4 @@ class AdaptiveCavebot:
                     if self.failures>=3:self.reason='Brak potwierdzenia kroku — sprawdzam obejście; walka aktywna.'
                     continue
             self.index+=1;self.mark_waypoint();self.failures=0;self.blockage=None
+            self.save_session_cursor()

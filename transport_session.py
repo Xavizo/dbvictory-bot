@@ -3,9 +3,13 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
+from tempfile import TemporaryDirectory
+
+from engine_recovery import RecoveryOwner
 
 WORKER = Path(__file__).resolve().parent / "scripts" / "local_transport.py"
 
@@ -15,16 +19,24 @@ class _Worker:
         self.upstream_port = upstream_port
         self.first_report = threading.Event()
         self.report = None
+        self.recovery_dir = TemporaryDirectory(prefix="dbv-engine-")
+        self.recovery_owner = RecoveryOwner(self.recovery_dir.name)
         # Isolated interpreter and a small environment. Dashboard credentials
         # and application settings are not inputs to the transport.
         env = {k: os.environ[k] for k in ("SystemRoot", "WINDIR", "TEMP", "TMP")
                if k in os.environ}
-        self.process = subprocess.Popen(
-            [sys.executable, "-I", "-B", str(WORKER), str(upstream_port), "--managed"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            env=env, close_fds=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        try:
+            self.process = subprocess.Popen(
+                [sys.executable, "-I", "-B", str(WORKER), str(upstream_port), "--managed",
+                 "--recovery-dir", self.recovery_dir.name],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env=env, close_fds=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError:
+            self.recovery_owner.close()
+            self.recovery_dir.cleanup()
+            raise
         self.reader = threading.Thread(target=self._read_reports, daemon=True)
         self.reader.start()
 
@@ -41,11 +53,19 @@ class _Worker:
                             or any(type(data.get(k)) is not int or data[k] < 0
                                    for k in ("connections", "failures"))):
                         break
-                    self.report = {k: data[k] for k in ("port", "state", "connections", "failures")}
+                    report = {k: data[k] for k in ("port", "state", "connections", "failures")}
+                    if report["state"] == "connected":
+                        connection_id = data.get("connection_id")
+                        if not isinstance(connection_id, str) or not re.fullmatch(r"[0-9a-f]{32}", connection_id):
+                            break
+                        report["connection_id"] = connection_id
+                    self.report = report
                     self.first_report.set()
         except (OSError, ValueError):
             pass
         finally:
+            if self.report and self.report.get("connection_id"):
+                self.recovery_owner.end(self.report["connection_id"])
             self.first_report.set()
 
     def snapshot(self):
@@ -56,6 +76,8 @@ class _Worker:
             info.update(state="exited", exit_code=code)
         elif not self.reader.is_alive():
             info["state"] = "status_unavailable"
+        if info["state"] != "connected":
+            info.pop("connection_id", None)
         return info
 
     def stop(self):
@@ -68,13 +90,32 @@ class _Worker:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait(timeout=3)
-        self.reader.join(timeout=1)
+        self.reader.join()
+        self.recovery_owner.close()
+        self.recovery_dir.cleanup()
 
 
 class LocalTransportSession:
     def __init__(self):
         self._worker = None
         self._lock = asyncio.Lock()
+        self._recovery_login = self._controller = self._lease = None
+
+    def recovery_grant(self, login, controller):
+        info = self.snapshot()
+        if not login or info.get("connection_id") != login:
+            raise ValueError("Recovery requires the current connected stream")
+        owner = self._worker.recovery_owner
+        if login != self._recovery_login or controller != self._controller:
+            self._lease = owner.handover(login)
+            self._recovery_login, self._controller = login, controller
+        return {"state": "connected", "path": str(owner.path),
+                "connection_id": login, "lease": self._lease}
+
+    def revoke_recovery(self, controller):
+        if self._worker is not None and self._controller == controller:
+            self._worker.recovery_owner.revoke(self._lease)
+            self._controller = None
 
     def snapshot(self):
         return self._worker.snapshot() if self._worker else {"state": "stopped"}
@@ -93,6 +134,7 @@ class LocalTransportSession:
         finally:
             if self._worker.process.poll() is not None:
                 self._worker = None
+                self._recovery_login = self._controller = self._lease = None
 
     async def start(self, upstream_port):
         if type(upstream_port) is not int or not 1 <= upstream_port <= 65535:

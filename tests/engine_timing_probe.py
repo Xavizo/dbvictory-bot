@@ -1,5 +1,6 @@
 """Offline A/B workload. Run this same file with each revision's worktree as argv[1]."""
 import asyncio
+import argparse
 import gc
 import json
 import logging
@@ -19,7 +20,7 @@ async def measure_steps(state, folder):
     loop_now = time.perf_counter
     visible = list(gs.position)
     state.passive_map_monitor.snapshot = lambda: {**sample(), "center": visible.copy()}
-    timings = {"step_ms": [], "position_ms": [], "map_ms": []}
+    timings = {"step_ms": [], "position_ms": [], "map_ms": [], "cycle_ms": []}
     for i in range(32):
         target = [11 if i % 2 == 0 else 10, 10, 7]
         gs.stats_updated_at = time.time()
@@ -35,13 +36,21 @@ async def measure_steps(state, folder):
 
         state.game_proxy.inject_to_server = schedule_step
         dispatched = None
+        started = loop_now()
+        if getattr(gs, "engine_journal", None):
+            controller.save_session_cursor(pending=target)
         assert await controller.step(target)
         acknowledged = loop_now()
+        if getattr(gs, "engine_journal", None):
+            controller.index = int(target[0] == 11)
+            controller.mark_waypoint()
+            controller.save_session_cursor()
         await controller.fresh_map()
         ready = loop_now()
         timings["position_ms"].append((acknowledged - dispatched) * 1000)
         timings["map_ms"].append((ready - acknowledged) * 1000)
         timings["step_ms"].append((ready - dispatched) * 1000)
+        timings["cycle_ms"].append((ready - started) * 1000)
 
     return timings
 
@@ -123,20 +132,33 @@ async def measure_blockage(state, folder, pulses=16):
     return {"heal_ms": heal_ms, "casts_while_blocked": while_blocked, "heals_while_blocked": len(heals)}
 
 
-async def measure(folder):
+async def measure(folder, with_recovery=False):
     import mcp_server as server
 
     server.load_settings = lambda: {"actions": {}}
     state = server.state = server.BotState()
-    steps = await measure_steps(state, folder)
-    blockage = await measure_blockage(state, folder)
-    return {**steps, **blockage}
+    if with_recovery:
+        from engine_recovery import EngineJournal, RecoveryOwner
+        owner = RecoveryOwner(folder)
+        owner.begin("benchmark")
+        state.game_state.engine_journal = EngineJournal(owner.path, "benchmark", owner.handover("benchmark"), 101)
+    try:
+        steps = await measure_steps(state, folder)
+        blockage = await measure_blockage(state, folder)
+        return {**steps, **blockage}
+    finally:
+        if with_recovery:
+            owner.close()
 
 
 if __name__ == "__main__":
-    tree = Path(sys.argv[1]).resolve(strict=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tree", type=Path)
+    parser.add_argument("--with-recovery", action="store_true")
+    args = parser.parse_args()
+    tree = args.tree.resolve(strict=True)
     sys.path[:0] = [str(tree), str(tree / "tests")]
     logging.disable(logging.CRITICAL)
     with TemporaryDirectory() as folder:
-        print(json.dumps(asyncio.run(measure(Path(folder)))))
+        print(json.dumps(asyncio.run(measure(Path(folder), args.with_recovery))))
         gc.collect()  # Release sqlite connections before removing the fixture on Windows.

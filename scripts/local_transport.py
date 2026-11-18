@@ -7,6 +7,7 @@ import os
 import queue
 import sys
 import threading
+from uuid import uuid4
 
 LOOPBACK = "127.0.0.1"
 BUFFER_SIZE = 64 * 1024
@@ -71,7 +72,7 @@ class ParentMonitor:
             self.loop.call_soon_threadsafe(self.detached.set)
 
 
-async def serve(upstream_port, once=False, managed=False):
+async def serve(upstream_port, once=False, managed=False, recovery_owner=None):
     finished = asyncio.Event()
     detached = asyncio.Event()
     busy = False
@@ -80,11 +81,16 @@ async def serve(upstream_port, once=False, managed=False):
 
     def publish(phase):
         state["state"] = phase
+        if phase != "connected":
+            state.pop("connection_id", None)
         if monitor:
             monitor.publish(state)
 
     def connected():
         state["connections"] += 1
+        state["connection_id"] = uuid4().hex
+        if recovery_owner is not None:
+            recovery_owner.begin(state["connection_id"])
         publish("connected")
 
     async def accept(reader, writer):
@@ -102,6 +108,8 @@ async def serve(upstream_port, once=False, managed=False):
                 # Connection failure is local to this stream pair.
                 state["failures"] += 1
         finally:
+            if recovery_owner is not None and state.get("connection_id"):
+                recovery_owner.end(state["connection_id"])
             writer.close()
             with suppress(OSError):
                 await writer.wait_closed()
@@ -135,11 +143,25 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true", help="Exit after one connection")
     mode.add_argument("--managed", action="store_true", help="Publish status to the owning bot")
+    parser.add_argument("--recovery-dir", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 1 <= args.upstream_port <= 65535:
         parser.error("Port must be in 1..65535")
     try:
-        asyncio.run(serve(args.upstream_port, args.once, args.managed))
+        owner = None
+        if args.recovery_dir:
+            if not args.managed:
+                parser.error("recovery-dir requires managed mode")
+            from pathlib import Path
+            # The supervisor starts this interpreter with -I and no PYTHONPATH.
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from engine_recovery import RecoveryOwner
+            owner = RecoveryOwner(args.recovery_dir)
+        try:
+            asyncio.run(serve(args.upstream_port, args.once, args.managed, owner))
+        finally:
+            if owner is not None:
+                owner.close()
     except KeyboardInterrupt:
         return 0
 

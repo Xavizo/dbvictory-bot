@@ -806,6 +806,8 @@ async def _async_adaptive_control(command: str, config: dict | None=None) -> dic
                     controller.resumable_for(config.get('scope'),config.get('draft_id'),config.get('loop',True)) and
                     same_route(next((d for d in state.passive_map_monitor.atlas.drafts() if d['id']==controller.draft_id),None),controller.route_draft)))
             if resume:
+                if not controller and getattr(state.game_state, "engine_journal", None):
+                    controller = AdaptiveCavebot.from_session_cursor(state)
                 if not controller or not controller.path or controller.status not in {'idle','paused','ready'}:
                     raise ValueError('Nie ma postępu trasy do wznowienia.')
                 candidate=await controller.resume_candidate()
@@ -831,6 +833,9 @@ async def _async_adaptive_control(command: str, config: dict | None=None) -> dic
         if (task and not task.done()) or (controller and controller.status=='running'):
             raise ValueError('Najpierw zatrzymaj V2, potem odrzuć postęp.')
         state._adaptive_prepare_token=None
+        journal = getattr(state.game_state, "engine_journal", None)
+        if journal is not None and not controller:
+            journal.save_route(None)
         if controller:controller.stop('Postęp odrzucony. Zapisana trasa i ustawienia walki pozostają zachowane.')
         state.settings.setdefault('actions',{}).setdefault(name,{})['enabled']=False
     elif command in {"pause","stop"}:
@@ -1440,6 +1445,9 @@ async def start_bot() -> str:
                     state.potion_diagnostics.record_use(item_id, mode, state.game_state)
                     cfg = validate_potion_config(state.settings.get("actions", {}).get("auto_potions", {}))
                     state.potion_scheduler.record_item_use(item_id, cfg, _time.monotonic(), state.game_state.stats_updated_at)
+                    journal = getattr(state.game_state, "engine_journal", None)
+                    if journal is not None:
+                        journal.note_use(item_id, state.potion_scheduler)
                 log.info(f"[SNIFF] USE_ITEM pos={pos} item_id={item_id} stack={stack_pos}")
             except Exception:
                 pass
@@ -2010,6 +2018,13 @@ async def get_status() -> str:
         status += f"\nSession: {commands['session']} · queued commands: {commands['queued']}"
 
     return f"=== Component Status ===\n{status}"
+
+
+@mcp.tool()
+async def session_recovery_preview() -> dict:
+    """Compare a read-only sample of waypoint and potion timers in a separate process."""
+    from recovery_preview import preview
+    return await preview(state)
 
 
 @mcp.tool()

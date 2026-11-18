@@ -125,6 +125,10 @@ async def bind_local_player(bot, state, gs, reader):
     """Bind one verified LocalPlayer for this login, never an old packet ID."""
     gs.client_state_required = True
     gs.client_snapshot = None
+    connection = getattr(getattr(state, "game_proxy", None), "recovery_connection_id", None)
+    gs.engine_recovery_required = isinstance(connection, str) and bool(connection)
+    if gs.engine_recovery_required:
+        gs.engine_journal = None
     gs.client_state_error = "Czekam na postać w kliencie"
     for _ in range(150):
         if not bot.is_connected or state.game_state is not gs:
@@ -135,9 +139,22 @@ async def bind_local_player(bot, state, gs, reader):
             gs.client_state_error = str(exc)
             await bot.sleep(.2)
             continue
+        if gs.engine_recovery_required:
+            if sample.get("connection_id") != connection:
+                return False
+            journal = await state.local_transport.bind_recovery(connection, reader.player_id)
+            if not bot.is_connected or state.game_state is not gs:
+                return False
+            gs.engine_journal = journal
         gs.client_player_id = reader.player_id
         gs.player_id = reader.player_id
         gs.client_snapshot = sample
         gs.client_state_error = None
+        if gs.engine_recovery_required and not getattr(state, "adaptive_cavebot", None):
+            from adaptive_cavebot import AdaptiveCavebot, InputsUnavailable
+            try:
+                state.adaptive_cavebot = AdaptiveCavebot.from_session_cursor(state)
+            except (InputsUnavailable, ValueError):
+                pass  # Map or user pause can defer restoration until explicit resume.
         return True
     return False

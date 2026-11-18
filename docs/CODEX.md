@@ -75,12 +75,58 @@ after the wall was removed. Timings include Windows event-loop scheduling.
 To repeat the movement workload, run `python tests/engine_timing_probe.py PATH_TO_WORKTREE`
 from this branch once per revision. For a pass/fail restart check, run
 `python -m pytest -q --runxfail tests/test_engine_restart_recovery.py`.
-It currently exposes four failing cases (waypoint and cooldown, each with two
-exit modes). The ordinary suite tracks both regressions as strict expected
-failures. Before enabling a live engine replacement, the surviving session
-must retain the confirmed route cursor bound to its route revision and the
-cooldown for any item command that may already have been written. A new
-login must start with its own session state.
+At `24802bd` it exposed four failing cases (waypoint and cooldown, each
+with two exit modes). The transport branch now runs these as passing
+acceptance tests, together with a hard exit between item write and receipt.
+
+### Recovery pilot
+
+The opt-in local transport gives each established connection a unique ID.
+The relay starts and ends a transient SQLite journal for that connection.
+The supervisor issues a separate write lease to each replacement controller.
+A verified observation must match the source connection and player before the
+engine binds to it. Disconnect or a different controller invalidates old
+writes. The journal holds navigation progress and cooldowns. HP and position
+come from a new observation.
+
+The engine reserves an item before it can reach the writer. A definite
+rejection releases the reservation. If the controller dies before learning the
+result, the replacement waits the full reserved cooldown from handover.
+The route stores its revision, confirmed cursor and any outstanding destination.
+It restores paused. Explicit resume checks the current map and position. An
+unconfirmed destination or a changed route prevents replay.
+
+For one offline acceptance run on Windows:
+
+```powershell
+python -m pytest -q tests/test_engine_restart_recovery.py tests/test_engine_journal.py tests/test_automation_domains.py tests/test_mcp_local_transport.py
+```
+
+For the first field test, load the candidate at the usual character-list
+maintenance window. While logged in, enter `recovery` in the launcher's console
+or call the read-only MCP tool `session_recovery_preview`. It compares a
+single copy of the current waypoint and already observed item timers with a
+second process reading that copy, then reads fresh HP and position. Waypoint
+numbers are one-based. A null waypoint means there was no selected route
+with progress. An empty timer list means no item uses were available in the
+sample. The command neither changes automation nor restarts the controller.
+The regular game launcher still owns its sockets in the engine process. Live
+controller replacement during a game is a later integration stage.
+
+Four interleaved Windows runs per revision measured 128 steps and 64 HP drops
+each. Master used the existing scheduler. The candidate used the journal
+on every test step and item decision (`engine_timing_probe.py PATH --with-recovery`).
+
+| Time at p95 | Master d5593db | Candidate with recovery |
+| --- | ---: | ---: |
+| Full paced step including checkpoint and fresh map | 63.5 ms | 76.5 ms |
+| Dispatch to fresh map including the confirmed cursor write | 47.7 ms | 51.4 ms |
+| HP drop to item request during a blocked route | 47.7 ms | 53.9 ms |
+
+Combat kept casting and every drop produced a healing request while movement
+was blocked. All eight runs resumed when the test corridor reopened. These
+are scheduled offline observations on Windows. The next field trial is the
+read-only rehearsal; check the added latency before a live transport cutover.
 
 ## Staged session and command architecture (2026-11-17)
 

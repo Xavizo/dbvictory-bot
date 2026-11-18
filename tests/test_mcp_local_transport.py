@@ -159,6 +159,9 @@ def test_data_keeps_flowing_after_controller_error_and_before_replacement(monkey
                         writer.write(b"first")
                         await writer.drain()
                         assert await reader.readexactly(5) == b"first"
+                        async with asyncio.timeout(3):
+                            while not (active := await start(first, upstream)).get("connection_id"):
+                                await asyncio.sleep(.02)
                     old_key = params.env[KEY_ENV]
                     pending_stop = await asyncio.open_connection(LOCAL, int(params.env[PORT_ENV]))
                     # This request is still incomplete when its controller exits.
@@ -183,6 +186,7 @@ def test_data_keeps_flowing_after_controller_error_and_before_replacement(monkey
                     same = await start(replacement, upstream_port)
                     assert same["pid"] == active["pid"] and same["port"] == active["port"]
                     assert same["state"] == "connected" and same["connections"] == 1
+                    assert same["connection_id"] == active["connection_id"]
                     assert not (await replacement.call_tool("stop_local_transport", {})).isError
                 resumed = True
                 return False
@@ -366,3 +370,51 @@ def test_concurrent_start_and_recovery_from_child_exit():
             finally:
                 await manager.stop()
     asyncio.run(asyncio.wait_for(scenario(), 20))
+
+
+def test_new_connection_gets_new_identity_even_with_same_listener_or_worker_count():
+    from engine_recovery import EngineJournal
+
+    async def scenario():
+        manager = LocalTransportSession()
+        seen = set()
+        async def phase(name):
+            async with asyncio.timeout(3):
+                while (report := manager.snapshot())["state"] != name:
+                    await asyncio.sleep(.02)
+            return report
+
+        async with await asyncio.start_server(echo, LOCAL, 0) as service:
+            upstream = service.sockets[0].getsockname()[1]
+            try:
+                for index in range(3):
+                    listener = await manager.start(upstream)
+                    assert "connection_id" not in listener
+                    reader, writer = await asyncio.open_connection(LOCAL, listener["port"])
+                    try:
+                        active = await phase("connected")
+                        assert active["connections"] == (1, 2, 1)[index]
+                        assert active["connection_id"] not in seen
+                        seen.add(active["connection_id"])
+                        grant = manager.recovery_grant(active["connection_id"], "test-controller")
+                        journal = EngineJournal(grant["path"], grant["connection_id"], grant["lease"], 101)
+                        assert journal.current() and journal.reserve(10161, 60, 60)
+                        if index == 2:
+                            process = manager._worker.process
+                            process.terminate()
+                            await asyncio.to_thread(process.wait, 3)
+                            assert "connection_id" not in await phase("exited")
+                        else:
+                            writer.write_eof()
+                            assert await reader.read() == b"EOF"
+                            assert "connection_id" not in await phase("listening")
+                            assert not journal.current()
+                    finally:
+                        writer.close()
+                        with suppress(OSError):
+                            await writer.wait_closed()
+                    if index == 1:
+                        await manager.stop()
+            finally:
+                await manager.stop()
+    asyncio.run(asyncio.wait_for(scenario(), 15))

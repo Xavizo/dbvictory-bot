@@ -149,10 +149,19 @@ class PotionScheduler:
 
 async def run_potions(bot):
     scheduler = bot.state.potion_scheduler
+    restored = None
     while True:
         cfg = validate_config(bot.state.settings.get("actions", {}).get("auto_potions", {}), require_cooldowns=True)
         if bot.is_connected:
             gs = bot.state.game_state
+            journal = getattr(gs, "engine_journal", None)
+            if getattr(gs, "engine_recovery_required", False) and journal is None:
+                await bot.sleep(.05)
+                continue
+            if journal is not restored:
+                if journal is not None:
+                    journal.restore_cooldowns(scheduler)
+                restored = journal
             rule = scheduler.next_rule(cfg, gs, time.monotonic(), time.time())
             if rule:
                 item_id, stamp = rule["item_id"], gs.stats_updated_at
@@ -164,17 +173,36 @@ async def run_potions(bot):
                 from command_delivery import attempted
                 def allowed():
                     if bot.state.game_state is not gs or not bot.is_connected:return False
+                    if journal is not None and not journal.current():return False
                     latest=validate_config(bot.state.settings.get("actions",{}).get("auto_potions",{}),require_cooldowns=True)
                     if latest!=cfg:return False
                     snapshot=getattr(gs,'client_snapshot',None)
                     if getattr(gs,'client_state_required',False) and (not snapshot or not 0<=time.monotonic()-snapshot['monotonic']<=.5):return False
                     return scheduler.next_rule(cfg,gs,time.monotonic(),time.time())==rule
+                ticket = None
+                if journal is not None:
+                    intervals = [rule_cooldown(r, cfg) for r in rules_from_config(cfg)
+                                 if r["enabled"] and r["item_id"] == item_id]
+                    gap = max([rule["interval"], *intervals])
+                    ticket = journal.reserve(item_id, gap, cfg["shared_cooldown"])
+                    if ticket is None:
+                        journal.restore_cooldowns(scheduler)
+                        await bot.sleep(.05)
+                        continue
                 try:receipt=await bot.inject_to_server(packet,guard=allowed)
                 except asyncio.CancelledError:
                     pending=getattr(bot,'last_receipt',None)
+                    if ticket:
+                        journal.settle(ticket, pending is None or pending.attempted or pending.write_started)
                     if pending is not None and pending.attempted:
                         scheduler.record_item_use(item_id,cfg,time.monotonic(),stamp,rule=rule)
                     raise
+                except Exception:
+                    if ticket:
+                        journal.settle(ticket, True)
+                    raise
+                if ticket:
+                    journal.settle(ticket, attempted(receipt))
                 if not attempted(receipt):
                     bot.log(f"Rule {rule['id']}: not sent ({receipt.reason})")
                     await bot.sleep(.05)

@@ -47,9 +47,11 @@ async def controller_endpoint(manager, upstream_port):
                     reply = await manager.start(upstream_port)
                 elif command == "stop":
                     reply = await manager.stop()
+                elif command == "recovery":
+                    reply = manager.recovery_grant(request.get("connection_id"), key)
                 else:
                     reply = {"error": "Unknown command or endpoint outside this local session"}
-            except (OSError, RuntimeError):
+            except (OSError, RuntimeError, ValueError):
                 reply = {"error": "Local transport operation failed"}
             writer.write(json.dumps(reply).encode("ascii") + b"\n")
             await writer.drain()
@@ -81,6 +83,9 @@ async def controller_endpoint(manager, upstream_port):
             writer.close()
             task.cancel()
         await asyncio.gather(*(task for task, _ in requests), return_exceptions=True)
+        revoke = getattr(manager, "revoke_recovery", None)
+        if revoke:
+            revoke(key)
         await server.wait_closed()
 
 
@@ -91,12 +96,14 @@ class LocalTransportControl:
         self.port = os.environ.get(PORT_ENV)
         self.key = os.environ.get(KEY_ENV)
 
-    async def _call(self, command, upstream_port=None):
+    async def _call(self, command, upstream_port=None, *, connection_id=None):
         if not self.port or not self.key:
             if command in {"status", "stop"}:
                 return {"state": "stopped"}
             raise ValueError("Launch the local session with run_bot.py --local-transport PORT")
         request = {"key": self.key, "command": command, "port": upstream_port}
+        if connection_id is not None:
+            request["connection_id"] = connection_id
         try:
             async with asyncio.timeout(1 if command == "status" else 12):
                 reader, writer = await asyncio.open_connection(HOST, int(self.port), limit=1024)
@@ -126,3 +133,10 @@ class LocalTransportControl:
 
     async def stop(self):
         return await self._call("stop")
+
+    async def bind_recovery(self, connection_id, player):
+        from engine_recovery import EngineJournal
+        grant = await self._call("recovery", connection_id=connection_id)
+        if grant["connection_id"] != connection_id:
+            raise ValueError("Recovery grant belongs to another connection")
+        return EngineJournal(grant["path"], connection_id, grant["lease"], player)

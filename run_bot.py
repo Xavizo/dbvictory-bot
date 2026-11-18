@@ -77,6 +77,14 @@ async def call(session, name, args=None):
     text = '\n'.join(getattr(c, 'text', '') for c in result.content)
     if name == 'list_actions':
         text = text.split('\n--- ')[0]
+    elif name == 'session_recovery_preview' and not result.isError:
+        sample = result.structuredContent or json.loads(text)
+        last = sample['last_waypoint'] or '—'
+        upcoming = sample['next_waypoint'] or '—'
+        timers = ', '.join(f'{item} ({seconds:g} s)' for item, seconds in sample['potion_seconds'].items())
+        text = (f"Próba odczytu OK · HP {sample['hp']} · {tuple(sample['position'])}\n"
+                f"Ostatni waypoint {last} · następny {upcoming}\n"
+                f"Mikstury · {timers or 'brak użyć w próbce'}")
     print(text, flush=True)
     if result.isError or text.startswith('ERROR:'):
         raise RuntimeError(f'Nie powiodło się: {name}. Sesja nie została uruchomiona ponownie.')
@@ -122,21 +130,22 @@ async def run_console(args, env, lines):
                 print('\nGOTOWE — możesz zalogować postać. Walka i caveboty są OFF.\n'
                       'Zapisane pozostałe akcje (np. mikstury) ruszą po logowaniu.\n'
                       'Pozostaw tę konsolę otwartą (możesz zminimalizować).\n'
-                      'panel = otwórz panel | status = stan | actions = akcje | quit = zakończ bota',flush=True)
+                      'panel = otwórz panel | status = stan | actions = akcje | recovery = próba odczytu | quit = zakończ bota',flush=True)
                 async for line in lines:
                     command = line.strip().lower()
                     if command in {'quit','exit'}:
                         break
                     if not command:
                         continue
-                    tools = {'panel':'open_dashboard','status':'get_status','actions':'list_actions'}
+                    tools = {'panel':'open_dashboard','status':'get_status','actions':'list_actions',
+                             'recovery':'session_recovery_preview'}
                     if command in tools:
                         try:
                             await call(session,tools[command])
                         except RuntimeError as exc:
                             print(exc,flush=True)
                     else:
-                        print('Polecenia: panel, status, actions, quit',flush=True)
+                        print('Polecenia: panel, status, actions, recovery, quit',flush=True)
 
 
 class LocalConsoleInput:
