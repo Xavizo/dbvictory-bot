@@ -347,13 +347,49 @@ class AdaptiveCavebot:
             elif n==end and self.path[n]==local[-1]:rows.append({**row,'index':start+len(local)-1})
             elif n==start and self.path[n]==local[0]:rows.append(row)
         if self.loop_start>end:self.loop_start+=delta
-        elif start<=self.loop_start<=end:self.loop_start=start+len(local)-1
+        elif start <= self.loop_start <= end:
+            anchor = self.path[self.loop_start]
+            # A detour can keep the start of the lap anywhere in the new leg.
+            # If the anchor was bypassed, the rejoin tile becomes the new start.
+            if self.loop_start == end and local[-1] == anchor:
+                self.loop_start = start + len(local) - 1
+            else:
+                self.loop_start = start + (local.index(anchor) if anchor in local else len(local) - 1)
         if self.variation_until>end:self.variation_until+=delta
         elif start<=self.variation_until<=end:self.variation_until=start
         self.path[start:end+1]=local;self.checkpoints=sorted(rows,key=lambda r:(r['index'],r['waypoint']))
 
     def checkpoint_limit(self,default):
         return min(default,next((r['index']+1 for r in self.checkpoints if r['index']>self.index),default))
+
+    async def reconnect_route_step(self, origin, target, closing=False):
+        """Fill a gap with ordinary steps, each still checked on the live map."""
+        if origin[2] != target[2]:
+            return False
+        monitor = self.state.passive_map_monitor
+        index = self.index
+        generation, motion = self.generation, self.motion_generation
+        observations = deepcopy(list(monitor.learner.records.values())) if monitor.learner else []
+        plan = await asyncio.to_thread(monitor.atlas.plan, [origin, target], observations)
+        if (self.status != 'running' or self.generation != generation or self.motion_generation != motion
+                or self.index != index or self.path[index:index + 1] != [origin]
+                or list(self.state.game_state.position) != origin):
+            return False
+        bridge = plan['path']
+        if (not plan['complete'] or plan['transitions'] or plan['avoid_tiles'] or len(bridge) < 2
+                or bridge[0] != origin or bridge[-1] != target
+                or any(distance(a, b) != 1 for a, b in zip(bridge, bridge[1:]))):
+            return False
+        if closing:
+            if index != len(self.path) - 1 or self.path[self.loop_start] != target:
+                return False
+            self.path.extend(bridge[1:])
+        else:
+            if self.path[index + 1:index + 2] != [target]:
+                return False
+            self.replace_path(index + 1, index + 1, bridge[1:])
+        self.logs.append(f'Uzupełniono odcinek {tuple(origin)} → {tuple(target)}: {len(bridge)-1} kroków.')
+        return True
 
     def vary_leg(self,sample):
         if self.index<self.variation_until:return False
@@ -787,6 +823,13 @@ class AdaptiveCavebot:
             if pos!=self.path[self.index]:
                 self.recover_local(await self.fresh_map());continue
             if self.index>=len(self.path)-1:
+                if self.loop and pos != self.path[self.loop_start]:
+                    anchor = self.path[self.loop_start]
+                    if await self.reconnect_route_step(pos, anchor, closing=True):
+                        continue
+                    self.reason = f'Brak potwierdzonego domknięcia do {tuple(anchor)}.'
+                    await asyncio.sleep(1)
+                    continue
                 self.laps+=1
                 if not self.loop:
                     self.domains.movement_state='complete';self.reason='Trasa zakończona. Powtarzanie wyłączone.'
@@ -812,6 +855,12 @@ class AdaptiveCavebot:
                     self.navigation_hold=str(exc);self.logs.append('Ruch: '+str(exc));continue
                 finally:self._route_command=False;self._route_boundary=False
             else:
+                if distance(pos, target) > 1:
+                    if await self.reconnect_route_step(pos, target):
+                        continue
+                    self.reason = f'Brak potwierdzonego połączenia trasy {tuple(pos)} → {tuple(target)}.'
+                    await asyncio.sleep(1)
+                    continue
                 now=time.monotonic();self.blocked={p:t for p,t in self.blocked.items() if t>now}
                 tiles={(c['x'],c['y'],c['z']):c for c in sample['cells']}
                 if not step_clear(sample['cells'],pos,target,self.blocked):
