@@ -1,9 +1,11 @@
 """Atlas route executor. Explicit start only; one acknowledged operation at a time."""
 import asyncio
 import time
+from time import perf_counter
 import logging
 import random
 from contextvars import ContextVar
+from dataclasses import dataclass
 from copy import copy,deepcopy
 from route_identity import navigation_revision,same_route
 from collections import deque
@@ -25,6 +27,18 @@ OFFSETS={(0,-1):Direction.NORTH,(1,0):Direction.EAST,(0,1):Direction.SOUTH,(-1,0
          (1,-1):Direction.NORTHEAST,(1,1):Direction.SOUTHEAST,(-1,1):Direction.SOUTHWEST,(-1,-1):Direction.NORTHWEST}
 MANUAL_MOVES={ClientOpcode.NEW_WALK,ClientOpcode.AUTO_WALK,ClientOpcode.STOP_WALK,ClientOpcode.FOLLOW,*[ClientOpcode(n) for n in (0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d)]}
 WALK_OPCODES={0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d}
+
+@dataclass
+class WalkTiming:
+    number: int
+    target: tuple
+    position_ms: float = 0.
+    map_ms: float | None = None
+
+    def report(self, outcome):
+        log.info("Walk timing step=%d target=%s position_ms=%.1f map_ms=%s outcome=%s",
+                 self.number, self.target, self.position_ms,
+                 "-" if self.map_ms is None else f"{self.map_ms:.1f}", outcome)
 
 def distance(a,b):return max(abs(a[0]-b[0]),abs(a[1]-b[1])) if a[2]==b[2] else 100000
 def walkable(cell):
@@ -128,6 +142,8 @@ class AdaptiveCavebot:
         self.navigation_hold=None
         self.variation_until=0;self.blockage=None;self._blockage_key=None;self._blockage_at=0
         self.manual_until=0;self.motion_generation=0;self.recovery_next_at=0;self._route_command=False;self._route_boundary=False;self._route_attempt=None
+        self._walk_number = 0
+        self._map_after_walk = None
         self.combat_only=False;self.draft_id=None;self.combat=CombatRuntime(self,validate_combat())
 
     def waypoint_progress(self):
@@ -495,15 +511,45 @@ class AdaptiveCavebot:
         return False
 
     async def fresh_map(self):
+        timing = self._map_after_walk
+        if timing is None:
+            return await self._await_fresh_map()
+        if tuple(self.state.game_state.position) != timing.target:
+            self._finish_walk_timing("position_changed")
+            return await self._await_fresh_map()
+        started = perf_counter()
+        outcome = "map_interrupted"
+        try:
+            sample = await self._await_fresh_map()
+            outcome = "ready" if tuple(sample["center"]) == timing.target else "position_changed"
+            return sample
+        except InputsUnavailable:
+            outcome = "map_timeout"
+            raise
+        finally:
+            # Count only time actually spent obtaining the map. Combat or a
+            # deliberate stop between the two phases is not map latency.
+            timing.map_ms = (timing.map_ms or 0.) + (perf_counter() - started) * 1000
+            if outcome == "map_timeout":
+                timing.report(outcome)  # cumulative if navigation retries
+            else:
+                self._finish_walk_timing(outcome)
+
+    async def _await_fresh_map(self):
         deadline=time.monotonic()+.8
+        monitor = self.state.passive_map_monitor
+        request = getattr(monitor, "request_refresh", None)
         while True:
             self.guard()
             if self.status!='running':raise ValueError(self.reason)
-            sample=self.state.passive_map_monitor.snapshot()
+            sample=monitor.snapshot()
             if (sample.get('status')=='ready' and not sample.get('stale') and
                     sample.get('age_seconds',99)<.6 and list(sample.get('center',[]))==list(self.state.game_state.position)):
                 return sample
             if time.monotonic()>=deadline:raise InputsUnavailable("Mapa chwilowo nieaktualna; nawigacja czeka na odczyt.")
+            if request is not None:
+                request()
+                request = None
             await asyncio.sleep(.01)
 
     async def send(self,payload,validate=None,skip_if_changed=False,defer_movement=False):
@@ -596,7 +642,31 @@ class AdaptiveCavebot:
         sent=await self.send(build_walk_packet(OFFSETS[target[0]-pos[0],target[1]-pos[1]]),
                         lambda:list(self.state.game_state.position)==pos and step_clear(self.map_now()['cells'],pos,target,self.blocked,door=door) and (validate is None or validate()),defer_movement=not door)
         if not sent:raise MovementDeferred('Pole zmieniło się — ponownie sprawdzam drogę; walka aktywna.')
-        return await self.wait_position(target,pos,recover=not door)
+        return await self._confirm_walk(target, pos, recover=not door)
+
+    def _finish_walk_timing(self, outcome):
+        if self._map_after_walk is not None:
+            self._map_after_walk.report(outcome)
+            self._map_after_walk = None
+
+    async def _confirm_walk(self, target, origin, timeout=2.5, intermediate=None, recover=False):
+        self._finish_walk_timing("no_following_map")
+        self._walk_number += 1
+        timing = WalkTiming(self._walk_number, tuple(target))
+        # Delivery has returned. Measure the executor's actual confirmation
+        # wait, including an already available position, on Windows QPC.
+        started = perf_counter()
+        outcome = "position_interrupted"
+        try:
+            arrived = await self.wait_position(target, origin, timeout, intermediate, recover)
+            outcome = "position_confirmed" if arrived else "position_unconfirmed"
+            return arrived
+        finally:
+            timing.position_ms = (perf_counter() - started) * 1000
+            if outcome == "position_confirmed":
+                self._map_after_walk = timing
+            else:
+                timing.report(outcome)
 
     async def dig_transition(self,edge,sample):
         if not supported_transition(edge):raise ValueError('Brak potwierdzonego odkopania i zejścia.')
@@ -639,7 +709,7 @@ class AdaptiveCavebot:
             sample=self.map_now();_,opened_now=read_hole(sample)
             return opened_now
         await self.send(build_walk_packet(OFFSETS[entry[0]-origin[0],entry[1]-origin[1]]),ready_to_enter)
-        if not await self.wait_position(dest,origin,4,entry):raise ValueError('Zejście nie potwierdziło wyjścia; wstrzymano trasę.')
+        if not await self._confirm_walk(dest,origin,4,entry):raise ValueError('Zejście nie potwierdziło wyjścia; wstrzymano trasę.')
 
     async def rope_transition(self,edge,sample):
         if edge['action']!='use_with' or not supported_transition(edge):
@@ -700,7 +770,7 @@ class AdaptiveCavebot:
                     if not await self.step(target,door=target==entry):raise ValueError('Brak potwierdzenia kroku przez drzwi.')
                 return
             await self.send(build_walk_packet(OFFSETS[entry[0]-origin[0],entry[1]-origin[1]]),same_entry)
-            if not await self.wait_position(dest,origin,4,entry):raise ValueError("Przejście nie potwierdziło wyjścia; nie ponawiam użycia.")
+            if not await self._confirm_walk(dest,origin,4,entry):raise ValueError("Przejście nie potwierdziło wyjścia; nie ponawiam użycia.")
             return
         if not opened:
             obj=next((i for i in tile['items'] if i['id']==item),None)
@@ -780,6 +850,7 @@ class AdaptiveCavebot:
             self.pause('Błąd wykonania trasy; nawigacja wstrzymana.')
             raise
         finally:
+            self._finish_walk_timing("session_ended")
             usage.finish()
             proxy.unregister_client_packet_callback(manual)
             await self.combat.cancel_attack()

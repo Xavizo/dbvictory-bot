@@ -254,10 +254,12 @@ class MapReader:
 
 class PassiveMapMonitor:
     """Keep memory I/O off the proxy event loop; no action scheduling."""
+    ACTIVE_INTERVAL = .05
     def __init__(self, state):
         self.state = state
         self._result = {"status": "waiting", "message": "Czekam na połączenie z grą.", "cells": []}
         self._stop = threading.Event()
+        self._refresh = threading.Event()
         self._thread = threading.Thread(target=self._run, name="passive-map", daemon=True)
         self.learner = None
         self.annotations = None
@@ -269,11 +271,16 @@ class PassiveMapMonitor:
 
     def stop(self):
         self._stop.set()
+        self._refresh.set()
         self._thread.join(timeout=2)
+
+    def request_refresh(self):
+        """Wake the existing reader when navigation is waiting for a new center."""
+        self._refresh.set()
 
     def poll_interval(self):
         task=getattr(self.state,"_action_tasks",{}).get("adaptive_cavebot")
-        return .05 if task and not task.done() else .25
+        return self.ACTIVE_INTERVAL if task and not task.done() else .25
 
     def snapshot(self):
         result = self._result
@@ -355,19 +362,35 @@ class PassiveMapMonitor:
             dead = bool(getattr(gs,"stats_updated_at",0)) and getattr(gs,"hp",0)<=0
             result = {**result,"cells":self.annotations.annotate(result["cells"])}
             result = {**result,"cells":self.learner.annotate(result["cells"])}
-            self.learner.observe(result,active=not (automated or dead))
+            learning = not (automated or dead)
+            self.learner.observe(result,active=learning)
             self._learning_error = None
-            result = {**result,"cells":self.learner.annotate(result["cells"])}
-            self.atlas.observe(result)
+            if learning:
+                result = {**result,"cells":self.learner.annotate(result["cells"])}
         except Exception:
             self._learning_error = "Uczenie przejść chwilowo niedostępne; podgląd mapy pozostaje aktywny."
         return result
 
+    def _publish(self, result, asset, game_state):
+        result = self._learn(result, asset)
+        if not self.state.connected or self.state.game_state is not game_state:
+            return
+        # Navigation needs the annotated live cells as soon as they are ready.
+        # Atlas persistence uses the same immutable frame, on the reader thread.
+        self._result = {**result, "asset": asset}
+        if self.atlas is not None and not self._learning_error:
+            try:
+                self.atlas.observe(result)
+            except Exception:
+                self._learning_error = "Zapis atlasu chwilowo niedostępny."
+
     def _run(self):
         source = None
         asset = None
+        retrying_frame = False
         try:
             while not self._stop.is_set():
+                self._refresh.clear()
                 try:
                     if not self.state.connected:
                         if self.learner:
@@ -389,13 +412,19 @@ class PassiveMapMonitor:
                         result["pet_map_generation"] = gs.pets.observe_map(result["cells"], result["captured_at"], reader.monster_slots)
                         if gs is not self.state.game_state or not self.state.connected:
                             continue
-                        result = self._learn(result,asset)
-                        self._result = {**result, "asset": asset}
+                        self._publish(result, asset, gs)
                 except MapChanged as exc:
                     self._read_interrupted("Aktualizacja podczas ruchu — ostatni poprawny obraz.",asset)
                     # Keep the read-only handle and pending learning. Retry promptly;
                     # the learner itself rejects gaps beyond its time budget.
-                    if self._stop.wait(0.03): break
+                    # A torn frame has no useful center. Back off once and then
+                    # recapture; a second ordinary poll delay adds a visible gap.
+                    interval = self.poll_interval()
+                    retry_delay = .01 if interval == self.ACTIVE_INTERVAL and not retrying_frame else interval
+                    retrying_frame = True
+                    if self._stop.wait(retry_delay):
+                        break
+                    continue
                     continue
                 except Exception as exc:
                     # No addresses, process contents, credentials or raw packets in UI/logs.
@@ -409,8 +438,8 @@ class PassiveMapMonitor:
                         source = None
                     if self._stop.wait(1.5):
                         break
-                if self._stop.wait(self.poll_interval()):
-                    break
+                retrying_frame = False
+                self._refresh.wait(self.poll_interval())
         finally:
             if source:
                 source.close()
