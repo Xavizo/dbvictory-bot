@@ -1,6 +1,8 @@
 """Synthetic regressions for dispatch races, room exits and local displacement."""
 import asyncio,time
+from types import SimpleNamespace
 import pytest
+import cavebot_combat
 from protocol import ClientOpcode,PacketReader
 from adaptive_cavebot import MovementDeferred
 from test_automation_safety import state,proxy
@@ -57,6 +59,68 @@ def test_physical_third_monster_waits_for_identity_without_casting_at_unknown(st
     rows=three(c,state,cells);state.game_state.creatures.pop(rows[2][0])
     assert asyncio.run(c.combat.tick(c.map_now()))
     assert c.combat.nearby_count==3 and c.combat.target['id']!=rows[2][0]
+
+
+def test_map_only_companion_cannot_hold_floor_crossing_after_last_monster(state,tmp_path,monkeypatch):
+    c,cells=armed(state,tmp_path,mode='lure',lure_count=4)
+    configure_rules(c,[dict(pattern='*',action='attack')])
+    c.status='running';clock=[10.]
+    monkeypatch.setattr(cavebot_combat,'time',SimpleNamespace(time=time.time,monotonic=lambda:clock[0]))
+    cid,row,mob=monster(state,cells,name='Fury Cell',x=10,y=11)
+    row['health']=15
+    pet=next(t for t in cells if t['x']==11 and t['y']==11)
+    pet.update(occupants=1,occupant_types={'monster':1})
+    current_pet=[pet]
+    read_map=c.map_now
+    published=[]
+    def frame():
+        sample=read_map()
+        tile=current_pet[0]
+        sample['pet_map_generation']=state.game_state.pets.observe_map(
+            cells,time.time(),{(tile['x'],tile['y'],tile['z'],1):('visible',9)})
+        published[:]=[sample]
+        return sample
+    monkeypatch.setattr(c,'map_now',lambda:published[0])
+    async def scenario():
+        assert await c.combat.tick(frame(),at_transition=True)
+        assert c.combat.snapshot()['target']['name']=='Fury Cell'
+        assert c.combat.snapshot()['lure']['engaged']==1 and c.combat.lure_stop_reason=='transition'
+        state.game_state.creatures.clear()
+        mob.update(occupants=0,occupant_types={})
+        clock[0]+=.3
+        assert await c.combat.tick(frame(),at_transition=True)
+        assert c.combat.snapshot()['target'] is None and c.combat.snapshot()['lure'] is None
+        # Same companion, different tile. The identity grace must not restart.
+        pet.update(occupants=0,occupant_types={})
+        mob.update(occupants=1,occupant_types={'monster':1});current_pet[0]=mob
+        for advance in (.45,.45,.45):
+            clock[0]+=advance
+            await c.combat.tick(frame(),at_transition=True)
+        clock[0]+=.45
+        assert not await c.combat.tick(frame(),at_transition=True)
+        assert c.combat.route_step_allowed(boundary=True)
+        assert mob['occupants']==1 and c.combat.sent_target==0
+        # A fresh hostile is eligible immediately, even with the companion still visible.
+        new_id,_,_=monster(state,cells,name='Fury Cell',x=11,y=11,cid=cid+1)
+        assert await c.combat.tick(frame(),at_transition=True)
+        assert c.combat.target['id']==new_id and c.combat.lure_stop_reason=='transition'
+    asyncio.run(scenario())
+
+
+def test_one_anonymous_tile_cannot_permanently_latch_group(state,tmp_path,monkeypatch):
+    c,cells=armed(state,tmp_path,mode='lure',lure_count=3)
+    c.status='running';clock=[10.]
+    monkeypatch.setattr(cavebot_combat,'time',SimpleNamespace(time=time.time,monotonic=lambda:clock[0]))
+    rows=three(c,state,cells)
+    state.game_state.creatures.pop(rows[-1][0])
+    for elapsed in (0,.4,.8):
+        clock[0]=10+elapsed
+        assert not c.combat.route_step_allowed()
+        assert c.combat.lure_stop_reason is None and c.combat.confirmed_count==2
+    clock[0]=11.1
+    assert c.combat.route_step_allowed() and c.combat.engaged_count==2
+    state.game_state.creatures[rows[-1][0]]=rows[-1][1]
+    assert not c.combat.route_step_allowed() and c.combat.lure_stop_reason=='group'
 
 @pytest.mark.parametrize('kind',['door','level_gate','passage'])
 def test_two_monsters_are_finished_before_open_room_exit(state,tmp_path,kind):

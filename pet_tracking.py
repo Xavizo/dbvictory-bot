@@ -100,6 +100,17 @@ class PetTracker:
         with self._lock:
             return cid in self._names
 
+    def monster_slots_for_sample(self, generation):
+        """Internal continuity keys for this map frame, including map-only occupants."""
+        with self._lock:
+            if generation != self._map_generation:
+                return {}
+            by_tile = defaultdict(list)
+            for slot, key in self._slots.items():
+                if key not in self._names:
+                    by_tile[slot[:3]].append(key)
+            return by_tile
+
     def confirmed_after_map(self, position, generation):
         """Exclude a new confirmation during the tick before the next map read."""
         with self._lock:

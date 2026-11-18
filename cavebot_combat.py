@@ -111,6 +111,8 @@ def choose_target(candidates,config,current=0):
 
 class CombatRuntime:
     """Single movement owner: chase returns to its route anchor; lure follows route."""
+    identity_grace = 1.0
+
     def __init__(self,owner,config):
         self.owner=owner;self.config=config;self.target=None;self.sent_target=0
         self.phase='route';self.lure_started=None;self.battle_started=None;self.progress_at=0;self.last_health=None
@@ -121,19 +123,21 @@ class CombatRuntime:
         self.wave_turn=None;self.manual_target=0;self.manual_target_at=0
         self.blocker_id=0;self.blocker_since=None
         self.engaged_count=0;self.nearby_count=0;self.transition_clear_since=None;self.group_clear_since=None
+        self.confirmed_count=0;self.unidentified_contacts={}
         self.stalled_targets={};self.defer_movement=False;self.movement_intent=None
 
     def snapshot(self):
         lure=None
-        if self.policy_mode=='lure' and not self.owner.combat_only:
+        if self.policy_mode=='lure' and not self.owner.combat_only and self.target is not None:
             lure=dict(following=len(self.pursuit.following),goal=self.config['lure_count'],
-                      waiting=self.lure_waiting,stop_reason=self.lure_stop_reason,engaged=self.engaged_count,nearby=self.nearby_count)
+                      waiting=self.lure_waiting,stop_reason=self.lure_stop_reason,engaged=self.confirmed_count,nearby=self.nearby_count)
         return dict(phase=self.phase,target=self.target,enabled=self.config['enabled'],lure=lure,return_anchor=self.anchor,
                     spells=self.spell_checks,last_spell_attempt=self.last_spell_attempt)
 
     def reset_lure(self):
         self.pursuit.reset();self.lure_started=None;self.lure_waiting=False;self.lure_stop_reason=None;self.engaged_count=0;self.nearby_count=0
         self.blocker_id=0;self.blocker_since=None;self.group_clear_since=None
+        self.confirmed_count=0
         self.placement_checked=False;self.placement=None;self.placement_group.clear()
 
     def positioning_step(self,origin,target):
@@ -184,11 +188,17 @@ class CombatRuntime:
         return group_needs_time(sample['cells'], o.state.game_state.position, o.path[o.index+1],
                                 members, self.pacing_limit)
 
-    def visible_group(self,sample):
-        """Occupancy also covers a transient DLL identity gap. Never authorizes an attack."""
+    def visible_group(self,sample,targets=None):
+        """Use anonymous occupancy briefly while waiting for the target list."""
         gs=self.owner.state.game_state;pos=gs.position
         accessible=reachable_tiles(sample['cells'],pos);result=[]
         pets=getattr(gs,'pets',None)
+        slots=pets.monster_slots_for_sample(sample.get('pet_map_generation')) if pets else {}
+        identified={tuple(t['position']) for t in (self.candidates(sample) if targets is None else targets)}
+        now=time.monotonic()
+        # Preserve the deadline when a map-only companion follows the player or
+        # briefly disappears. Qualifying battle rows always take effect immediately.
+        self.unidentified_contacts={k:v for k,v in self.unidentified_contacts.items() if now-v[1]<=self.identity_grace}
         for tile in sample['cells']:
             point=(tile['x'],tile['y'],tile['z'])
             monsters=tile.get('occupant_types',{}).get('monster',0)
@@ -204,7 +214,18 @@ class CombatRuntime:
                 if row.get('source')=='dll' and 0<=time.time()-row.get('t',0)<.6:
                     rule=next((r for r in self.config['rules'] if matches(r['pattern'],row.get('name',''))),None)
                     ignored=row.get('health',0)<=0 or not rule or rule['action']!='attack' or cid in self.stalled_targets
-            if not ignored:result.append((point,gap))
+            if ignored:continue
+            keys=slots.get(point) or (None,)  # Frames without stable identities share one bounded wait.
+            if point in identified:
+                for key in slots.get(point,()):self.unidentified_contacts.pop(key,None)
+            else:
+                pending=False
+                for key in keys:
+                    since=self.unidentified_contacts.get(key,(now,now))[0]
+                    self.unidentified_contacts[key]=(since,now)
+                    pending=pending or now-since<self.identity_grace
+                if not pending:continue
+            result.append((point,gap))
         return result
 
     def latch_lure(self,reason):
@@ -220,10 +241,11 @@ class CombatRuntime:
         sample=self.owner.map_now();targets=self.candidates(sample)
         mode=self.policy_mode or self.config['mode']
         if mode!='lure':return not targets
-        physical=self.visible_group(sample)
+        physical=self.visible_group(sample,targets)
         following=self.refresh_lure_limit(targets,physical,boundary)
         if self.lure_stop_reason or self.battle_started:
             return self.allow_positioning(sample,targets,physical,boundary)
+        if self.engaged_count>=self.config['lure_count'] or (boundary and physical):return False
         return not self.gathering_wait(sample, targets, following)
 
     def refresh_lure_limit(self,targets,physical,boundary):
@@ -231,9 +253,10 @@ class CombatRuntime:
         following={c['id'] for c in targets if c['id'] in self.pursuit.following}
         self.nearby_count=max(len(adjacent),sum(gap<=1 for _,gap in physical))
         known_positions={tuple(c['position']) for c in targets if c['id'] in adjacent|following}
-        self.engaged_count=len(adjacent|following)+sum(gap<=1 and point not in known_positions for point,gap in physical)
-        if self.engaged_count>=self.config['lure_count']:self.latch_lure('group')
-        elif boundary and (targets or physical):self.latch_lure('transition')
+        self.confirmed_count=len(adjacent|following)
+        self.engaged_count=self.confirmed_count+sum(gap<=1 and point not in known_positions for point,gap in physical)
+        if self.confirmed_count>=self.config['lure_count']:self.latch_lure('group')
+        elif boundary and targets:self.latch_lure('transition')
         return following
 
     def candidates(self,sample=None):
@@ -335,6 +358,9 @@ class CombatRuntime:
         candidates=self.candidates(sample)
         blocker=self.blocking_target(candidates,sample)
         current=blocker or self.select_target(candidates)
+        # Never display a vanished target as the current fight. The sent attack
+        # identity is separate and survives a short interruption in observations.
+        if current is None:self.target=None
         now=time.monotonic();pos=list(o.state.game_state.position)
         if not blocker and self.blocker_since is not None:
             if self.lure_started is not None:self.lure_started+=now-self.blocker_since
@@ -349,7 +375,7 @@ class CombatRuntime:
                 await asyncio.sleep(.05);return True
         if current is not None:self.group_clear_since=None
         if current is None and not o.combat_only and (self.policy_mode=='lure' or cfg['mode']=='lure'):
-            physical=self.visible_group(sample)
+            physical=self.visible_group(sample,candidates)
             if physical:
                 self.group_clear_since=None;o.reason='Sprawdzam odczyt grupy — ruch czeka, walka pozostaje aktywna.'
                 await asyncio.sleep(.05);return True
@@ -391,16 +417,17 @@ class CombatRuntime:
             adjacent={c['id'] for c in candidates if c['distance']<=1}
             # Capacity is a safety stop, not a claim about aggro ownership.
             # Adjacent eligible monsters count even before two pursuit samples.
-            physical=self.visible_group(sample)
+            physical=self.visible_group(sample,candidates)
             self.nearby_count=max(len(adjacent),sum(gap<=1 for _,gap in physical))
             engaged=adjacent|{c['id'] for c in followers}
             known_positions={tuple(c['position']) for c in candidates if c['id'] in engaged}
-            self.engaged_count=len(engaged)+sum(gap<=1 and point not in known_positions for point,gap in physical)
+            self.confirmed_count=len(engaged)
+            self.engaged_count=self.confirmed_count+sum(gap<=1 and point not in known_positions for point,gap in physical)
             if self.battle_started is None:
                 # Seeing an uncollected monster ahead is an approach, not a
                 # gathering interval. Start the limit when a real group forms.
-                if self.lure_started is None and self.engaged_count:self.lure_started=now
-                if self.engaged_count>=cfg['lure_count']:self.lure_stop_reason='group'
+                if self.lure_started is None and self.confirmed_count:self.lure_started=now
+                if self.confirmed_count>=cfg['lure_count']:self.lure_stop_reason='group'
                 elif at_transition:self.lure_stop_reason='transition'
                 elif self.lure_started is not None and (self.blocker_since or now)-self.lure_started>=cfg['lure_seconds']:self.lure_stop_reason='timeout'
                 luring=self.lure_stop_reason is None and allow_movement
@@ -498,8 +525,11 @@ class CombatRuntime:
         if luring:
             fresh=o.map_now()
             latest=self.candidates(fresh)
-            self.refresh_lure_limit(latest,self.visible_group(fresh),at_transition)
+            self.refresh_lure_limit(latest,self.visible_group(fresh,latest),at_transition)
             luring = self.lure_stop_reason is None
+            if luring and self.engaged_count>=cfg['lure_count']:
+                o.reason='Sprawdzam odczyt grupy przed dalszym lurowaniem.'
+                await asyncio.sleep(.05);return True
         if luring:
             self.phase='lure'
             # ATTACK/SAY may have awaited a queue: classify fresh positions and
@@ -511,7 +541,7 @@ class CombatRuntime:
             waiting=self.gathering_wait(fresh, latest, confirmed)
             self.lure_waiting=waiting
             activity='czekam na grupę z tyłu' if waiting else 'podchodzę trasą do mobów' if any(ahead(c) for c in latest) else 'zbieram grupę'
-            o.reason=f'W grupie: {self.engaged_count}/{cfg["lure_count"]} · '+activity+' · atak aktywny.'
+            o.reason=f'W grupie: {self.confirmed_count}/{cfg["lure_count"]} · '+activity+' · atak aktywny.'
             if waiting:await asyncio.sleep(.05)
             return waiting
         needs_distance=mode=='distance' and not gap_distance<=current['distance']<=min(7,gap_distance+1)
