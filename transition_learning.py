@@ -356,13 +356,19 @@ class TransitionLearner:
         origin, destination = previous["center"],sample["center"]
         changed = origin != destination
         self._observe_objects(previous, sample, incoming, now, wall)
-        # Confirm the landing on a second sample; moving immediately afterwards makes it uncertain.
+        # The next sample can confirm either the landing itself or a single
+        # acknowledged step whose reported origin is exactly that landing.
         if self._pending:
             pending = self._pending
             if destination == pending["exit"]:
                 self._record(pending,wall)
             elif destination[2] == pending["exit"][2]:
-                pending = {**pending,"evidence":"review","reason":"sample_gap"}
+                walked_from_exit = (pending.get("evidence")=="observed" and
+                    len(incoming)==1 and incoming[0]["kind"]=="step" and
+                    incoming[0]["time"]>=previous_time and incoming[0].get("origin")==pending["exit"] and
+                    incoming[0].get("entry")==destination and distance(pending["exit"],destination)==1)
+                if not walked_from_exit:
+                    pending = {**pending,"evidence":"review","reason":"sample_gap"}
                 self._record(pending,wall)
             self._pending = None
 

@@ -4,6 +4,7 @@ from route_identity import navigation_revision
 from contextlib import closing
 import heapq
 import hashlib
+from itertools import groupby
 import json
 from pathlib import Path
 import sqlite3
@@ -401,7 +402,8 @@ class MapAtlas:
             return rows+[row for key,row in self.recorded_ropes.items() if key not in known]
 
     def remember_recorded_ropes(self,recording,observations):
-        edges=recorded_rope_edges(recording,observations)
+        with self.lock:tiles=PagedTiles(self.path,self.tiles)
+        edges=recorded_rope_edges(recording,observations,self.scope,tiles)
         with self.lock:
             fresh=[r for r in edges if r['id'] not in self.recorded_ropes]
             if fresh:
@@ -419,6 +421,57 @@ class MapAtlas:
         return [{k:r.get(k) for k in ('id','origin','entry','exit','action','item_id','tool_id','prepared_item_id','tool_ids','count')}
                 for values in edges.values() for dest,r in values
                 if tuple(r['entry']) in visible and tuple(r['origin']) in tiles and dest in tiles and r['action']!='unknown']
+
+    def recording_route(self,recording,observations,optimize):
+        if recording.get("atlas_scope") not in (None,self.scope):
+            raise ValueError("To nagranie pochodzi z innego atlasu.")
+        rows=self.remember_recorded_ropes(recording,observations)
+        points,original,links=recording_points(recording,rows,optimize=optimize,include_links=True)
+        # A recorded ordinary waypoint can lie on terrain the live executor
+        # avoids. Prefer an adjacent tile actually visited on this run, only
+        # if both adjoining legs can be planned entirely on clear terrain.
+        adjusted=[]
+        with self.lock: tiles=PagedTiles(self.path,self.tiles)
+        ends={i for link in links for i in (link['from_index'],link['from_index']+1)}
+        trace=recording.get('observed_path') or []
+        def ordinary_avoid(i):
+            return (i not in ends and points[i-1][2]==points[i][2]==points[i+1][2]
+                    and tiles.get(tuple(points[i]),{}).get('kind')=='avoid'
+                    and not tiles[tuple(points[i])].get('navigation'))
+        def safe_path(anchors):
+            proposal=self.plan(anchors,rows)
+            return proposal['path'] if proposal['complete'] and not proposal['avoid_tiles'] and not proposal['transitions'] else []
+        candidates={tuple(points[i]):[] for i in range(1,len(points)-1) if ordinary_avoid(i)}
+        for n,sample in enumerate(trace):
+            p=sample.get('pos')
+            if not position(p) or tuple(p) not in candidates:continue
+            for j in (n+1,n-1):
+                if not 0<=j<len(trace) or trace[max(n,j)].get('break_before'):continue
+                q=trace[j].get('pos')
+                if not position(q) or q[2]!=p[2] or max(abs(q[k]-p[k]) for k in (0,1))!=1:continue
+                cell=tiles.get(tuple(q),{})
+                if cell.get('kind')=='clear' and not cell.get('navigation') and q not in candidates[tuple(p)]:
+                    candidates[tuple(p)].append(q)
+        for avoid,run in groupby(range(1,len(points)-1),key=ordinary_avoid):
+            if not avoid:continue
+            indices=list(run)
+            start,end=points[indices[0]-1],points[indices[-1]+1]
+            replacement=[candidates[tuple(points[i])][0] for i in indices if candidates[tuple(points[i])]]
+            if len(replacement)!=len(indices) or not safe_path([start,*replacement,end]):
+                detour=safe_path([start,end])
+                if not detour:continue
+                replacement=[];cursor=0
+                for i in indices:
+                    p=points[i]
+                    distance=lambda n:max(abs(p[k]-detour[n][k]) for k in (0,1))
+                    cursor=min(range(cursor,len(detour)),key=distance)
+                    if distance(cursor)>2 or tiles[tuple(detour[cursor])].get('navigation'):break
+                    replacement.append(detour[cursor])
+                if len(replacement)!=len(indices) or not safe_path([start,*replacement,end]):continue
+            for i,q in zip(indices,replacement):
+                adjusted.append({'waypoint':i+1,'from':points[i],'to':q})
+                points[i]=q
+        return points,original,links,adjusted
 
     def plan(self,points,observations,original=None,*,loop=False,links=None):
         if self.error:raise ValueError(self.error)
@@ -555,12 +608,15 @@ class MapAtlas:
                 "warning":"Plan po historycznie znanych polach. Stan drzwi i przeszkód wymaga ponownego odczytu przed ruchem."}
 
 
-def recording_points(recording, observations=(), *, optimize=True, keep_positions=()):
+def recording_points(recording, observations=(), *, optimize=True, keep_positions=(), include_links=False):
     """Keep floor changes, interactions and shape; simplify only small walk wiggles."""
-    original=[];mandatory=set()
-    def add(p,required=False):
+    original=[];mandatory=set();samples=[]
+    def add(p,required=False,sample=None):
         if not position(p):return
-        if not original or original[-1]!=list(p):original.append(list(p))
+        if not original or original[-1]!=list(p):
+            original.append(list(p))
+            samples.append([sample,sample])
+        else:samples[-1][1]=sample
         if required:mandatory.add(len(original)-1)
     waypoints=recording.get("waypoints",[])
     trace=recording.get("observed_path")
@@ -578,7 +634,7 @@ def recording_points(recording, observations=(), *, optimize=True, keep_position
             required=bool(snapshot.get("break_before"))
             while next_action<len(times) and times[next_action]<until:
                 required=True;next_action+=1
-            add(snapshot.get("pos"),required)
+            add(snapshot.get("pos"),required,index)
     else:
         add(recording.get("start_position"),True)
         # Older recordings contain requested steps. Replace an entrance with
@@ -608,6 +664,7 @@ def recording_points(recording, observations=(), *, optimize=True, keep_position
             for i in range(len(original)-3,-1,-1):
                 if original[i:i+3]==[r['origin'],r['entry'],r['exit']]:
                     original.pop(i+1)
+                    samples.pop(i+1)
                     mandatory={n if n<=i else n-1 for n in mandatory if n!=i+1}
         for i in range(len(original)-1):
             if original[i+1]==r['exit'] and transition_from_origin(r,original[i],observations) is not None:mandatory.update((i,i+1))
@@ -636,4 +693,18 @@ def recording_points(recording, observations=(), *, optimize=True, keep_position
         if len(keep)>MAX_ANCHORS:raise ValueError("Nagranie jest za długie do jednego planu; podziel je na odcinki.")
     points=[original[i] for i in sorted(keep)]
     if len(points)>MAX_ANCHORS:raise ValueError("Nagranie jest za długie do jednego planu; podziel je na odcinki.")
+    if include_links:
+        links=[]
+        if isinstance(trace,list):
+            indices=sorted(keep)
+            for index,(a,b) in enumerate(zip(indices,indices[1:])):
+                start,end=samples[a][1],samples[b][0]
+                # Only an observed direct crossing or a three-position
+                # open/enter/exit can bind this exact occurrence of a leg.
+                if end-start not in (1,2):continue
+                window=trace[start:end+1]
+                if any(s.get('break_before') for s in window[1:]):continue
+                matched=trace_links(points[index:index+2],observations,[s['pos'] for s in window])
+                if matched:links.append({'from_index':index,'id':matched[0]['id']})
+        return points,original,links
     return points,original

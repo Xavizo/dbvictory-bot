@@ -98,6 +98,19 @@ def test_duplicate_count_and_variable_destination(learner):
     assert all(r["variable_exit"] for r in learner.snapshot()["records"])
 
 
+@pytest.mark.parametrize('command', [step(),use(),use("use_with",tool_id=3003)])
+@pytest.mark.parametrize('confirmed', [True,False])
+def test_continue_walking_immediately_after_floor_change(learner,command,confirmed):
+    learner.observe(sample(),now=0,wall=100)
+    learner.enqueue(command,now=.1)
+    learner.observe(sample(EXIT),now=.2,wall=100.2)
+    next_tile=[EXIT[0]+1,EXIT[1],EXIT[2]]
+    if confirmed:learner.enqueue(step(EXIT,next_tile),now=.25)
+    learner.observe(sample(next_tile),now=.35,wall=100.35)
+    record=next(iter(learner.records.values()))
+    assert record["exit"]==EXIT and record["evidence"]==("observed" if confirmed else "review")
+
+
 @pytest.mark.parametrize("mode",["reset","gap","suspended","unavailable","overflow"])
 def test_session_or_sample_loss_does_not_become_transition(learner,mode):
     learner.observe(sample(),now=0)

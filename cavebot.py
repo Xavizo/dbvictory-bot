@@ -152,11 +152,17 @@ def _sample_recording_position(state):
     trace=state.recording_observed_path
     previous_sample=getattr(state,"_recording_sample_time",now)
     state._recording_sample_time=now
-    if trace and trace[-1]["pos"]==list(pos) and now-previous_sample<=1:return
+    elapsed = time.time() - state.recording_start_time
+    if getattr(gs,"client_state_required",False):
+        elapsed -= now - snapshot["monotonic"]
+    elapsed = max(0, round(elapsed, 3))
+    if trace and trace[-1]["pos"]==list(pos) and now-previous_sample<=1:
+        trace[-1]["last_t"] = max(trace[-1].get("last_t",trace[-1]["t"]),elapsed)
+        return
     if len(trace)>=20000:
         state.recording_trace_limited=True
         return
-    point={"pos":list(pos),"t":round(time.time()-state.recording_start_time,3)}
+    point={"pos":list(pos),"t":elapsed}
     if trace and now-previous_sample>1:point["break_before"]=True
     trace.append(point)
 
@@ -180,6 +186,8 @@ def start_recording(state, name: str) -> str | None:
     state._recording_sample_time = time.monotonic()
     state.recording_start_pos = pos
     state.recording_start_time = time.time()
+    atlas = getattr(getattr(state, "passive_map_monitor", None), "atlas", None)
+    state._recording_atlas_scope = getattr(atlas, "scope", None)
     started_at = state.recording_start_time
     waypoints = state.recording_waypoints
     _sample_recording_position(state)
@@ -193,7 +201,7 @@ def start_recording(state, name: str) -> str | None:
     def _on_client_packet(opcode, reader: PacketReader):
         if not state.recording_active or state.recording_start_time != started_at:
             return
-        t_elapsed = round(time.time() - state.recording_start_time, 1)
+        t_elapsed = round(time.time() - state.recording_start_time, 3)
         current_pos = list(state.game_state.position)
 
         if opcode == ClientOpcode.NEW_WALK:
@@ -354,6 +362,9 @@ def stop_recording(state, *, discard: bool = False) -> dict | None:
         "name": state.recording_name,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "version": 2,
+        "started_at": state.recording_start_time,
+        "atlas_scope": getattr(state, "_recording_atlas_scope", None),
+        "action_time_precision_ms": 1,
         "start_position": list(state.recording_start_pos),
         "waypoints": state.recording_waypoints,
         "observed_path": state.recording_observed_path,

@@ -316,21 +316,16 @@ class _Handler(BaseHTTPRequestHandler):
             if not 0<int(self.headers.get("Content-Length",0))<=131072:raise ValueError("Plan jest zbyt duży.")
             body=self._read_body()
             if body.get("scope")!=atlas.scope:raise ValueError("Profil atlasu się zmienił. Odśwież widok.")
-            original=None;interactions=[];recording=None;links=body.get("links")
+            original=None;interactions=[];recording=None;links=body.get("links");adjusted=[]
             observations=list(monitor.learner.records.values()) if monitor.learner else []
             if "recording" in body:
                 import cavebot
-                from map_atlas import recording_points
                 name=body["recording"]
                 if name not in {r["name"] for r in cavebot.list_recordings()}:raise ValueError("Nie ma takiego nagrania.")
                 recording=cavebot.load_recording(name)
                 optimize=body.get('optimize',False)
                 if type(optimize) is not bool:raise ValueError('Nieprawidłowa opcja optymalizacji.')
-                observations=atlas.remember_recorded_ropes(recording,observations)
-                points,original=recording_points(recording,observations,optimize=optimize)
-                from map_atlas import trace_links
-                trace=[row['pos'] for row in recording.get('observed_path',[]) if not row.get('break_before')]
-                links=trace_links(points,observations,trace) if not any(row.get('break_before') for row in recording.get('observed_path',[])) else []
+                points,original,links,adjusted=atlas.recording_route(recording,observations,optimize)
             else:points=body.get("points")
             loop=body.get("loop",False)
             if type(loop)is not bool:raise ValueError("Nieprawidłowa opcja pętli.")
@@ -346,6 +341,11 @@ class _Handler(BaseHTTPRequestHandler):
             if recording is not None:
                 from map_atlas import review_recorded_actions
                 interactions=review_recorded_actions(recording,result['transitions'])
+                result['recording_adjustments']=adjusted
+                if adjusted:result['warning']+=' Na pobliskie przechodnie pola przesunięto waypointy: '+', '.join(str(r['waypoint']) for r in adjusted)+'.'
+                for gap in result['gaps']:
+                    if gap['from'][2]!=gap['to'][2] and gap['reason']=='Dodaj jawne przejście między piętrami z menu mapy.':
+                        gap['reason']='Nagranie nie potwierdza jednoznacznie czynności i lądowania dla tego odcinka.'
             result["recorded_actions"]=interactions[:128]
             result["unmatched_recorded_actions"]=sum(r['matched_transition'] is None for r in interactions)
             if result["avoid_tiles"]:
