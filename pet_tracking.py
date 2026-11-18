@@ -1,4 +1,5 @@
 """Resolve a manual Look and its server description to one live creature ID."""
+import logging
 import re
 import secrets
 import threading
@@ -8,6 +9,7 @@ from collections import Counter, defaultdict
 
 LOOK_NAME = re.compile(r"You see ([^\r\n]{1,80}?)\.?", re.IGNORECASE)
 MASTER = re.compile(r"Master of ([^\r\n]{1,80}?)\.?", re.IGNORECASE)
+log = logging.getLogger(__name__)
 
 
 class PetTracker:
@@ -132,6 +134,10 @@ class PetTracker:
 
     def _confirm(self, key, point, name):
         if key not in self._names:
+            if isinstance(key, int):
+                log.info("Pet confirmed: %r, game ID %d", name, key)
+            else:
+                log.info("Pet confirmed: %r, visible on map only; no game ID", name)
             if self._confirmed_map != self._map_generation:
                 self._confirmed_map = self._map_generation
                 self._new_on_tile.clear()

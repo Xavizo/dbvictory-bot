@@ -132,11 +132,14 @@ def test_look_stays_with_identifiable_pet_on_stack_reorder_or_step(new_tile):
 
 
 @pytest.mark.parametrize("identity", [PET, ("visible", 15)])
-def test_manual_label_follows_one_visible_creature_and_expires(identity):
+def test_manual_label_follows_one_visible_creature_and_expires(identity, caplog):
     gs = GameState()
     first = sample(gs, [(START, 1, identity)])
     ref = first["cells"][0]["pet_ref"]
-    gs.pets.label_visible(START, ref, "Bills")
+    with caplog.at_level("INFO", logger="pet_tracking"):
+        gs.pets.label_visible(START, ref, "Bills")
+    expected_identity = f"game ID {PET}" if identity == PET else "visible on map only; no game ID"
+    assert caplog.messages == [f"Pet confirmed: 'Bills', {expected_identity}"]
     assert gs.pets.confirmed_after_map(START, first["pet_map_generation"]) == 1
     live = sample(gs, [(NEXT, 2, identity), (START, 1, WILD)])
     pet, monster = live["cells"]
