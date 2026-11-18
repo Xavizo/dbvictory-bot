@@ -16,7 +16,7 @@ def test_actual_engine_label_without_git_on_path(tmp_path, monkeypatch):
     git_dir.mkdir()
     (git_dir / "HEAD").write_text(REVISION + "\n")
     monkeypatch.setenv("PATH", "")
-    version, started = mcp_server._engine_label(tmp_path).split(" · start ")
+    version, started = mcp_server._engine_label(tmp_path, mcp_server.checkout_revision(tmp_path)).split(" · start ")
     assert version == "Silnik 9e7edf4"
     assert datetime.fromisoformat(started).utcoffset() is not None
 

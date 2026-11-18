@@ -106,6 +106,7 @@ def main():
                 except (OSError, RuntimeError, ValueError):
                     pass
             print(json.dumps({"state": "error", "installed": info.get("installed"), "pending": info.get("pending"),
+                              "installed_label": info.get("installed_label"), "pending_label": info.get("pending_label"),
                               "can_defer": may_defer, "message": str(error)}))
         else:
             print(str(error), file=sys.stderr)

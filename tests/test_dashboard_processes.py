@@ -15,10 +15,10 @@ def test_only_matching_build_is_activated_on_next_start(tmp_path, monkeypatch):
         folder.mkdir()
         (folder / "BUILD_ID").write_text(folder.name)
         (folder / "routes-manifest.json").write_text("{}")
-    monkeypatch.setattr(server, "ENGINE_LABEL", "Silnik 0000000 · start 10:00")
+    monkeypatch.setattr(server, "ENGINE_REVISION", "0" * 40)
     server._activate_staged_dashboard(tmp_path)
     assert (current / "BUILD_ID").read_text() == ".next"
-    monkeypatch.setattr(server, "ENGINE_LABEL", "Silnik 123abcd · start 10:01")
+    monkeypatch.setattr(server, "ENGINE_REVISION", "123abcd" + "0" * 33)
     original = type(stage).rename
     def simulate_locked(path, destination):
         if path == stage:
@@ -34,14 +34,11 @@ def test_only_matching_build_is_activated_on_next_start(tmp_path, monkeypatch):
 
 
 def test_engine_label_includes_revision_and_timezone_and_survives_missing_git(monkeypatch, tmp_path):
-    (tmp_path / ".git").mkdir()
-    git = Mock(return_value="abc2345\n")
-    monkeypatch.setattr(server.subprocess, "check_output", git)
-    label, timestamp = server._engine_label(tmp_path).split(" · start ")
-    assert label == "Silnik abc2345" and datetime.fromisoformat(timestamp).utcoffset() is not None
-    assert git.call_args.kwargs["cwd"] == tmp_path
-    git.side_effect = FileNotFoundError()
-    assert "wersja nieznana · start " in server._engine_label(tmp_path)
+    revision = "abc2345" + "0" * 33
+    monkeypatch.setattr(server, "version_for", lambda root, sha: "v1.1.0" if sha else None)
+    label, timestamp = server._engine_label(tmp_path, revision).split(" · start ")
+    assert label == "Silnik v1.1.0 (abc2345)" and datetime.fromisoformat(timestamp).utcoffset() is not None
+    assert "wersja nieznana · start " in server._engine_label(tmp_path, None)
 
 
 def test_cleanup_targets_only_live_owned_process_trees(monkeypatch):

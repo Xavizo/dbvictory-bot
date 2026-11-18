@@ -127,6 +127,12 @@ internal sealed class UpdateWindow : Form
         return sha;
     }
 
+    private static string VersionLabel(IDictionary<string, object> result, string key, string sha)
+    {
+        object label;
+        return result.TryGetValue(key, out label) && label is string ? (string)label : sha.Substring(0, 7);
+    }
+
     private static IDictionary<string, object> ReadStatus(bool checkOnly, string deferRevision)
     {
         if (deferRevision != null && (checkOnly || !IsRevision(deferRevision)))
@@ -187,8 +193,8 @@ internal sealed class UpdateWindow : Form
             var installed = Revision(result, "installed");
             var pending = Revision(result, "pending");
             var labels = new List<string>();
-            if (installed != null) labels.Add("Zainstalowana  " + installed.Substring(0, 7));
-            if (pending != null && pending != installed) labels.Add("Dostępna  " + pending.Substring(0, 7));
+            if (installed != null) labels.Add("Zainstalowana  " + VersionLabel(result, "installed_label", installed));
+            if (pending != null && pending != installed) labels.Add("Dostępna  " + VersionLabel(result, "pending_label", pending));
             versions.Text = String.Join("     ·     ", labels);
             if (state != "current")
                 message.Text = (string)result["message"];

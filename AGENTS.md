@@ -1,5 +1,9 @@
 # Working on this project
 
+- Each commit advances the displayed version. Use `feat(scope):` for a
+  backwards-compatible feature and `type(scope)!:` or a `BREAKING CHANGE:`
+  footer for an incompatible change. Fixes and other commits advance patch.
+
 - This is a Windows game client integration, exposed through standard stdio MCP.
   `run_mcp.py` only starts MCP. Connecting to the game is an explicit `start_bot`
   tool call. Never use that call as a smoke test.

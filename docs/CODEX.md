@@ -8,6 +8,20 @@ Gdy poprzednia sesja działa, można dalej grać. Przy kolejnym zwykłym
 uruchomieniu po zamknięciu sesji launcher instaluje przygotowany pakiet.
 Status silnika i tytuł głównego panelu podają wersję załadowaną przy starcie.
 
+Wersja ma postać `v1.1.0 (abcdef0)`. Punktem odniesienia jest commit
+istniejącego wydania `v1.0.0`. Każdy kolejny commit zwiększa numer
+zgodnie z opisem zmiany:
+
+| Rodzaj zmiany | Przykładowy commit | Przykład po v1.2.3 |
+| --- | --- | --- |
+| Poprawka, dokumentacja lub zmiana wewnętrzna | `fix: popraw odczyt wersji` | v1.2.4 |
+| Nowa funkcja zgodna ze starszą wersją | `feat(panel): dodaj filtr` | v1.3.0 |
+| Zmiana zrywająca zgodność | `feat(api)!: zmień format profilu` | v2.0.0 |
+
+Linia `BREAKING CHANGE: opis` w treści commita również zwiększa pierwszą
+liczbę. Przy scaleniu podstawą jest najwyższa wersja wśród rodziców.
+Hash rozróżnia równoległe zmiany na gałęziach o tym samym numerze.
+
 Dla osoby przygotowującej wydanie kroki są następujące.
 
 1. Zatwierdź i przetestuj zmiany w kopii roboczej.

@@ -31,29 +31,22 @@ logging.basicConfig(
 log = logging.getLogger("mcp_server")
 
 
-def _engine_label(root):
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from dbv_revision import checkout_revision, revision_label, version_for
+
+
+def _engine_label(root, revision=None):
     started = datetime.now().astimezone().isoformat(sep=" ", timespec="seconds")
-    revision = "wersja nieznana"
-    if (root / ".git").exists():
-        try:
-            revision = subprocess.check_output(
-                ["git", "rev-parse", "--short=7", "--verify", "HEAD"], cwd=root,
-                stderr=subprocess.DEVNULL, timeout=2, encoding="ascii",
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            ).strip()
-        except (OSError, subprocess.SubprocessError):
-            from dbv_revision import read_head_revision
-            head = read_head_revision(root)
-            if head:
-                revision = head[:7]
-    return f"Silnik {revision} · start {started}"
+    if revision is None:
+        revision = checkout_revision(root)
+    label = revision_label(revision, version_for(root, revision))
+    return f"Silnik {label} · start {started}"
 
 
 # Capture once, before loading the engine. Reopening the panel reuses this identity.
-ENGINE_LABEL = _engine_label(Path(__file__).resolve().parent)
-
-# ── Ensure project root is on sys.path ──────────────────────────────
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ENGINE_ROOT = Path(__file__).resolve().parent
+ENGINE_REVISION = checkout_revision(ENGINE_ROOT)
+ENGINE_LABEL = _engine_label(ENGINE_ROOT, ENGINE_REVISION)
 
 from mcp.server.fastmcp import FastMCP
 from tray_exit import EXIT_FILE_ENV, tray_input
@@ -1003,10 +996,9 @@ def _build_status_report() -> str:
 
 def _activate_staged_dashboard(directory):
     """Switch the prebuilt panel for this engine before starting its web server."""
-    version = ENGINE_LABEL.split(" · ", 1)[0].removeprefix("Silnik ")
-    if len(version) != 7 or any(c not in "0123456789abcdef" for c in version):
+    if not ENGINE_REVISION:
         return
-    staged = directory / f".next-ready-{version}"
+    staged = directory / f".next-ready-{ENGINE_REVISION[:7]}"
     if not (staged / "BUILD_ID").is_file() or not (staged / "routes-manifest.json").is_file():
         return
     current = directory / ".next"

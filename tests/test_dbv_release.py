@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import dbv_release as release
+import dbv_revision
 
 
 def git(root, *args):
@@ -45,6 +46,39 @@ def repos(tmp_path, monkeypatch):
     git(tmp_path, "clone", "-q", str(source), str(installed))
     (installed / "recordings/route.json").write_text("owned", encoding="utf-8")
     return installed, source, base
+
+
+def test_semver_across_branches_pending_and_installed(repos, monkeypatch):
+    installed, source, base = repos
+    monkeypatch.setattr(dbv_revision, "V1_COMMIT", base)
+    git(source, "config", "user.name", "Version test")
+    git(source, "config", "user.email", "local@example.invalid")
+
+    def bump(subject, *, body=None):
+        args = ["commit", "-q", "--allow-empty", "-m", subject]
+        if body:
+            args.extend(["-m", body])
+        git(source, *args)
+        return dbv_revision.version_for(source, git(source, "rev-parse", "HEAD"))
+
+    assert dbv_revision.version_for(source, base) == "v1.0.0"
+    assert bump("fix(ui): align text") == "v1.0.1"
+    assert bump("feat(ui): show history") == "v1.1.0"
+    assert bump("docs: document history") == "v1.1.1"
+    git(source, "switch", "-qc", "upgrade", base)
+    assert bump("feat(api)!: change contract") == "v2.0.0"
+    assert bump("refactor(api): revise schema", body="BREAKING CHANGE: clients must migrate") == "v3.0.0"
+    git(source, "switch", "-q", "master")
+    git(source, "merge", "-q", "--no-ff", "-m", "merge upgrade", "upgrade")
+    revision = git(source, "rev-parse", "HEAD")
+    expected = f"v3.0.1 ({revision[:7]})"
+    report = release.publish(installed, source, revision)
+    assert report["pending_label"] == expected
+    assert report["installed_label"] == f"v1.0.0 ({base[:7]})"
+    source.rename(source.with_name("source-moved"))
+    assert release.status(installed)["pending_label"] == expected
+    assert release.apply_pending(installed)["installed_label"] == expected
+    assert release.status(installed)["pending_label"] is None
 
 
 @pytest.mark.parametrize("detached", [True, False])

@@ -9,36 +9,9 @@ import re
 import shutil
 import socket
 import stat
-import subprocess
 from uuid import uuid4
 
-
-def git_executable():
-    found = shutil.which("git")
-    if found:
-        return found
-    for folder in (
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git",
-        Path.home() / "AppData/Local/Programs/Git",
-        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/native/git",
-    ):
-        binary = folder / "cmd/git.exe"
-        if binary.is_file():
-            return str(binary)
-    raise RuntimeError("Brak programu Git potrzebnego do sprawdzenia wydania.")
-
-
-def _git(root, *args):
-    result = subprocess.run(
-        [git_executable(), "-c", f"safe.directory={root.as_posix()}", "-c",
-         "protocol.allow=never", "-c", "protocol.file.allow=always",
-         "-c", f"core.hooksPath={os.devnull}", "-C", str(root), *args],
-        stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", errors="replace",
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    if result.returncode:
-        raise RuntimeError(result.stderr.strip() or f"Git odrzucił operację {args[0]}.")
-    return result.stdout.rstrip("\r\n")
+from dbv_revision import VERSION_PATTERN, git_executable, git_output as _git, revision_label, version_for
 
 
 def _path(path):
@@ -247,17 +220,39 @@ def _panel_tree(directory, destination=None, *, build_source=None):
     return digest.hexdigest()
 
 
-def _result(head, pending, *, busy=False, recovering=False, updated=False):
+def _pending_version(root, manifest):
+    if not manifest:
+        return None
+    # The candidate need not be in the installation's Git object database yet.
+    # Keep the optional display metadata outside the existing package manifest
+    # so already installed launchers can consume the same release bundles.
+    try:
+        package = _local_child(_updates(root), manifest["package"])
+        path = _local_child(package, "version.txt")
+        with path.open(encoding="ascii") as stream:
+            line = stream.read(160)
+        sha, _, version = line.strip().partition(" ")
+        if sha == manifest["revision"] and re.fullmatch(VERSION_PATTERN, version):
+            return version
+    except (OSError, ValueError):
+        pass
+    return version_for(root, manifest["revision"])
+
+
+def _result(root, head, pending, *, busy=False, recovering=False, updated=False):
     revision = pending["revision"] if pending else None
+    installed_label = revision_label(head, version_for(root, head))
+    pending_label = revision_label(revision, _pending_version(root, pending)) if revision else None
     if busy:
         state, message = "busy", "Bot działa lub porty są zajęte. Aktualizacja poczeka."
     elif recovering:
         state, message = "recovery", "Do zakończenia pozostała poprzednia aktualizacja."
     elif revision:
-        state, message = "available", f"Gotowa aktualizacja {revision[:7]}."
+        state, message = "available", f"Gotowa aktualizacja {pending_label}."
     else:
-        state, message = "current", f"Zainstalowana wersja {head[:7]}."
-    return dict(state=state, installed=head, pending=revision, message=message, running=busy, updated=updated)
+        state, message = "current", f"Zainstalowana wersja {installed_label}."
+    return dict(state=state, installed=head, pending=revision, installed_label=installed_label,
+                pending_label=pending_label, message=message, running=busy, updated=updated)
 
 
 def status(installation):
@@ -268,7 +263,7 @@ def status(installation):
             busy = _ports_busy()
     except RuntimeError:
         busy = True
-    return _result(_head(root), _manifest(feed / "pending.json"), busy=busy,
+    return _result(root, _head(root), _manifest(feed / "pending.json"), busy=busy,
                    recovering=(feed / "transaction.json").is_file())
 
 
@@ -308,7 +303,7 @@ def defer_pending(installation, expected_revision):
             if previous:
                 _write_json(_local_child(feed, f"deferred-{previous['package']}.json"), previous)
             os.replace(feed / "pending.json", deferred_path)
-            result = _result(head, None)
+            result = _result(root, head, None)
             result["deferred"] = expected
             return result
 
@@ -330,7 +325,7 @@ def publish(installation, source, revision, dashboard=None, *, verify_build=Fals
         if revision == base:
             if old:
                 raise ValueError("To wersja zainstalowana. W kolejce jest już inne wydanie.")
-            return _result(base, None)
+            return _result(root, base, None)
         if _needs_panel(changes) and dashboard is None:
             raise ValueError("Do tego wydania dołącz zbudowany panel.")
         package_id = uuid4().hex
@@ -357,13 +352,16 @@ def publish(installation, source, revision, dashboard=None, *, verify_build=Fals
                 raise ValueError("Źródło zmieniło się podczas przygotowania aktualizacji.")
             manifest = dict(format=1, package=package_id, base=base, revision=revision,
                             bundle=_file_hash(bundle), panel=panel)
+            version = version_for(source, revision)
+            if version:
+                (package / "version.txt").write_text(f"{revision} {version}\n", encoding="ascii")
             _write_json(feed / "pending.json", manifest)
         except Exception:
             _remove_folder(package)
             raise
         if old:
             _remove_folder(feed / old["package"])
-        return _result(base, manifest)
+        return _result(root, base, manifest)
 
 
 def _cleanup(feed, manifest):
@@ -455,9 +453,9 @@ def apply_pending(installation):
         try:
             locks.enter_context(_file_lock(_lock_path(root)))
         except RuntimeError:
-            return _result(_head(root), _manifest(feed / "pending.json"), busy=True)
+            return _result(root, _head(root), _manifest(feed / "pending.json"), busy=True)
         if _ports_busy():
-            return _result(_head(root), _manifest(feed / "pending.json"), busy=True)
+            return _result(root, _head(root), _manifest(feed / "pending.json"), busy=True)
         locks.enter_context(_file_lock(_local_child(feed, "publish.lock")))
         tx = _manifest(feed / "transaction.json")
         pending = _manifest(feed / "pending.json")
@@ -468,7 +466,7 @@ def apply_pending(installation):
         if release:
             _apply(root, feed, release)
             updated = True
-        return _result(_head(root), None, updated=updated)
+        return _result(root, _head(root), None, updated=updated)
 
 
 def main():
