@@ -1,5 +1,6 @@
 """Resolve a manual Look and its server description to one live creature ID."""
 import re
+import secrets
 import threading
 import time
 from collections import Counter, defaultdict
@@ -18,6 +19,9 @@ class PetTracker:
         self._pending = None
         self._deadline = 0
         self._names = {}
+        self._manual = set()
+        self._refs = {}
+        self._selectable = {}
         self._new_on_tile = Counter()
         self._confirmed_map = None
 
@@ -26,22 +30,48 @@ class PetTracker:
         counts = Counter(slots.values())
         slots = {slot: key for slot, key in slots.items() if counts[key] == 1}
         with self._lock:
+            continuous = 0 <= captured_at - self._captured <= 2
             for key in list(self._names):
-                if isinstance(key, tuple) and (key not in counts or captured_at - self._captured > 2):
+                if (isinstance(key, tuple) or key in self._manual) and (counts[key] != 1 or not continuous):
                     del self._names[key]
+                    self._manual.discard(key)
+            previous = self._refs if continuous else {}
+            self._refs = {key: previous.get(key) or secrets.token_hex(12) for key in slots.values()}
+            self._selectable.clear()
             self._slots = slots
             self._captured = captured_at
             self._map_generation += 1
-            if self._pending and slots.get(self._pending[0]) != self._pending[1]:
+            if not continuous:
                 self._pending = None
-            if not self._names:
-                return self._map_generation
+            elif self._pending and slots.get(self._pending[0]) != self._pending[1]:
+                old_slot, identity, name = self._pending
+                new_slot = next((slot for slot, key in slots.items() if key == identity), None)
+                # Reordering the stack is common. If the pet moved, keep the
+                # Look only while its identity is continuous and the old tile
+                # is observed empty, so a replacement can never inherit it.
+                origin_empty = any((c["x"], c["y"], c["z"]) == old_slot[:3] and
+                                   c.get("occupants") == 0 and c.get("kind") != "unknown" for c in cells)
+                if new_slot and (new_slot[:3] == old_slot[:3] or origin_empty):
+                    self._pending = (new_slot, identity, name)
+                else:
+                    self._pending = None
             pets_by_position = defaultdict(list)
+            identities = defaultdict(list)
             for slot, key in slots.items():
+                identities[slot[:3]].append(key)
                 if key in self._names:
                     pets_by_position[slot[:3]].append(self._names[key])
             for cell in cells:
-                pets = pets_by_position.get((cell["x"], cell["y"], cell["z"]))
+                point = (cell["x"], cell["y"], cell["z"])
+                occupants = identities.get(point, ())
+                if cell.get("occupants") == 1 and len(occupants) == 1:
+                    key = occupants[0]
+                    if key not in self._names or key in self._manual:
+                        self._selectable[point] = key
+                        cell["pet_ref"] = self._refs[key]
+                        if key in self._manual:
+                            cell["pet_manual"] = True
+                pets = pets_by_position.get(point)
                 if pets:
                     types = cell["occupant_types"]
                     types["monster"] -= len(pets)
@@ -88,13 +118,38 @@ class PetTracker:
                 row = creatures.get(cid, {})
                 known = row.get("name") if time.time() - row.get("t", 0) < .6 else None
                 if known in (None, "", "?") or known.casefold() == label.casefold():
-                    if cid not in self._names:
-                        if self._confirmed_map != self._map_generation:
-                            self._confirmed_map = self._map_generation
-                            self._new_on_tile.clear()
-                        self._new_on_tile[slot[:3]] += 1
-                    self._names[cid] = label
+                    self._manual.discard(cid)
+                    self._confirm(cid, slot[:3], label)
             self._deadline = 0
+
+    def _confirm(self, key, point, name):
+        if key not in self._names:
+            if self._confirmed_map != self._map_generation:
+                self._confirmed_map = self._map_generation
+                self._new_on_tile.clear()
+            self._new_on_tile[point] += 1
+        self._names[key] = name
+
+    def label_visible(self, point, reference, name):
+        """Apply a panel observation to the same single creature still on this tile."""
+        if name is not None and (not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or not name.isprintable()):
+            raise ValueError("Podaj nazwę peta z gry.")
+        with self._lock:
+            key = self._selectable.get(point)
+            if key is None or self._refs.get(key) != reference or not 0 <= time.time() - self._captured <= 0.8:
+                raise ValueError("Stworzenie zmieniło pole lub odczyt wygasł. Wybierz je ponownie.")
+            if name is None:
+                if key not in self._manual:
+                    raise ValueError("To stworzenie nie ma ręcznego oznaczenia.")
+                self._manual.remove(key)
+                del self._names[key]
+                if self._confirmed_map == self._map_generation and self._new_on_tile[point]:
+                    self._new_on_tile[point] -= 1
+            elif key not in self._names:
+                self._manual.add(key)
+                self._confirm(key, point, name.strip())
+            else:
+                raise ValueError("Pet został już rozpoznany.")
 
     def is_pet(self, cid):
         with self._lock:

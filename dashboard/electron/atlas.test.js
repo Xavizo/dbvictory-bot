@@ -102,6 +102,8 @@ test('overlapping return segments get separate lanes; editing a point preserves 
   assert.deepEqual(points[1],[10,10,6]);
 });
 function component(file,imports={}) {
+  if (file.endsWith('/MapTools.tsx') || file.endsWith('/ProfilePicker.tsx')) imports['./ActionMenu']=component('../app/ActionMenu.tsx');
+  if (file.endsWith('/CavebotRunBar.tsx')) imports['./LureStatus']=component('../app/LureStatus.tsx');
   if (file.endsWith('/AtlasPanel.tsx')) imports['./DraftTags'] = component('../app/DraftTags.tsx');
   const mod={exports:{}};
   new Function('exports','require',ts.transpileModule(fs.readFileSync(require.resolve(file),'utf8'),
@@ -214,6 +216,38 @@ test('active cavebot has separate visible pause and stop controls outside scroll
   const shell=render(React.createElement(chrome.default,{...props,view:'automation',mcpConnected:true}));
   assert.ok(shell.indexOf('cavebot-run-bar')<shell.indexOf('workspace-scroll'));
   props.state.adaptive_cavebot.status='idle';assert.equal(render(React.createElement(bar.default,props)),'');
+});
+
+test('combat-only target and lure updates occupy the existing status header without extra rows',()=>{
+  const Bar=component('../app/CavebotRunBar.tsx',{'@/lib/auth':{}}).default;
+  const render=bot=>require('react-dom/server').renderToStaticMarkup(require('react').createElement(Bar,{
+    state:{actions:[],adaptive_cavebot:{mode:'combat',status:'running',total:0,combat:bot}},connected:true,onRefresh:()=>{}
+  }));
+  const idle=render({phase:'route'}), active=render({phase:'fight',target:{name:'Fury Cell',health:28},
+    lure:{following:1,goal:4,stop_reason:'transition'}});
+  assert.match(idle,/SAMA WALKA/);
+  assert.match(active,/cavebot-status-head.*Fury Cell · 28% HP · walka.*W grupie.*Przed przejściem/);
+  const routeRow='<span>Automatyczny wybór celu';
+  assert.ok(idle.includes(routeRow) && active.includes(routeRow));
+  assert.equal(idle.slice(idle.indexOf(routeRow)),active.slice(active.indexOf(routeRow)));
+  assert.doesNotMatch(idle,/Fury Cell|W grupie/);
+});
+
+test('action menus dismiss on outside pointer or focus, preserve inside interaction and restore focus on Escape',()=>{
+  const handlers=new Map(),doc={
+    addEventListener:(kind,fn)=>handlers.set(kind,fn),
+    removeEventListener:(kind,fn)=>{assert.equal(handlers.get(kind),fn);handlers.delete(kind);}
+  };
+  let cleanup,focused=false;
+  const menu={ownerDocument:doc,open:true,querySelector:()=>({focus:()=>{focused=true;}})};
+  const Menu=component('../app/ActionMenu.tsx',{react:{useRef:()=>({current:menu}),useEffect:fn=>{cleanup=fn();}}}).default;
+  const ui=Menu({className:'profile-more',label:'Menu',icon:'…',title:'Menu'});
+  assert.equal(ui.props.name,'panel-action-menu');
+  handlers.get('pointerdown')({composedPath:()=>[menu]});assert.ok(menu.open);
+  handlers.get('pointerdown')({composedPath:()=>[doc]});assert.equal(menu.open,false);
+  menu.open=true;handlers.get('focusin')({composedPath:()=>[doc]});assert.equal(menu.open,false);
+  menu.open=true;ui.props.onKeyDown({key:'Escape',currentTarget:menu,stopPropagation(){}});
+  assert.ok(focused && !menu.open);cleanup();assert.equal(handlers.size,0);
 });
 
 test('navigation hold is displayed independently from active combat and healing',()=>{

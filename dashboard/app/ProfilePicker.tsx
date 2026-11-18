@@ -2,6 +2,7 @@
 import {useEffect,useState} from "react";
 import type {BotState} from "@/lib/api";
 import {authenticatedFetch} from "@/lib/auth";
+import ActionMenu from "./ActionMenu";
 type Row={id:string;name:string;kind:"combat"|"bot";config:unknown};
 async function request(body?:unknown){const response=await authenticatedFetch('http://127.0.0.1:8089/api/profiles',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined);const value=await response.json();if(!response.ok)throw Error(value.error??'Błąd profilu');return value;}
 export default function ProfilePicker({kind,state,config,disabled=false,dirty=false,onApplied,onRefresh,legacy,onImport,routeId,scope}:{kind:"combat"|"bot";state:BotState|null;config?:unknown;disabled?:boolean;dirty?:boolean;onApplied?:(value:unknown)=>void;onRefresh:()=>void;routeId?:string;scope?:string;legacy?:unknown;onImport?:(value:unknown)=>void}){
@@ -39,12 +40,12 @@ export default function ProfilePicker({kind,state,config,disabled=false,dirty=fa
       <button className="profile-icon" aria-label="Zapisz profil walki" title="Zapisz ustawienia jako profil" aria-expanded={saveOpen} disabled={busy||disabled} onClick={()=>setSaveOpen(v=>!v)}>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 3h13l4 4v14H3V3h1zm3 0v7h10V3M7 21v-7h10v7"/></svg>
       </button>
-      <details className="profile-more"><summary aria-label="Opcje profilu walki" title="Przypisanie i usuwanie profilu">⋯</summary><div>
+      <ActionMenu className="profile-more" label="Opcje profilu walki" title="Przypisanie i usuwanie profilu" icon="⋯">
         {routeId&&scope&&<><span>{state?.profile_selection?.routes?.[`${scope}:${routeId}`]?'Trasa ma przypisany profil.':'Trasa bez przypisanego profilu.'}</span>
           <button disabled={busy||disabled||dirty||!id} onClick={()=>void bind(id)}>Przypisz profil do trasy</button>
           {!!state?.profile_selection?.routes?.[`${scope}:${routeId}`]&&<button disabled={busy||disabled} onClick={()=>void bind(null)}>Odłącz profil od trasy</button>}</>}
         <button disabled={!id||busy||disabled} onClick={()=>void act('delete')}>Usuń profil</button>
-      </div></details>
+      </ActionMenu>
     </div>
     {saveOpen&&<div className="combat-profile-save" role="group" aria-label="Zapis profilu walki">
       <input aria-label="Nazwa profilu walki" placeholder="Nazwa profilu" maxLength={60} value={name} disabled={busy} onChange={e=>setName(e.target.value)}/>

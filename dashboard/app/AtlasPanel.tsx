@@ -90,7 +90,10 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
   const menuCell=tileMenu && (cells.find(c=>[c.x,c.y,c.z].join(',')===tileMenu.key) ?? {x:menuPosition![0],y:menuPosition![1],z:menuPosition![2],kind:'unknown' as const,items:[],stairs:null,occupants:0,live:false});
   const canAnnotate=!!menuCell?.live && compatible && !!state?.passive_map?.annotation_editable && !state?.passive_map?.stale;
   useEffect(()=>{setTileMenu(null);},[scope,mapOpen,objectView]);
-  function openTileMenu(p:Pos,x:number,y:number){setSelected(p);setTileMenu({key:p.join(','),x,y,scope});}
+  function openTileMenu(p:Pos,x:number,y:number){
+    const cell=cells.find(c=>c.live && c.x===p[0] && c.y===p[1] && c.z===p[2]);
+    setSelected(p);setTileMenu({key:p.join(','),x,y,scope,petRef:cell?.pet_ref});
+  }
   async function copyMenuCell(){if(!menuCell)return;try{if(!window.dbvMap)throw Error('Brak schowka');await window.dbvMap.copyCell(copyCellText(menuCell));}catch{setError('Nie udało się skopiować danych pola.');}}
   const sim=plan && simIndex!==null?simulationStep(plan.path,simIndex,plan.transitions):null;
   function setCenter(p:Pos){viewCenter.current=p;setManual([...p]);setSimPlaying(false);}

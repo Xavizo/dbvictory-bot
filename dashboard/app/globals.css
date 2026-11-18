@@ -179,6 +179,15 @@ section[aria-label="Widok cavebota"],section[aria-label="Widok diagnostyki"] {di
 .lure-progress{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 13px;background:#22332f;border:1px solid #426456;border-radius:8px;margin:8px 0 12px}
 .lure-progress>div:first-child{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.lure-progress strong{font-size:12px;color:#d0e5db}.lure-progress b{font-size:18px;font-variant-numeric:tabular-nums;margin-left:7px}.lure-progress b span{font-size:12px;color:#9aacaa}.lure-progress small{font-size:11px;color:#b5cabe}
 .lure-progress-dots{display:flex;gap:4px;flex-wrap:wrap;max-width:150px}.lure-progress-dots i{display:block;width:9px;height:9px;border-radius:50%;background:#3a5148}.lure-progress-dots i.filled{background:#85d8b5}.lure-progress.is-fighting{border-color:#7d7046;background:#302e25}.lure-progress.is-fighting .filled{background:#e3c886}
+.cavebot-run-bar>div:first-child {flex:1;grid-template-columns:minmax(0,1fr)}
+.cavebot-status-head {display:flex;align-items:center;gap:10px;height:20px;min-width:0;overflow:hidden;white-space:nowrap}
+.cavebot-status-head>strong {flex:none}
+.cavebot-status-head .combat-target {min-width:0;max-width:42%;color:#e7dfef}
+.cavebot-status-head .lure-progress {min-width:0;border:0;background:transparent;padding:0;margin:0;overflow:hidden}
+.cavebot-status-head .lure-progress>div:first-child {min-width:0;flex-wrap:nowrap;gap:6px}
+.cavebot-status-head .lure-progress strong {flex:none;font-size:11px}
+.cavebot-status-head .lure-progress b {font-size:12px;margin-left:2px}
+.cavebot-status-head .lure-progress-dots {display:none}
 .v2-config [hidden]{display:none!important;}.v2-mode-switch{display:flex;gap:5px;margin-bottom:12px;}.v2-mode-switch button[aria-pressed=true]{background:#344f45;border-color:#75a98f;color:#d9ffec;}
 .v2-config-columns.combat-only-columns{grid-template-columns:minmax(0,1fr);}.v2-engage{display:flex;align-items:end;gap:8px;flex-wrap:wrap;margin-top:10px;}.v2-engage>label{font-size:11px;}.v2-engage select{display:block;margin-top:4px;}.v2-engage input{width:48px;}.v2-engage small{flex-basis:100%;}
 .v2-rule-caption{display:flex;justify-content:space-between;font-size:10px;color:#b5a5c0;margin-top:9px;padding-right:94px;}

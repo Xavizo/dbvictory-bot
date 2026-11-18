@@ -23,6 +23,8 @@ export interface PassiveMapCell {
   occupants: number;
   occupant_types?: Partial<Record<"player" | "self" | "npc" | "monster" | "pet" | "unknown", number>>;
   pet_names?: string[];
+  pet_ref?: string;
+  pet_manual?: boolean;
   items: { id: number; flags: string[]; stack: number; lens_help?: number; minimap_color?: number }[];
   navigation?: MapNavigationFeature[];
   transitions?: MapTransitionLink[];
@@ -296,6 +298,7 @@ export interface MapAnnotationInput {
   kind:string; required_level:number|null; activation_hint:string|null; note:string;
 }
 export const saveMapAnnotation = (data:MapAnnotationInput) => control("/api/map/annotation",data);
+export const labelVisiblePet = (position:number[],ref:string,name:string|null) => control("/api/map/pet",{position,ref,name});
 
 export async function fetchState(): Promise<BotState> {
   const res = await authenticatedFetch(`${API_BASE}/api/state`);

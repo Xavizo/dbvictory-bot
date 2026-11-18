@@ -15,7 +15,7 @@ export default function LureStatus({progress,paused=false}:{progress:LureProgres
   const {following,goal,waiting,stop_reason:reason}=progress;
   const count=progress.engaged??following;
   const caption=paused?'Lurowanie wstrzymane':reason==='group'?'Grupa zebrana · walczę':reason==='timeout'?'Limit czasu · walczę':reason==='transition'?'Przed przejściem · walczę':waiting?'Czekam na moby · atakuję':'Zbieram grupę · atakuję';
-  return <div className={`lure-progress ${reason?'is-fighting':''}`} role="status" aria-label="Postęp lurowania">
+  return <div className={`lure-progress ${reason?'is-fighting':''}`} role="status" aria-label="Postęp lurowania" title={`W grupie ${count}/${goal} · ${caption}`}>
     <div><strong>W grupie <b>{count} <span>/ {goal}</span></b></strong><small>{caption}</small></div>
     <div className="lure-progress-dots" aria-hidden="true">{Array.from({length:Math.min(12,goal)},(_,i)=><i key={i} className={i<count?'filled':''}/>)}</div>
   </div>;

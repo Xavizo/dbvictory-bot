@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PassiveMapState, PassiveMapCell, MapNavigationFeature } from "@/lib/api";
-import { saveMapAnnotation } from "@/lib/api";
+import { labelVisiblePet, saveMapAnnotation } from "@/lib/api";
 import {activationLabels,activations,defaultActivation} from "@/lib/mapInteractions";
 import { transitionActions } from "./TransitionLearningPanel";
 
@@ -144,15 +144,29 @@ function AnnotationEditor({cell,scope,enabled,initialKind,onClose}:{cell:Passive
   </div>;
 }
 
-export type TileMenuPosition = {key:string;x:number;y:number;scope:string|null|undefined};
+export type TileMenuPosition = {key:string;x:number;y:number;scope:string|null|undefined;petRef?:string};
 export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,waypoints=[],onRemoveWaypoint,onTransition,routeLocked=false}:{position:TileMenuPosition;cell:PassiveMapCell;scope?:string|null;editable:boolean;onClose:()=>void;onCopy:()=>void;waypoints?:number[];onRemoveWaypoint?:(index:number)=>void;onTransition?:()=>void;routeLocked?:boolean}) {
   const ref=useRef<HTMLDivElement>(null);
-  const [editing,setEditing]=useState<AnnotationKind|null>(null);
+  const [editing,setEditing]=useState<AnnotationKind|"pet"|null>(null);
+  const [petName,setPetName]=useState("");
+  const [petError,setPetError]=useState("");
+  const [savingPet,setSavingPet]=useState(false);
+  const sameCreature=editable && !!position.petRef && position.petRef===cell.pet_ref;
+  async function savePet(name:string|null) {
+    if(!sameCreature || !position.petRef || savingPet)return;
+    setSavingPet(true);setPetError("");
+    try {
+      await labelVisiblePet([cell.x,cell.y,cell.z],position.petRef,name);
+      onClose();
+    } catch(error) {
+      setPetError(error instanceof Error ? error.message : "Nie udało się zmienić oznaczenia peta.");
+    } finally {setSavingPet(false);}
+  }
   const [point,setPoint]=useState({x:position.x,y:position.y});
   useLayoutEffect(()=>{
     const box=ref.current?.getBoundingClientRect();
     if(box) setPoint({x:Math.max(8,Math.min(position.x,window.innerWidth-box.width-8)),y:Math.max(8,Math.min(position.y,window.innerHeight-box.height-8))});
-    ref.current?.querySelector<HTMLElement>(editing===null ? '[role="menuitem"]' : 'select')?.focus();
+    ref.current?.querySelector<HTMLElement>(editing===null ? '[role="menuitem"]' : editing==="pet" ? 'input' : 'select')?.focus();
   },[position.x,position.y,editing]);
   useEffect(()=>{
     const fit=()=>{
@@ -186,11 +200,19 @@ export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,way
       {onTransition && <button role="menuitem" disabled={routeLocked} onClick={()=>{onTransition();onClose();}}>Dodaj przejście do trasy…</button>}
       {onRemoveWaypoint && waypoints.map(index=><button role="menuitem" className="tile-menu-delete" key={index} disabled={routeLocked} onClick={()=>{onRemoveWaypoint(index);onClose();}}>Usuń waypoint {index+1}</button>)}
       <button role="menuitem" onClick={()=>{onCopy();onClose();}}>Kopiuj dane pola</button>
+      {sameCreature && (cell.pet_manual ?
+        <button role="menuitem" disabled={savingPet} onClick={()=>savePet(null)}>Usuń oznaczenie peta</button> :
+        <button role="menuitem" onClick={()=>setEditing("pet")}>Oznacz jako peta…</button>)}
       <div className="tile-menu-caption">OZNACZ OBIEKT NA TYM POLU</div>
       {annotationKinds.map(kind=><button role="menuitem" key={kind} disabled={!editable || !cell.items.length} onClick={()=>setEditing(kind)}><span style={{color:navigationStyles[kind].color}}>{navigationStyles[kind].symbol}</span>{navigationStyles[kind].label}<span className="tile-menu-chevron">›</span></button>)}
       <button role="menuitem" disabled={!editable || !cell.items.length} onClick={()=>setEditing("")}>Edytuj opis / warstwę…</button>
       {!editable && <p className="tile-menu-help">Oznaczanie wymaga bieżącej mapy na żywo.</p>}
-    </> : <AnnotationEditor cell={cell} scope={scope} enabled={editable} initialKind={editing} onClose={onClose}/>}
+    </> : editing==="pet" ? <form className="map-annotation-form" onSubmit={e=>{e.preventDefault();savePet(petName.trim());}}>
+      <label>Nazwa peta<input className="mt-1 w-full rounded border border-gray-600 p-2" value={petName} maxLength={80} onChange={e=>setPetName(e.target.value)}/></label>
+      <button className="secondary-button mt-2" disabled={!sameCreature || !petName.trim() || savingPet}>Oznacz jako peta</button>
+      {!sameCreature && <p role="status">Wybierz ponownie pole stworzenia na mapie na żywo.</p>}
+    </form> : <AnnotationEditor cell={cell} scope={scope} enabled={editable} initialKind={editing} onClose={onClose}/>}
+    {petError && <p role="alert">{petError}</p>}
   </div>,document.body);
 }
 
@@ -217,7 +239,7 @@ export default function PassiveMapPanel({ map, focusPosition }: { map?: PassiveM
     sectionRef.current?.querySelectorAll<SVGGElement>('g[data-cell]').forEach(node=>{if(node.dataset.cell===key) node.focus();});
   };
   const openMenu=(target:PassiveMapCell,x:number,y:number)=>{
-    setSelected(keyOf(target));setMenu({key:keyOf(target),x,y,scope:map?.annotation_scope});
+    setSelected(keyOf(target));setMenu({key:keyOf(target),x,y,scope:map?.annotation_scope,petRef:target.pet_ref});
   };
   async function copyCell(target:PassiveMapCell) {
     const key=keyOf(target);

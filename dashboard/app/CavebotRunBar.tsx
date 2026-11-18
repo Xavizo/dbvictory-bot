@@ -2,13 +2,17 @@
 import {useState} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 import type {BotState} from "@/lib/api";
+import LureStatus from "./LureStatus";
+const phases:Record<string,string>={fight:"walka",chase:"pościg",distance:"dystans",lure:"lurowanie",return:"powrót",route:"trasa"};
 
 export default function CavebotRunBar({state,connected,onRefresh}:{state:BotState|null;connected:boolean;onRefresh:()=>void}) {
   const [busy,setBusy]=useState(false),[error,setError]=useState("");
   const bot=state?.adaptive_cavebot;
   const running=bot?.status==="running",paused=bot?.status==="paused";
+  const target=(running||paused)?bot?.combat?.target:null;
+  const targetStatus=target ? [target.name,`${target.health}% HP`,phases[bot?.combat?.phase??""]].filter(Boolean).join(" · ") : "";
   const domainLabel=(status:string)=>({running:"działa",combat_movement:"pościg",waiting:"czeka",waiting_for_combat:"czeka na walkę",held:"wstrzymany",fault:"błąd",complete:"zakończony",disabled:"wyłączona",stopped:"stop",idle:"gotowy"}[status]??status);
-  if(!bot || !bot.total || (!running && !paused && bot.status!=="ready" && !bot.resumable))return null;
+  if(!bot || (!bot.total && bot.mode!=="combat") || (!running && !paused && bot.status!=="ready" && !bot.resumable))return null;
   async function control(command:"pause"|"stop"|"resume"|"discard_progress") {
     setBusy(true);setError("");
     try {
@@ -18,7 +22,10 @@ export default function CavebotRunBar({state,connected,onRefresh}:{state:BotStat
     } catch(e){setError(e instanceof Error?e.message:String(e));} finally{setBusy(false);}
   }
   return <aside className={`cavebot-run-bar ${running?"is-running":"is-paused"}`} aria-label="Sterowanie aktywnym Cavebotem">
-    <div><strong><i className={`status-dot ${running?"online":""}`}/> {bot.mode==="combat"?"SAMA WALKA":"CAVEBOT"} · {running?"DZIAŁA":paused?"PAUZA":bot.status==="idle"?"STOP · POSTĘP ZACHOWANY":"GOTOWY"}</strong>
+    <div><div className="cavebot-status-head"><strong><i className={`status-dot ${running?"online":""}`}/> {bot.mode==="combat"?"SAMA WALKA":"CAVEBOT"} · {running?"DZIAŁA":paused?"PAUZA":bot.status==="idle"?"STOP · POSTĘP ZACHOWANY":"GOTOWY"}</strong>
+      {target&&<span className="combat-target" title={targetStatus}>Cel · {targetStatus}</span>}
+      {(running||paused)&&bot.combat?.lure&&<LureStatus progress={bot.combat.lure} paused={paused}/>}
+    </div>
       <span title={bot.name}>{bot.mode==="combat"?"Automatyczny wybór celu i czary · ruch ręczny":`${bot.name} · waypoint ${bot.waypoint?.current!=null?bot.waypoint.current+1:"–"}/${bot.waypoint?.total??"–"} · okrążenia ${bot.loops??0}`}</span>
       {bot.domains&&<small title={[bot.domains.movement.reason,bot.domains.combat.reason].filter(Boolean).join(" · ")}>
         Ruch: {bot.mode==="combat"?"ręczny":domainLabel(bot.domains.movement.status)} · Walka: {domainLabel(bot.domains.combat.status)} · Mikstury: {state?.actions.some(a=>a.name==="auto_potions"&&a.running)&&!state?.automation_paused?"działa":"wyłączone"}

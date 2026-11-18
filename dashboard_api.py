@@ -179,6 +179,21 @@ class _Handler(BaseHTTPRequestHandler):
             if type(body.get("enabled")) is not bool:
                 return self._json_response({"error": "enabled must be boolean"}, 400)
             return self._run_control("_async_potion_diagnostics", body["enabled"])
+        if self.path == "/api/map/pet":
+            try:
+                from transition_learning import position
+                if not 0 < int(self.headers.get("Content-Length", 0)) <= 1024:
+                    raise ValueError("Nieprawidłowy rozmiar oznaczenia.")
+                body = self._read_body()
+                if (not isinstance(body, dict) or set(body) != {"position", "ref", "name"}
+                        or not position(body["position"]) or not isinstance(body["ref"], str)):
+                    raise ValueError("Wybierz jedno stworzenie na mapie na żywo.")
+                if not _state.connected:
+                    raise ValueError("Mapa czeka na połączenie.")
+                _state.game_state.pets.label_visible(tuple(body["position"]), body["ref"], body["name"])
+                return self._json_response({"ok": True})
+            except (ValueError, TypeError) as exc:
+                return self._json_response({"error": str(exc)}, 400)
         if self.path == "/api/map/annotation":
             monitor=getattr(_state,"passive_map_monitor",None)
             if monitor is None:

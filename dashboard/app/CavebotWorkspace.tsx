@@ -8,7 +8,7 @@ import ProfilePicker from "./ProfilePicker";
 import ActivationCheckbox from "./ActivationCheckbox";
 import MonsterRules from "./MonsterRules";
 import SpellPicker,{SpellCooldown} from './SpellPicker';
-import LureStatus,{LureSettings} from './LureStatus';
+import {LureSettings} from './LureStatus';
 import SpellConditions,{SpellDiagnostics} from './SpellConditions';
 async function request(path:string,body?:unknown){const r=await authenticatedFetch(`http://127.0.0.1:8089${path}`,body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:undefined);const d=await r.json();if(!r.ok)throw Object.assign(new Error(d.error??`HTTP ${r.status}`),{status:r.status});return d;}
 export default function CavebotWorkspace({state,active,onRefresh}:{state:BotState|null;active:boolean;onRefresh:()=>void}){
@@ -59,8 +59,6 @@ export default function CavebotWorkspace({state,active,onRefresh}:{state:BotStat
       {run?.status==="paused"?<button disabled={busy||state?.automation_paused} onClick={()=>command("resume")}>Wznów</button>:<button disabled={busy||run?.status!=="running"} onClick={()=>command("pause")}>Pauza</button>}
       <button className="v2-stop" disabled={!preparing&&(busy||!executing)} onClick={()=>command("stop")}>■ Stop</button>
       {run?.resumable&&run.status!=="running"&&<button disabled={busy||preparing} title="Czyści tylko zapamiętany postęp. Nie usuwa szkicu ani ustawień walki." onClick={()=>command("discard_progress")}>Odrzuć postęp</button>}</div>
-    {run?.combat?.target&&executing&&<p className="v2-current-target">◎ Cel: <strong>{run.combat.target.name}</strong> · {run.combat.target.health}% HP · {({fight:"walka",chase:"pościg",distance:"dystans",lure:"lurowanie",return:"powrót",route:"trasa"} as Record<string,string>)[run.combat.phase]}</p>}
-    {executing&&run?.combat?.lure&&<LureStatus progress={run.combat.lure} paused={run.status!=='running'}/>}
     {(error||loadError)&&<p role="alert" className="v2-error">{error||loadError}</p>}{notice&&<p role="status" className="v2-inline-note">{notice}</p>}
     <div className="v2-config-columns">
     <section className="v2-waypoints">

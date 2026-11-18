@@ -46,7 +46,7 @@ def http_api(monkeypatch):
     ("DELETE", "/api/actions/power_up"),
     ("POST", "/api/emergency-stop"), ("POST", "/api/automation/unlock"),
     ("POST", "/api/potions/diagnostics"),
-    ("POST", "/api/map/annotation"),
+    ("POST", "/api/map/annotation"), ("POST", "/api/map/pet"),
     ("POST", "/api/map/drafts"), ("POST", "/api/adaptive/preview"),
 ])
 def test_unauthenticated_requests_are_rejected(http_api, method, path):
@@ -85,6 +85,29 @@ def test_annotation_endpoint_requires_origin_and_passes_only_valid_request(http_
     assert not calls
     assert request("POST",path,body='{"operation":"save"}',**headers)[0]==200
     assert calls==[{"operation":"save"}]
+
+
+def test_manual_pet_label_applies_only_to_the_current_map_reference(http_api, monkeypatch):
+    import time
+    from types import SimpleNamespace
+    from game_state import GameState
+    state = SimpleNamespace(connected=True, game_state=GameState())
+    monkeypatch.setattr(api, "_state", state)
+    tile = dict(x=10, y=20, z=7, occupants=1, occupant_types={"monster": 1})
+    state.game_state.pets.observe_map([tile], time.time(), {(10, 20, 7, 1): 70})
+    request, _ = http_api
+    headers = {"Origin": DASHBOARD_ORIGIN, "Authorization": f"Bearer {SESSION_TOKEN}"}
+    def post(**changes):
+        data = {"position": [10, 20, 7], "ref": tile["pet_ref"], "name": "Bills", **changes}
+        return request("POST", "/api/map/pet", body=json.dumps(data), **headers)[0]
+    assert post(ref="old") == 400
+    assert post(position=[12, 20, 7]) == 400
+    assert post(name=1) == 400
+    assert not state.game_state.pets.is_pet(70)
+    assert post() == 200 and state.game_state.pets.is_pet(70)
+    assert post(name=None) == 200 and not state.game_state.pets.is_pet(70)
+    state.connected = False
+    assert post() == 400
 
 
 def test_preflight_and_read_access(http_api):

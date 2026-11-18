@@ -116,3 +116,57 @@ def test_ambiguous_look_does_not_label_an_unrelated_monster(case):
     text = {"ordinary":"You see Bills.", "chat-like":"Trainer says: You see Bills\nMaster of Trainer"}
     reply(gs, text.get(case, "You see Bills.\nMaster of Trainer."), message_type=17 if case=="wrong-type" else 25)
     assert not gs.pets.is_pet(PET) and not gs.pets.is_pet(WILD)
+
+
+@pytest.mark.parametrize("new_tile", [START, NEXT])
+def test_look_stays_with_identifiable_pet_on_stack_reorder_or_step(new_tile):
+    gs = GameState()
+    sample(gs, [(START, 1, PET)])
+    look(gs)
+    cells = [dict(x=new_tile[0], y=new_tile[1], z=new_tile[2], occupants=1, occupant_types={"monster": 1})]
+    if new_tile != START:
+        cells.append(dict(x=START[0], y=START[1], z=START[2], occupants=0, occupant_types={}))
+    gs.pets.observe_map(cells, time.time(), {(*new_tile, 2): PET})
+    reply(gs, "You see Bills\nMaster of Trainer")
+    assert sample(gs, [(new_tile, 2, PET)])["cells"][0]["pet_names"] == ["Bills"]
+
+
+@pytest.mark.parametrize("identity", [PET, ("visible", 15)])
+def test_manual_label_follows_one_visible_creature_and_expires(identity):
+    gs = GameState()
+    first = sample(gs, [(START, 1, identity)])
+    ref = first["cells"][0]["pet_ref"]
+    gs.pets.label_visible(START, ref, "Bills")
+    assert gs.pets.confirmed_after_map(START, first["pet_map_generation"]) == 1
+    live = sample(gs, [(NEXT, 2, identity), (START, 1, WILD)])
+    pet, monster = live["cells"]
+    assert pet["occupant_types"] == {"pet": 1} and pet["pet_names"] == ["Bills"]
+    assert pet["occupants"] == 1 and pet["pet_manual"] and pet["pet_ref"] == ref
+    assert monster["occupant_types"] == {"monster": 1}
+    assert gs.pets.monster_slots_for_sample(live["pet_map_generation"]) == {START: [WILD]}
+    with pytest.raises(ValueError):
+        gs.pets.label_visible(START, ref, None)
+    gs.pets.label_visible(NEXT, ref, None)
+    assert not gs.pets.is_pet(identity)
+    gs.pets.label_visible(NEXT, ref, "Bills")
+    sample(gs, [])
+    later = sample(gs, [(START, 1, identity)])["cells"][0]
+    assert later["pet_ref"] != ref and later["occupant_types"] == {"monster": 1}
+    with pytest.raises(ValueError):
+        gs.pets.label_visible(START, ref, "Bills")
+
+
+def test_manual_label_rejects_ambiguous_stale_or_replaced_creatures():
+    gs = GameState()
+    ref = sample(gs, [(START, 1, PET)])["cells"][0]["pet_ref"]
+    double = sample(gs, [(START, 1, PET), (START, 2, WILD)])["cells"][0]
+    assert "pet_ref" not in double
+    with pytest.raises(ValueError):
+        gs.pets.label_visible(START, ref, "Bills")
+    sample(gs, [(START, 1, WILD)])
+    with pytest.raises(ValueError):
+        gs.pets.label_visible(START, ref, "Bills")
+    old = sample(gs, [(START, 1, PET)], age=3)["cells"][0]
+    with pytest.raises(ValueError):
+        gs.pets.label_visible(START, old["pet_ref"], "Bills")
+    assert not gs.pets.is_pet(PET) and not gs.pets.is_pet(WILD)

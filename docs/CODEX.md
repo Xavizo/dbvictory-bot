@@ -496,7 +496,10 @@ Use **Look** on a pet in the game world. Once the server identifies its owner
 with `Master of …`, the live map and atlas show **P · Pet**. Cavebot excludes
 that creature from targeting, spell conditions and lure counts. Its tile still
 counts as occupied. Inspect again after a new login or summon. A pet without
-a battle ID can be followed while its map instance stays visible.
+a battle ID can be followed while its map instance stays visible. If the
+description wasn't matched, right-click the pet's tile in the live map or
+atlas and choose **Oznacz jako peta…**. The manual label follows that one
+creature while it remains visible. **Usuń oznaczenie peta** clears it.
 
 ## Explicit route transitions and Barrier Band (2026-11-17)
 

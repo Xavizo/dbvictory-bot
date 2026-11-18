@@ -1,5 +1,6 @@
 "use client";
 import type {ButtonHTMLAttributes,ReactNode} from "react";
+import ActionMenu from "./ActionMenu";
 
 const paths={
   map:'M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2V5zm6-2v16m6-14v16',
@@ -21,4 +22,7 @@ const paths={
 export type ToolIcon=keyof typeof paths;
 export function MapIcon({name}:{name:ToolIcon}){return <svg aria-hidden="true" focusable="false" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]}/></svg>;}
 export function MapTool({icon,label,className="",...props}:{icon:ToolIcon;label:string}&ButtonHTMLAttributes<HTMLButtonElement>){return <button type="button" {...props} className={`map-tool ${className}`} aria-label={label} title={label}><MapIcon name={icon}/></button>;}
-export function MapMore({children}:{children:ReactNode}){return <details className="map-more" onKeyDown={e=>{if(e.key==="Escape")e.currentTarget.open=false;}}><summary className="map-tool" aria-label="Więcej opcji trasy" title="Więcej opcji trasy"><MapIcon name="more"/></summary><div className="map-more-menu" onClick={e=>{const target=e.target as HTMLElement;if(target.closest('button'))e.currentTarget.closest('details')?.removeAttribute('open');}}>{children}</div></details>;}
+export function MapMore({children}:{children:ReactNode}) {
+  return <ActionMenu className="map-more" triggerClass="map-tool" contentClass="map-more-menu"
+    label="Więcej opcji trasy" title="Więcej opcji trasy" icon={<MapIcon name="more"/>}>{children}</ActionMenu>;
+}
