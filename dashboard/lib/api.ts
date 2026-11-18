@@ -243,6 +243,7 @@ export const setAlertsPaused=(paused:boolean)=>control("/api/alerts",{command:"s
 export interface BotState {
   commands?: {session:number} | null;
   senzu_usage?: {total:number; per_hour:number|null; window_seconds:number; ended:boolean}|null;
+  packet_observer?: {status:"active"|"degraded"|"error"|"closed";pending:number;pending_bytes:number;processing:boolean;capacity:number;accepted:number;applied:number;dropped:number;failures:number;lag_ms:number;max_lag_ms:number;last_problem:string|null;last_applied_age_seconds:number|null}|null;
   session_statistics?: {
     source?: "panel";
     status:"waiting"|"active"|"stale"|"ended"|"error";

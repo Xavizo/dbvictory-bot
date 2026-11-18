@@ -14,7 +14,9 @@ def client_field(name, default=0):
         if not getattr(gs, "client_state_required", False):
             return gs.__dict__.get(name, default)
         snapshot = getattr(gs, "client_snapshot", None)
-        if snapshot and 0 <= time.monotonic()-snapshot["monotonic"] <= FRESH_SECONDS:
+        sampled_at = getattr(gs, "_packet_snapshot_time", None)
+        now = sampled_at if sampled_at is not None else time.monotonic()
+        if snapshot and 0 <= now - snapshot["monotonic"] <= FRESH_SECONDS:
             return snapshot.get(name, default)
         # Never fall back to the lagging packet cache for healing.
         if name == "position" and snapshot:

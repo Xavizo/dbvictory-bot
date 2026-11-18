@@ -17,6 +17,7 @@ class PetTracker:
         self._captured = 0
         self._map_generation = 0
         self._pending = None
+        self._look_started = 0
         self._deadline = 0
         self._names = {}
         self._manual = set()
@@ -90,9 +91,14 @@ class PetTracker:
             # requests until late replies have had time to arrive.
             valid = cid is not None and now >= self._deadline and 0 <= time.time() - self._captured <= .6
             self._pending = (slot, cid, None) if valid else None
+            self._look_started = now
             self._deadline = now + 2
 
-    def description(self, text, creatures):
+    def invalidate_pending_look(self):
+        with self._lock:
+            self._pending = None
+
+    def description(self, text, creatures, *, received_at=None):
         if len(text) > 240:
             return
         lines = text.strip().splitlines()
@@ -104,6 +110,8 @@ class PetTracker:
             return
         with self._lock:
             if not self._pending or time.monotonic() > self._deadline:
+                return
+            if received_at is not None and received_at < self._look_started:
                 return
             slot, cid, previous = self._pending
             self._pending = None

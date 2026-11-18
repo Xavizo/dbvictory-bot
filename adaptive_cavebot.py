@@ -586,7 +586,7 @@ class AdaptiveCavebot:
             attempt['valid']=valid;attempt['checks']+=1
             # The transport checks the guard again immediately before writing.
             if valid and route_command and attempt['checks'] >= 2 and payload[0] in WALK_OPCODES:
-                attempt['walk_checked_at'] = time.monotonic()
+                attempt['walk_checked_at'] = perf_counter()
             return valid
         if not allowed():
             # A moving/dying monster or changed cast condition is normal. Keep

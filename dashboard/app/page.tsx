@@ -1131,6 +1131,11 @@ export default function Dashboard() {
       </details>
     </section>
     <section hidden={view!=="diagnostics"} aria-label="Widok diagnostyki" className="space-y-5">
+      {state?.packet_observer && <details className="learned-drawer"><summary>Analiza pakietów · {state.packet_observer.status==="active"?"aktywna":state.packet_observer.status==="degraded"?"luki w odczycie":state.packet_observer.status==="closed"?"zakończona":"niedostępna"}</summary><div className="p-3 text-xs space-y-1">
+        <p>Kolejka {state.packet_observer.pending}/{state.packet_observer.capacity} · opóźnienie {state.packet_observer.lag_ms} ms · maksimum {state.packet_observer.max_lag_ms} ms</p>
+        <p>Przetworzone {state.packet_observer.applied} · pominięte obserwacje {state.packet_observer.dropped} · błędy {state.packet_observer.failures}</p>
+        {state.packet_observer.last_problem && <p>Ostatni problem: {({overload:"przeciążenie kolejki",stale:"nieaktualna obserwacja",decode_failed:"nierozpoznana ramka",analysis_failed:"błąd analizy",invalid_frame:"nieprawidłowa ramka",worker_stopped:"analizator zatrzymany",notification_failed:"błąd powiadomienia"} as Record<string,string>)[state.packet_observer.last_problem] ?? "błąd obserwacji"}. Pominięte obserwacje dotyczą analizy bota; pakiety gry są przekazywane osobno.</p>}
+      </div></details>}
       <details className="learned-drawer"><summary>Wyuczone przejścia</summary><TransitionLearningPanel map={state?.passive_map}/></details>
       <div className="diagnostic-grid">
         {[{label:"Panel / MCP",ok:mcpConnected},{label:"Sesja gry",ok:state?.connected},{label:"DLL w kliencie",ok:state?.dll_injected},{label:"Połączenie mostu",ok:state?.dll_bridge_connected}].map(s=><div key={s.label} className="diagnostic-card"><span>{s.label}</span><strong className={s.ok ? "text-emerald-300" : "text-gray-400"}>{s.ok ? "Aktywne" : "Nieaktywne"}</strong></div>)}

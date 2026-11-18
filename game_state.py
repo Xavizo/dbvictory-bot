@@ -106,6 +106,7 @@ class GameState:
         # Packet-derived position — always updated by MAP_SLICE, never by DLL.
         # Used by cavebot recording for accurate per-step position tracking.
         self.packet_position: tuple[int, int, int] = (0, 0, 0)
+        self.packet_position_trusted = True
 
         # Tile updates ring buffer — (timestamp, x, y, z) for use_item verification
         self.tile_updates: deque = deque(maxlen=50)
@@ -147,6 +148,8 @@ _stats_debug_count = 0
 
 def _dump_stats_debug(gs: GameState, raw_hex: str | None) -> None:
     """Write PLAYER_STATS values to stats_debug.txt for HP/Mana diagnosis."""
+    if getattr(gs, "_packet_snapshot_detached", False):
+        return  # Passive worker performs no file I/O.
     global _stats_debug_file, _stats_debug_count
     _stats_debug_count += 1
     if _stats_debug_count > 500:
@@ -185,10 +188,12 @@ def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None)
     For messages we can't consume (map data etc.), we stop and
     then do a targeted search for important opcodes we missed.
     """
+    # Walk dispatch also uses QPC. On Windows, monotonic() on Python 3.12
+    # cannot order a send and a reply that fall within one 15.6 ms tick.
     if received_at is None:
-        received_at = time.monotonic()
+        received_at = time.perf_counter()
     gs._server_packet_seq = getattr(gs, "_server_packet_seq", 0) + 1
-    position_before = gs.packet_position
+    position_before = gs.packet_position if gs.packet_position_trusted else (0,0,0)
     pos = 0
     found_icons = False
     map_anchor = None
@@ -284,6 +289,7 @@ def _search_for_floor_position(data: bytes, start: int, gs: GameState, anchor) -
     if accepted:
         _, xyz = max(accepted)
         gs.position = gs.packet_position = xyz
+        gs.packet_position_trusted = True
         gs.last_map_time = time.time()
 
 
@@ -414,7 +420,7 @@ def _record_kill(gs: GameState, cid: int) -> None:
     segment = None
     loop_count = 0
     try:
-        main_state = sys.modules.get("__main__")
+        main_state = None if getattr(gs,"_packet_snapshot_detached",False) else sys.modules.get("__main__")
         if main_state:
             bot_state = getattr(main_state, "state", None)
             if bot_state and getattr(bot_state, "playback_active", False):
@@ -442,7 +448,7 @@ def _record_kill(gs: GameState, cid: int) -> None:
 
     # Feed v2 telemetry if loaded (optional integration)
     try:
-        main_mod = sys.modules.get("__main__")
+        main_mod = None if getattr(gs,"_packet_snapshot_detached",False) else sys.modules.get("__main__")
         if main_mod:
             telem = getattr(getattr(main_mod, "state", None), "telemetry", None)
             if telem is not None:
@@ -504,6 +510,11 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
             return -1
         cid = struct.unpack_from('<I', data, pos + _ch.get("creature_id", 0))[0]
         health = data[pos + _ch.get("health", 4)]
+        # Expire the old dedup window before recording the current kill.
+        now = time.time()
+        if now - gs._recent_kills_cleanup > 30:
+            gs._recent_kills.clear()
+            gs._recent_kills_cleanup = now
         if cid in gs.creatures:
             old_health = gs.creatures[cid].get("health", -1)
             gs.creatures[cid]["health"] = health
@@ -518,11 +529,6 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
             if cid not in gs._recent_kills:
                 gs._recent_kills.add(cid)
                 _record_kill(gs, cid)
-        # Periodic cleanup of dedup set (every 30s, remove all)
-        now = time.time()
-        if now - gs._recent_kills_cleanup > 30:
-            gs._recent_kills.clear()
-            gs._recent_kills_cleanup = now
         return pos + _ch_size
 
     # Mapped thing(6) + destination(5), plus u16 step duration for GameNewWalking.
@@ -551,6 +557,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
                                  and struct.unpack_from('<HHB', data, end + 1) == new)
                 if local_step or floor_matches:
                     gs.position = gs.packet_position = new
+                    gs.packet_position_trusted = True
                     gs.last_map_time = time.time()
                     gs._map_update_seen = True
                     return -1
@@ -605,7 +612,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
                 gs.attack_target_id = 0
                 log.info(f"NOT REACHABLE: blacklisted 0x{target_id:08X} for 10s")
         _check_pz_message(text, gs)
-        log.info(f"TEXT_MESSAGE(type={msg_type}): {text}")
+        log.debug("TEXT_MESSAGE type=%s length=%s", msg_type, len(text))
 
         return end
 
@@ -643,6 +650,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
             if 0 < x < 65535 and 0 < y < 65535 and z < 16:
                 gs.position = (x, y, z)
                 gs.packet_position = (x, y, z)
+                gs.packet_position_trusted = True
                 gs.creatures = {cid: info for cid, info in gs.creatures.items() if info.get("source") == "dll"}
                 gs.last_map_time = time.time()
                 gs._map_update_seen = True
@@ -667,6 +675,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
             return -1
         gs.position = (x, y, z)
         gs.packet_position = (x, y, z)
+        gs.packet_position_trusted = True
         gs.creatures = {cid: info for cid, info in gs.creatures.items() if info.get("source") == "dll"}
         gs.last_map_time = time.time()
         gs._map_update_seen = True
@@ -676,6 +685,8 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
     # MAP_SLICE — update position, but can't skip tile data
     if opcode in (ServerOpcode.MAP_SLICE_NORTH, ServerOpcode.MAP_SLICE_EAST,
                   ServerOpcode.MAP_SLICE_SOUTH, ServerOpcode.MAP_SLICE_WEST):
+        if not gs.packet_position_trusted:
+            return -1  # Wait for an absolute coordinate after a dropped observation.
         # Standalone legacy strip: seed before applying the delta.
         # Coordinates below 100 are valid.
         x, y, z = gs.packet_position if gs.packet_position != (0, 0, 0) else gs.position

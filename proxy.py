@@ -13,6 +13,7 @@ import logging
 import time
 from collections import deque
 from command_delivery import CommandReceipt, QueuedCommand
+from packet_observer import decrypt_game_packet
 from crypto import (
     rsa_decrypt, rsa_encrypt, xtea_decrypt, xtea_encrypt,
     adler32_checksum, generate_proxy_rsa_keypair, get_default_rsa_key,
@@ -64,6 +65,7 @@ class OTProxy:
         self.on_login_success = None
         self.on_game_disconnected = None
         self.on_raw_server_data = None  # Called with full decrypted bytes
+        self.on_encrypted_server_data = None  # Nonblocking passive tap after forwarding.
         self._inject_queue = asyncio.Queue(maxsize=256)
         self.command_delivery = True
         self.session_generation = 0
@@ -415,7 +417,17 @@ class OTProxy:
             self.client_writer.write(self._wrap_packet(raw))
             await self.client_writer.drain()
 
-            # Now decrypt and run callbacks (can be slow — pure-Python XTEA + scan)
+            # The MCP observer owns bounded asynchronous analysis. Never decrypt
+            # a large server frame on the socket-forwarding path in this mode.
+            tap = getattr(self, "on_encrypted_server_data", None)
+            if self.logged_in and tap:
+                try:
+                    tap(raw, self.xtea_keys, self.session_generation)
+                except Exception:
+                    log.warning("Passive observer unavailable; relay continues")
+                continue
+
+            # Legacy bot.py/start.py callbacks retain their existing interface.
             if self.logged_in and (self.on_server_packet or self.on_raw_server_data):
                 try:
                     decrypted = self._decrypt_game_packet(raw)
@@ -515,29 +527,7 @@ class OTProxy:
 
     def _decrypt_game_packet(self, data: bytes) -> bytes | None:
         """Decrypt an XTEA-encrypted game packet."""
-        if self.xtea_keys is None:
-            return None
-
-        try:
-            offset = 0
-            if len(data) > 4:
-                checksum = struct.unpack_from('<I', data, 0)[0]
-                computed = adler32_checksum(data[4:])
-                if checksum == computed:
-                    offset = 4
-
-            encrypted = data[offset:]
-            if len(encrypted) % 8 != 0:
-                return None
-
-            decrypted = xtea_decrypt(encrypted, self.xtea_keys)
-            inner_len = struct.unpack_from('<H', decrypted, 0)[0]
-            if inner_len > len(decrypted) - 2:
-                return None
-
-            return decrypted[2:2 + inner_len]
-        except Exception:
-            return None
+        return decrypt_game_packet(data, self.xtea_keys)
 
     def _encrypt_game_packet(self, payload: bytes) -> bytes:
         """Encrypt a game packet with XTEA for sending to server."""

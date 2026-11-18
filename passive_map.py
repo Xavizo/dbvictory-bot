@@ -328,6 +328,10 @@ class PassiveMapMonitor:
 
     def reset_learning_session(self):
         self._result = {"status":"waiting","message":"Czekam na połączenie z grą.","cells":[]}
+        self.invalidate_packet_evidence()
+
+    def invalidate_packet_evidence(self):
+        """A packet-analysis gap invalidates correlations, not native map reads."""
         if self.learner:
             self.learner.reset()
 

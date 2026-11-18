@@ -834,6 +834,7 @@ def _build_state_json() -> str:
         "packets_from_server": pkt_server,
         "packets_from_client": pkt_client,
         "player": player,
+        "packet_observer": st.packet_observer.snapshot() if getattr(st,"packet_observer",None) else None,
         "creatures": creatures,
         "dll_injected": dll_injected,
         "dll_bridge_connected": dll_bridge_running and dll_injected,

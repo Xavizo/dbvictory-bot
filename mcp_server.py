@@ -114,6 +114,7 @@ class BotState:
     def __init__(self):
         self.login_proxy: OTProxy | None = None
         self.game_proxy: OTProxy | None = None
+        self.packet_observer = None
         self.ready: bool = False
         self._auto_task: asyncio.Task | None = None
         self._login_wait_task: asyncio.Task | None = None
@@ -1104,6 +1105,9 @@ async def _reset_bot() -> str:
     for name in list(state._action_tasks):
         _stop_action(name)
     if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Sesja została zresetowana.")
+    if getattr(state,"packet_observer",None):
+        await state.packet_observer.close()
+        state.packet_observer = None
     await asyncio.sleep(0.1)
 
     # 2. Close listening servers FIRST (prevents old server accepting new clients)
@@ -1399,8 +1403,8 @@ async def start_bot() -> str:
     state.game_proxy.injections_paused = state.automation_paused
 
     # Callbacks
-    # NOTE: on_server_packet removed — scan_packet handles all opcodes via
-    # on_raw_server_data, avoiding redundant double-parsing of every packet.
+    # The bounded observer handles each server frame once; legacy per-opcode
+    # callbacks are used only by the older bot.py/start.py entry points.
 
     def on_client_packet(opcode, reader):
         try:
@@ -1439,6 +1443,7 @@ async def start_bot() -> str:
                 pass
 
     def on_login_success(keys):
+        if getattr(state,"packet_observer",None):state.packet_observer.invalidate()
         # New identity/stats/conditions for every login, including reconnects.
         state.game_state = GameState()
         login_state = state.game_state
@@ -1471,33 +1476,41 @@ async def start_bot() -> str:
             log.info(f"on_login_success: {n} action(s) auto-started")
         asyncio.ensure_future(_direct_start())
 
-    # Single-thread executor for packet scanning — prevents event loop blocking
-    # during cavebot walking (constant MAP_SLICE packets with pure-Python XTEA
-    # decryption + byte-by-byte tile update search).
-    from concurrent.futures import ThreadPoolExecutor
-    _scan_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pkt-scan")
+    # Only the owner loop can publish parser results or notify other domains.
+    from packet_observer import PacketObserver, publish_server_feedback
+    observation_proxy = state.game_proxy
 
-    def on_raw_server_data(data):
-        # Fire-and-forget: scan in thread pool so event loop stays responsive
-        # for healing (auto_senzu), combat (auto_combat), and targeting actions.
-        loop = asyncio.get_event_loop()
+    def apply_packet_observations(gs, result, kills):
+        if gs is not state.game_state:return
+        for message in result.messages:
+            state.alert_center.observe_chat(message, state, gs)
+        publish_server_feedback(gs, result, state.potion_diagnostics)
+        for kill in kills:
+            if state.playback_active:
+                kill["segment"] = state.playback_index
+                kill["loop"] = state.playback_loop_count
+            if getattr(state,"telemetry",None):
+                state.telemetry.record_kill(kill["x"],kill["y"],kill["z"])
+
+    def packet_observation_gap(reason):
         gs = state.game_state
-        usage = getattr(gs, 'senzu_usage', None)
-        received_at = _time.monotonic()
-        def observe_potion(msg_type, text, batch_id=None):
-            if gs is state.game_state:
-                state.potion_diagnostics.observe_message(msg_type, text, batch_id=batch_id)
-                if usage is not None:
-                    usage.observe_message(msg_type, text, batch_id, received_at)
-        def scan_and_observe():
-            gs.alert_chat_callback = lambda message, source: state.alert_center.observe_chat(message, state, source) if gs is state.game_state else None
-            gs.potion_message_callback = observe_potion
-            if gs is not state.game_state:return
-            scan_packet(data, gs, received_at=received_at)
-            if gs is state.game_state:state.potion_diagnostics.observe_stats(gs)
-        loop.run_in_executor(_scan_pool, scan_and_observe)
+        gs.packet_position_trusted = False
+        gs.pets.invalidate_pending_look()
+        usage = getattr(gs, "senzu_usage", None)
+        if usage is not None:
+            usage.invalidate_inventory()
+        state.potion_diagnostics.invalidate_inventory()
+        monitor = getattr(state,"passive_map_monitor",None)
+        if monitor:monitor.invalidate_packet_evidence()
+
+    state.packet_observer = PacketObserver(
+        lambda: state.game_state,
+        lambda: observation_proxy.session_generation,
+        lambda: state.game_proxy is observation_proxy and observation_proxy.logged_in,
+        apply_packet_observations, packet_observation_gap)
 
     def on_disconnect():
+        if getattr(state,"packet_observer",None):state.packet_observer.invalidate()
         state._adaptive_prepare_token=None
         state.potion_diagnostics.invalidate_inventory()
         monitor = getattr(state, "passive_map_monitor", None)
@@ -1525,7 +1538,7 @@ async def start_bot() -> str:
     state.game_proxy.register_client_packet_callback(observe_navigation_command)
     state.game_proxy.on_login_success = on_login_success
     state.game_proxy.on_game_disconnected = on_disconnect
-    state.game_proxy.on_raw_server_data = on_raw_server_data
+    state.game_proxy.on_encrypted_server_data = state.packet_observer.offer
 
     # ── Launch proxies as background tasks ──────────────────────────
     state._proxy_tasks = [

@@ -1,5 +1,15 @@
 # Codex on Windows
 
+## Passive packet observer
+
+The game socket forwards server frames before queuing a copy for passive analysis.
+One worker parses in arrival order. Its queue is bounded to 64 frames and
+2 MiB, plus one in flight. The owner checks the session generation and a 500 ms
+age limit before publishing. A gap invalidates packet-relative position and
+inventory correlations. Native health and map observations remain available.
+The Diagnostics panel reports queue depth, lag and drops without packet content.
+The normal game launcher still owns both sockets in its controller process.
+
 
 ## Staged session and command architecture (2026-11-17)
 
