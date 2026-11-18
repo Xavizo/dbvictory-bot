@@ -5,10 +5,43 @@ away, each followed by a monster step closing that gap, are our conservative
 movement-based confirmation. No probe commands are sent to the game.
 """
 from collections import deque
+from combat_reachability import ordinary_terrain
 
 
-def lure_stopping_path(cells, route, edges, group, other_monsters):
-    """Choose up to three ordinary route steps, once per gathered group."""
+def walking_distances(terrain, start):
+    """Shortest same-floor walks through known terrain, including diagonals."""
+    distances = {start: 0}
+    queue = deque([start])
+    while queue:
+        point = queue.popleft()
+        x, y, z = point
+        for dx, dy in ((0,1),(1,0),(0,-1),(-1,0),(1,1),(-1,1),(1,-1),(-1,-1)):
+            neighbor = (x+dx, y+dy, z)
+            if neighbor in terrain and neighbor not in distances:
+                distances[neighbor] = distances[point] + 1
+                queue.append(neighbor)
+    return distances
+
+
+def group_needs_time(cells, position, next_point, members, limit):
+    """Let a lagging member catch up before a step takes us farther away."""
+    if not members or not next_point or gap(position, next_point) != 1 or position[2] != next_point[2]:
+        return False
+    terrain = {(c['x'], c['y'], c['z']) for c in cells if ordinary_terrain(c)}
+    origin, destination = tuple(position), tuple(next_point)
+    if destination not in terrain:
+        # A route obstruction is handled by navigation, without holding combat.
+        return any(gap(origin, member) >= limit and gap(destination, member) > gap(origin, member)
+                   for member in members)
+    current = walking_distances(terrain, origin)
+    following = walking_distances(terrain, destination)
+    return any(member in current and member in following and
+               current[member] >= limit and following[member] > current[member]
+               for member in members)
+
+
+def lure_stopping_path(cells, route, edges, group, other_monsters, max_lead=3):
+    """Compare a short route prefix with a single step into an adjacent room."""
     if len(group) < 2 or len(route) < 2:
         return ()
     origin = tuple(route[0])
@@ -31,41 +64,58 @@ def lure_stopping_path(cells, route, edges, group, other_monsters):
     if not group <= terrain or origin not in terrain:
         return ()
 
-    def access_slots(center):
+    def access_score(center):
         # Evaluate the same known room with the player blocking the chosen tile.
         # A group stranded on the other side of that tile must not be left behind.
-        reachable = {next(iter(group))}
-        queue = deque(reachable)
-        while queue:
-            x, y, z = queue.popleft()
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    p = (x + dx, y + dy, z)
-                    if p != center and p in terrain and p not in reachable:
-                        reachable.add(p)
-                        queue.append(p)
+        reachable = walking_distances(terrain - {center}, next(iter(group))).keys()
         if not group <= reachable:
-            return 0
-        return sum(gap(p, center) == 1 for p in reachable)
+            return 0, 0
+        slots = sum(gap(p, center) == 1 for p in reachable)
+        room = sum(gap(p, center) == 2 for p in reachable)
+        return slots, room
 
-    current = access_slots(origin)
+    current, _ = access_score(origin)
     desired = min(8, max(6, len(group) + 2))
     if current >= desired:
         return ()
-    best, chosen = current, ()
+    initial_distances = walking_distances(terrain, origin)
+    other_monsters = set(map(tuple, other_monsters))
+
+    def safe_step(point):
+        if point not in vacant or point in group or point in other_monsters:
+            return False
+        if any(gap(point, m) <= 2 and gap(point, m) < gap(origin, m) for m in other_monsters):
+            return False
+        distances = walking_distances(terrain, point)
+        return all(m in initial_distances and distances.get(m, float('inf')) <= max(max_lead, initial_distances[m])
+                   for m in group)
+
+    options = []
     path = [origin]
     for point in route[1:4]:
         point = tuple(point)
-        if point not in vacant or point in path or gap(path[-1], point) != 1:
-            break
-        if any(gap(point, m) <= 2 and gap(point, m) < gap(origin, m) for m in other_monsters):
+        if point in path or gap(path[-1], point) != 1 or not safe_step(point):
             break
         path.append(point)
-        score = access_slots(point)
-        if score >= current + 2 and score > best:
-            best, chosen = score, tuple(path)
-            if score >= desired:
-                break
+        options.append((tuple(path), True))
+    # Never use a side step to bypass an occupied route tile, door or transition.
+    first = tuple(route[1])
+    if (first not in vacant or first in group or first in other_monsters or gap(origin, first) != 1
+            or any(gap(first,m) <= 2 and gap(first,m) < gap(origin,m) for m in other_monsters)):
+        return ()
+    x, y, z = origin
+    for dx, dy in ((0,1),(1,0),(0,-1),(-1,0),(1,1),(-1,1),(1,-1),(-1,-1)):
+        side = (x+dx, y+dy, z)
+        if side != first and safe_step(side):
+            options.append(((origin, side), False))
+    best, chosen = (), ()
+    for candidate, on_route in options:
+        slots, room = access_score(candidate[-1])
+        if slots < current + 2:
+            continue
+        rank = (min(slots, desired), min(room, 8), -len(candidate), on_route)
+        if rank > best:
+            best, chosen = rank, candidate
     return chosen
 
 
@@ -102,6 +152,7 @@ def route_approaches(player, monster, path, index, edges=(), lookahead=4):
 class PursuitTracker:
     RESPONSE_WINDOW = 3.0
     CONTINUITY_WINDOW = 2.0
+    SIGHT_GRACE = .6
 
     def __init__(self):
         self.reset()
@@ -123,7 +174,19 @@ class PursuitTracker:
         if moved:
             self.sequence += 1
         live = {c['id'] for c in candidates}
-        self.tracks = {cid: row for cid, row in self.tracks.items() if cid in live}
+        for cid, row in list(self.tracks.items()):
+            if cid in live and not row['missing']:
+                continue
+            if now - row['seen'] > self.SIGHT_GRACE:
+                del self.tracks[cid]
+            elif cid not in live and not row['missing']:
+                # Keep brief contact history for pacing only. Re-identification
+                # still needs new pursuit evidence to count towards the limit.
+                if row['confirmed']:
+                    row['contact'] = row['seen']
+                row.update(missing=True, confirmed=False)
+                row['pending'].clear()
+                row['evidence'].clear()
         self.following = set()
         for candidate in candidates:
             cid = candidate['id']
@@ -132,8 +195,13 @@ class PursuitTracker:
             if (row is None or row['name'] != candidate['name'] or
                     position[2] != row['position'][2] or gap(position, row['position']) > 2):
                 self.tracks[cid] = dict(name=candidate['name'], position=position,
-                                       pending=deque(maxlen=12), evidence=deque(maxlen=2), confirmed=False, last_follow=now)
+                                       pending=deque(maxlen=12), evidence=deque(maxlen=2), confirmed=False, last_follow=now,
+                                       seen=now, missing=False, contact=now if gap(position, player)<=1 else None)
                 continue
+            row['seen'] = now
+            row['missing'] = False
+            if gap(position, player) <= 1:
+                row['contact'] = now
             old = row['position']
             pending = row['pending']
             while pending and now - pending[0][2] > self.RESPONSE_WINDOW:
@@ -148,6 +216,7 @@ class PursuitTracker:
                 # Credit at most one player step per changed monster position.
                 proof = next((p for p in pending if squared(position, p[1]) < squared(old, p[1])), None)
                 if proof is not None:
+                    row['contact'] = now
                     evidence.append((proof[0], now))
                     while pending and pending[0][0] <= proof[0]:
                         pending.popleft()
@@ -168,3 +237,7 @@ class PursuitTracker:
         self.player = player
         self.updated = now
         return [c for c in candidates if c['id'] in self.following]
+
+    def recent_contacts(self, now):
+        return {cid for cid, row in self.tracks.items() if row['contact'] is not None
+                and 0 <= now - row['contact'] <= self.RESPONSE_WINDOW}

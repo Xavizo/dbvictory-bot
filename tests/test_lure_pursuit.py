@@ -44,6 +44,19 @@ def test_delayed_followers_can_catch_up_while_player_waits():
     assert tracker.update((12, 10, 7), [mob(10)], .8)
 
 
+def test_one_pursuit_step_can_pace_without_counting_an_unconfirmed_monster():
+    tracker = PursuitTracker()
+    tracker.update((10,10,7), [mob(7)], 0)
+    assert not tracker.update((11,10,7), [mob(8)], .3)
+    assert tracker.recent_contacts(.3) == {1}
+    assert not tracker.update((11,10,7), [], .4)
+    assert not tracker.update((11,10,7), [mob(8)], .5)
+    assert tracker.recent_contacts(.5) == {1}
+    tracker.update((11,10,7), [], .6)
+    assert not tracker.update((11,10,7), [mob(8)], 1.8)
+    assert not tracker.recent_contacts(1.8)
+
+
 def test_crossing_and_opposite_motion_do_not_confirm():
     tracker = PursuitTracker()
     tracker.update((10, 10, 7), [mob(10, 13)], 0)

@@ -66,6 +66,35 @@ def test_unconfirmed_distant_monster_behind_does_not_freeze_the_route(state,tmp_
     assert c.combat.lure_started is None
 
 
+def test_first_contact_waits_before_outrunning_slow_monster_and_releases(state,tmp_path):
+    c,cells,sent = scene(state,tmp_path)
+    cid, row, old = monster(state,cells,x=9,y=10)
+    async def exercise():
+        assert not await c.combat.tick(c.map_now())
+        for index in (1,2,3):
+            c.index = index
+            state.game_state.position = tuple(c.path[index])
+            held = await c.combat.tick(c.map_now())
+            assert held == (index == 3)
+        assert c.combat.lure_waiting and not c.combat.pursuit.following
+        assert not c.combat.route_step_allowed() and c.combat.sent_target == cid
+        old.update(occupants=0,occupant_types={})
+        row['x'] = 10
+        next(t for t in cells if (t['x'],t['y'])==(10,10)).update(occupants=1,occupant_types={'monster':1})
+        assert not await c.combat.tick(c.map_now())
+        assert c.combat.route_step_allowed() and sent
+    asyncio.run(exercise())
+
+
+def test_pacing_uses_walkable_distance_around_a_wall():
+    from cavebot_lure import group_needs_time
+    cells = [cell(x,y) for x in range(5) for y in range(5) if x != 1 or y == 0]
+    assert group_needs_time(cells,(2,3,7),(2,4,7),{(0,3,7)},4)
+    assert not group_needs_time(cells,(2,3,7),(2,2,7),{(0,3,7)},4)
+    cells = [c for c in cells if (c['x'],c['y']) != (1,0)]
+    assert not group_needs_time(cells,(2,3,7),(2,4,7),{(0,3,7)},4)
+
+
 def test_wait_rechecks_position_after_awaited_attack(state,tmp_path):
     c,cells,sent=scene(state,tmp_path)
     _,row,tile=monster(state,cells,x=6,y=10)

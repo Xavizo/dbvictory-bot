@@ -116,8 +116,8 @@ Install only after a coordinated logout, saved drafts and stopping the old bot
 and panel. Preserve current healing/band settings; do not enable V2, combat or
 Speed Up as a side effect. This package does not establish crash causality.
 
-Lure spacing waits now require a confirmed follower behind the route. A target
-ahead which the next four ordinary route cells approach does not cause a wait.
+Lure spacing uses recent contact or observed pursuit. A reachable target ahead
+which the next step approaches does not cause a spacing wait.
 The gather timer starts with the first engaged/adjacent monster, not a distant
 candidate. Capacity, reachable-terrain filtering, finish-before-room-exit,
 movement waits with continued combat and same-floor manual-movement recovery
@@ -178,15 +178,21 @@ Validation must include full Python tests, dashboard tests/typecheck/build,
 32-bit marker compilation, the synthetic marker process and an isolated visual
 panel preview. No game process is opened or input sent by those tests.
 
-## Route-aware lure pacing (2026-11-17, prepared offline)
+## Route-aware lure pacing and stopping places
 
-An unconfirmed distant visible monster no longer stops ordinary route gathering.
-The existing lure spacing applies to confirmed followers whose gap is not being
-closed by the next four ordinary route steps. A short lookahead avoids treating
-one sideways/diagonal bend as a reason to stop, and never looks across an explicit
-object edge or floor change. Fresh target positions are re-read after awaited
-attack/cast operations. Every actual movement keeps its existing live-map,
-capacity, manual-motion and queue guards; this adds no independent movement owner.
+An approaching monster starts influencing pace after adjacent contact or an
+observed pursuit step. Two pursuit steps still confirm a follower for the group
+count. The next route step waits if it would increase the walkable distance to
+a trailing member already at the spacing limit. The engagement radius also
+bounds that distance when a radius is configured. Combat rechecks current targets
+after a cast. Navigation rechecks spacing before dispatching a route step.
+
+When a gathered group needs a stopping place, the controller compares up to
+three forward route steps with one adjacent step off the route. It measures
+reachable adjacent attack positions and nearby open space, while keeping the
+members within reach. An already adjacent group stays in place. A side step
+keeps the waypoint cursor at the route anchor and uses the existing movement
+executor. After combat the controller returns to the anchor.
 
 The configured gathering time now starts with the first adjacent eligible monster
 or confirmed follower, rather than the first distant candidate. Group-capacity
