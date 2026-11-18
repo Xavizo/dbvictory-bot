@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import os
 import sys
+import threading
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -145,10 +146,12 @@ def test_data_keeps_flowing_after_controller_error_and_before_replacement(monkey
             upstream = service.sockets[0].getsockname()[1]
             writer = None
             active = None
+            old_key = None
+            pending_stop = None
             resumed = False
 
-            async def exercise_controller(params, upstream_port):
-                nonlocal active, writer, reader, resumed
+            async def exercise_controller(params, upstream_port, console_input):
+                nonlocal active, writer, reader, resumed, old_key, pending_stop
                 if active is None:
                     async with bot(params.env) as first:
                         active = await start(first, upstream)
@@ -156,10 +159,26 @@ def test_data_keeps_flowing_after_controller_error_and_before_replacement(monkey
                         writer.write(b"first")
                         await writer.drain()
                         assert await reader.readexactly(5) == b"first"
+                    old_key = params.env[KEY_ENV]
+                    pending_stop = await asyncio.open_connection(LOCAL, int(params.env[PORT_ENV]))
+                    # This request is still incomplete when its controller exits.
+                    pending_stop[1].write(json.dumps({"key": old_key, "command": "stop"}).encode())
+                    await pending_stop[1].drain()
                     raise RuntimeError("simulated controller error")
                 writer.write(b"between controllers")
                 await writer.drain()
                 assert await reader.readexactly(19) == b"between controllers"
+                assert await asyncio.wait_for(pending_stop[0].read(), 1) == b""
+                # Even on the replacement's port, credentials from the first
+                # controller cannot stop the shared worker.
+                stale_read, stale_write = await asyncio.open_connection(LOCAL, int(params.env[PORT_ENV]))
+                try:
+                    stale_write.write(json.dumps({"key": old_key, "command": "stop"}).encode() + b"\n")
+                    await stale_write.drain()
+                    assert await asyncio.wait_for(stale_read.read(), 1) == b""
+                finally:
+                    stale_write.close()
+                    await stale_write.wait_closed()
                 async with bot(params.env) as replacement:
                     same = await start(replacement, upstream_port)
                     assert same["pid"] == active["pid"] and same["port"] == active["port"]
@@ -175,11 +194,42 @@ def test_data_keeps_flowing_after_controller_error_and_before_replacement(monkey
                 await run_bot.run_local_transport(upstream)
                 assert resumed
             finally:
+                if pending_stop:
+                    pending_stop[1].close()
+                    with suppress(OSError):
+                        await pending_stop[1].wait_closed()
                 if writer is not None:
                     writer.close()
                     with suppress(OSError):
                         await writer.wait_closed()
     asyncio.run(asyncio.wait_for(scenario(), 30))
+
+
+def test_idle_controller_eof_keeps_pending_console_line_for_restart_prompt():
+    async def scenario():
+        unblock = threading.Event()
+
+        class Input:
+            calls = 0
+
+            def readline(self):
+                self.calls += 1
+                assert unblock.wait(5)
+                return "restart\n"
+
+        stream = Input()
+        console_input = run_bot.LocalConsoleInput(stream)
+        child = StdioServerParameters(command=sys.executable, args=["-I", "-c", "pass"])
+        async with stdio_client(child) as (output, _):
+            try:
+                with pytest.raises(RuntimeError, match="Kontroler MCP"):
+                    await asyncio.wait_for(console_input.readline(output), 2)
+            finally:
+                unblock.set()
+            assert await console_input.readline() == "restart\n"
+            assert stream.calls == 1
+
+    asyncio.run(scenario())
 
 
 def test_abrupt_mcp_process_exit_preserves_existing_local_stream():

@@ -15,7 +15,18 @@ KEY_ENV = "DBV_LOCAL_TRANSPORT_CONTROL_KEY"
 
 @asynccontextmanager
 async def local_transport_host(upstream_port):
+    """Own a forwarding session and a single controller for the same lifetime."""
     manager = LocalTransportSession()
+    try:
+        async with controller_endpoint(manager, upstream_port) as env:
+            yield env
+    finally:
+        await manager.stop()
+
+
+@asynccontextmanager
+async def controller_endpoint(manager, upstream_port):
+    """Grant one controller access until its requests have been closed and joined."""
     key = secrets.token_hex(32)
     pending = {}
     closing = False
@@ -69,11 +80,8 @@ async def local_transport_host(upstream_port):
         for task, writer in requests:
             writer.close()
             task.cancel()
-        try:
-            await asyncio.gather(*(task for task, _ in requests), return_exceptions=True)
-            await server.wait_closed()
-        finally:
-            await manager.stop()
+        await asyncio.gather(*(task for task, _ in requests), return_exceptions=True)
+        await server.wait_closed()
 
 
 class LocalTransportControl:

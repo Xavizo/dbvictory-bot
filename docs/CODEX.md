@@ -17,12 +17,16 @@ From the worktree, `python run_bot.py --local-transport PORT` opens a separate
 test session for a service you run on 127.0.0.1. Connect a test client to the
 listener address printed by the launcher. The launcher owns the forwarding
 process and the MCP controller as siblings. Both data sockets live in the
-forwarding process. The control endpoint uses a per-launch secret and accepts
+forwarding process. The control endpoint uses a fresh secret for each MCP process and accepts
 only the configured upstream port. MCP receives states and counters.
 
 Type `status` to distinguish a listening port from an established connection.
 Type `restart` to replace MCP while the existing client keeps using the same
-socket. The replacement controller can read the current state and stop the
+socket. The launcher closes the previous control endpoint and joins its outstanding
+requests before starting a replacement or waiting for a restart after an error.
+It detects controller stdout closing while the console is idle and preserves the
+pending input line for the restart prompt.
+The replacement controller can read the current state and stop the
 transport. Type `quit` to close the local test session and its connections.
 The regular game launcher still uses its existing transport.
 

@@ -139,7 +139,31 @@ async def run_console(args, env, lines):
                         print('Polecenia: panel, status, actions, quit',flush=True)
 
 
-async def local_controller_console(params, upstream_port):
+class LocalConsoleInput:
+    """Keep an outstanding console read across controller replacements."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.pending = None
+
+    async def readline(self, controller_output=None):
+        if self.pending is None:
+            self.pending = asyncio.create_task(asyncio.to_thread(self.stream.readline))
+        if controller_output is not None:
+            # The SDK closes the send side of its AnyIO stream on child stdout
+            # EOF. Checking the count does not consume MCP responses.
+            while controller_output.statistics().open_send_streams:
+                done, _ = await asyncio.wait([self.pending], timeout=.25)
+                if done:
+                    break
+            else:
+                raise RuntimeError("Kontroler MCP zakończył pracę.")
+        line = await asyncio.shield(self.pending)
+        self.pending = None
+        return line
+
+
+async def local_controller_console(params, upstream_port, console_input):
     from mcp import ClientSession
     from mcp.client.stdio import stdio_client
 
@@ -156,7 +180,7 @@ async def local_controller_console(params, upstream_port):
         print(f"Transport testowy 127.0.0.1:{port} -> 127.0.0.1:{upstream_port}", flush=True)
         print("status = stan | restart = uruchom MCP ponownie | quit = zakończ test", flush=True)
         while True:
-            line = await asyncio.to_thread(sys.stdin.readline)
+            line = await console_input.readline(read)
             command = line.strip().lower()
             if not line or command == "quit":
                 return False
@@ -169,21 +193,27 @@ async def local_controller_console(params, upstream_port):
 async def run_local_transport(upstream_port):
     from mcp import StdioServerParameters
     from mcp.shared.exceptions import McpError
-    from transport_control import local_transport_host
+    from transport_control import controller_endpoint
+    from transport_session import LocalTransportSession
 
-    async with local_transport_host(upstream_port) as control_env:
-        params = StdioServerParameters(command=sys.executable, args=["-B", str(ROOT / "run_mcp.py")],
-                                       cwd=ROOT, env={**control_env, "PYTHONUTF8": "1"})
+    manager = LocalTransportSession()
+    console_input = LocalConsoleInput(sys.stdin)
+    try:
         while True:
             try:
-                if not await local_controller_console(params, upstream_port):
-                    return
+                async with controller_endpoint(manager, upstream_port) as control_env:
+                    params = StdioServerParameters(command=sys.executable, args=["-B", str(ROOT / "run_mcp.py")],
+                                                   cwd=ROOT, env={**control_env, "PYTHONUTF8": "1"})
+                    if not await local_controller_console(params, upstream_port, console_input):
+                        return
             except (McpError, OSError, RuntimeError, ExceptionGroup):
                 # Keep ownership of the data plane if only the controller fails.
                 print("Błąd kontrolera MCP. Wpisz restart, aby połączyć ponownie, lub quit, aby zakończyć test.",
                       flush=True)
-                if (await asyncio.to_thread(sys.stdin.readline)).strip().lower() != "restart":
+                if (await console_input.readline()).strip().lower() != "restart":
                     return
+    finally:
+        await manager.stop()
 
 
 def main():
