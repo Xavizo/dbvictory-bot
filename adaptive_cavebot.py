@@ -544,7 +544,8 @@ class AdaptiveCavebot:
             if motion!=self.motion_generation or time.monotonic()<self.manual_until:
                 if recover:return False
                 raise MovementDeferred('Ręczny ruch — ponownie sprawdzam pozycję.')
-            if self._route_command and self.combat.lure_stop_reason and pos==origin:
+            if (self._route_command and self.combat.lure_stop_reason and pos==origin
+                    and not self.combat.positioning_step(origin,expected)):
                 raise MovementDeferred('Grupa wymaga walki przed dalszą trasą.')
             if pos!=origin and pos!=intermediate:
                 if recover:return False
@@ -794,7 +795,7 @@ class AdaptiveCavebot:
                 self.index=self.loop_start;self.variation_until=self.index;self.mark_waypoint();continue
             # Combat may have awaited attack/spell pacing; use current terrain.
             sample=await self.fresh_map()
-            self.vary_leg(sample)
+            if not self.combat.placement:self.vary_leg(sample)
             target=self.path[self.index+1]
             edge=next((e for e in self.edges if e['origin']==pos and e['exit']==target),None)
             if edge:

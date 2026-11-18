@@ -2,7 +2,7 @@
 import math
 import re
 import time
-from cavebot_lure import PursuitTracker,route_approaches
+from cavebot_lure import PursuitTracker,gap,route_approaches,lure_stopping_path
 from combat_reachability import reachable_tiles
 from combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
 from combat_wave import facing
@@ -112,6 +112,7 @@ class CombatRuntime:
         self.owner=owner;self.config=config;self.target=None;self.sent_target=0
         self.phase='route';self.lure_started=None;self.battle_started=None;self.progress_at=0;self.last_health=None
         self.pursuit=PursuitTracker();self.lure_waiting=False;self.lure_stop_reason=None
+        self.placement_checked=False;self.placement=None;self.placement_group=set()
         self.anchor=None;self.deadlines={};self.cast_after=0;self.manual_override=False;self.policy_mode=None
         self.spell_checks=[];self.last_spell_attempt=None
         self.wave_turn=None;self.manual_target=0;self.manual_target_at=0
@@ -130,6 +131,34 @@ class CombatRuntime:
     def reset_lure(self):
         self.pursuit.reset();self.lure_started=None;self.lure_waiting=False;self.lure_stop_reason=None;self.engaged_count=0;self.nearby_count=0
         self.blocker_id=0;self.blocker_since=None;self.group_clear_since=None
+        self.placement_checked=False;self.placement=None;self.placement_group.clear()
+
+    def positioning_step(self,origin,target):
+        if not self.placement:return False
+        start,path,expires=self.placement
+        index=self.owner.index-start
+        return (time.monotonic()<expires and 0<=index<len(path)-1
+                and path[index:index+2]==(tuple(origin),tuple(target)))
+
+    def allow_positioning(self,sample,targets,physical,boundary):
+        o=self.owner
+        if not self.placement:return False
+        if not boundary and not self.manual_target and o.index+1<len(o.path):
+            pos=o.state.game_state.position;target=o.path[o.index+1]
+            if self.positioning_step(pos,target):
+                planned=next((c for c in sample['cells'] if (c['x'],c['y'],c['z'])==tuple(target)),{})
+                # End the adjustment as soon as another monster would be picked
+                # up or the chosen step becomes occupied or interactive.
+                group=self.placement_group
+                members={tuple(c['position']) for c in targets if c['id'] in group}
+                new_contact=any(point not in members and (dist<=1 or gap(target,point)<dist and gap(target,point)<=2)
+                                for point,dist in physical)
+                if (planned.get('kind')=='clear' and not planned.get('occupants',0)
+                        and not planned.get('navigation') and not planned.get('stairs')
+                        and not new_contact and self.engaged_count<=self.config['lure_count']):
+                    return True
+        self.placement=None
+        return False
 
     def visible_group(self,sample):
         """Occupancy also covers a transient DLL identity gap. Never authorizes an attack."""
@@ -172,7 +201,9 @@ class CombatRuntime:
         self.engaged_count=len(adjacent|following)+sum(gap<=1 and point not in known_positions for point,gap in physical)
         if self.engaged_count>=self.config['lure_count']:self.latch_lure('group')
         elif boundary and (targets or physical):self.latch_lure('transition')
-        return not self.lure_stop_reason and not self.battle_started
+        if self.lure_stop_reason or self.battle_started:
+            return self.allow_positioning(sample,targets,physical,boundary)
+        return True
 
     def candidates(self,sample=None):
         rows=eligible_monsters(self.owner.state.game_state,sample if sample is not None else self.owner.map_now(),self.config)
@@ -342,6 +373,18 @@ class CombatRuntime:
                 elif at_transition:self.lure_stop_reason='transition'
                 elif self.lure_started is not None and (self.blocker_since or now)-self.lure_started>=cfg['lure_seconds']:self.lure_stop_reason='timeout'
                 luring=self.lure_stop_reason is None and allow_movement
+            if self.lure_stop_reason and not self.placement_checked:
+                self.placement_checked=True
+                if (self.lure_stop_reason in {'group','timeout'} and allow_movement and not at_transition
+                        and not blocker and not self.manual_target and self.engaged_count==len(engaged)
+                        and self.engaged_count<=cfg['lure_count'] and list(o.path[o.index])==pos):
+                    members=[c['position'] for c in candidates if c['id'] in engaged]
+                    other=[point for point,_ in physical if point not in known_positions]
+                    other.extend(c['position'] for c in candidates if c['id'] not in engaged)
+                    route=lure_stopping_path(sample['cells'],o.path[o.index:o.index+4],o.edges,members,other)
+                    if route:
+                        self.placement=(o.index,route,now+2)
+                        self.placement_group=set(engaged)
         if blocker and self.lure_stop_reason:
             blocker=None;self.blocker_id=0;self.blocker_since=None
         self.lure_waiting=False
@@ -408,6 +451,9 @@ class CombatRuntime:
         if blocker:
             self.phase='clear_path';o.reason=f'Odblokowuję drogę: {current["name"]} · {current["health"]}% HP. Potem wrócę do lurowania.'
             await asyncio.sleep(.05);return True
+        if allow_movement and self.placement and self.route_step_allowed(at_transition):
+            self.phase='positioning';o.reason='Podchodzę do miejsca z lepszym dostępem dla grupy.'
+            return False
         # A third monster may arrive while ATTACK/SAY waits in the queue.
         if luring and not self.route_step_allowed(boundary=at_transition):luring=False
         if luring:

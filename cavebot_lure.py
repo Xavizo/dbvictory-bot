@@ -7,6 +7,68 @@ movement-based confirmation. No probe commands are sent to the game.
 from collections import deque
 
 
+def lure_stopping_path(cells, route, edges, group, other_monsters):
+    """Choose up to three ordinary route steps, once per gathered group."""
+    if len(group) < 2 or len(route) < 2:
+        return ()
+    origin = tuple(route[0])
+    group = set(map(tuple, group))
+    if all(gap(origin, p) <= 1 for p in group):
+        return ()
+    tiles = {(c['x'], c['y'], c['z']): c for c in cells}
+    protected = {tuple(e[k]) for e in edges for k in ('entry', 'origin', 'exit')}
+    terrain = set()
+    vacant = set()
+    for p, cell in tiles.items():
+        if (p[2] != origin[2] or cell.get('kind') != 'clear' or cell.get('stairs')
+                or cell.get('navigation') or p in protected):
+            continue
+        occupants = cell.get('occupants', 0) - cell.get('occupant_types', {}).get('self', 0)
+        if occupants == 0:
+            vacant.add(p)
+        if occupants == 0 or p in group and occupants == cell.get('occupant_types', {}).get('monster'):
+            terrain.add(p)
+    if not group <= terrain or origin not in terrain:
+        return ()
+
+    def access_slots(center):
+        # Evaluate the same known room with the player blocking the chosen tile.
+        # A group stranded on the other side of that tile must not be left behind.
+        reachable = {next(iter(group))}
+        queue = deque(reachable)
+        while queue:
+            x, y, z = queue.popleft()
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    p = (x + dx, y + dy, z)
+                    if p != center and p in terrain and p not in reachable:
+                        reachable.add(p)
+                        queue.append(p)
+        if not group <= reachable:
+            return 0
+        return sum(gap(p, center) == 1 for p in reachable)
+
+    current = access_slots(origin)
+    desired = min(8, max(6, len(group) + 2))
+    if current >= desired:
+        return ()
+    best, chosen = current, ()
+    path = [origin]
+    for point in route[1:4]:
+        point = tuple(point)
+        if point not in vacant or point in path or gap(path[-1], point) != 1:
+            break
+        if any(gap(point, m) <= 2 and gap(point, m) < gap(origin, m) for m in other_monsters):
+            break
+        path.append(point)
+        score = access_slots(point)
+        if score >= current + 2 and score > best:
+            best, chosen = score, tuple(path)
+            if score >= desired:
+                break
+    return chosen
+
+
 def gap(a, b):
     return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
