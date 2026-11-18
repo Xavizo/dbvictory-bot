@@ -1,5 +1,41 @@
 # Codex on Windows
 
+## Aktualizacja z launchera na Windows
+
+Skrót **Uruchom bota** sprawdza lokalną kolejkę zatwierdzonych wydań przed
+otwarciem konsoli. Okno podaje wersję na dysku i numer oczekującego wydania.
+Gdy poprzednia sesja działa, można dalej grać. Przy kolejnym zwykłym
+uruchomieniu po zamknięciu sesji launcher instaluje przygotowany pakiet.
+Status silnika i tytuł głównego panelu podają wersję załadowaną przy starcie.
+
+Dla osoby przygotowującej wydanie kroki są następujące.
+
+1. Zatwierdź i przetestuj zmiany w kopii roboczej.
+2. W kopii roboczej wykonaj poniższe polecenia PowerShell. Gdy wydanie
+   zmienia renderer, publikacja buduje go z tego commita przed umieszczeniem
+   pakietu w kolejce. Do kompilacji używa zależności z kopii roboczej.
+
+   ```powershell
+   $instalacja = 'D:\Projekty\tibia-ots-mcp-bot'
+   $wersja = git rev-parse HEAD
+   & "$instalacja\venv\Scripts\python.exe" dbv_release.py --installation $instalacja publish . $wersja
+   ```
+
+3. Użytkownik otwiera dotychczasowy skrót. Aktualizacja sprawdza sumy kontrolne,
+   zgodność historii i konflikty z lokalnymi plikami. Zajęta instalacja zachowuje
+   pakiet na kolejny start. Gdy pakiet zawiera błąd, a dotychczasowa instalacja
+   jest spójna, przycisk **Odłóż wydanie** pozwala wystartować z poprzednią wersją.
+   Wydania zmieniające zależności lub natywne biblioteki
+   wymagają osobnego przygotowania tych składników.
+
+Sam wynik sprawdzenia można odczytać przez `launcher_files.py preflight --check`
+z Pythona instalacji. To polecenie działa również podczas gry. Publikacja i
+sprawdzenie pracują wyłącznie na plikach lokalnych.
+
+Jeśli panel ma zostać zbudowany z wyprzedzeniem, `launcher_panel_build.py . <pełny-SHA>
+--installation <instalacja>` zapisze numer wydania i sumę wynikowych plików.
+Wtedy `publish` przyjmuje też `--dashboard .\dashboard\.next`.
+
 ## Passive packet observer
 
 The game socket forwards server frames before queuing a copy for passive analysis.

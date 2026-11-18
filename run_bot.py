@@ -3,17 +3,35 @@
 No game attachment occurs until the user confirms the character-list state.
 The panel can be reopened during play; stopping this console stops the proxy.
 """
+import sys
+
+# The desktop shortcut supplies no arguments. Load the actual console only
+# after the updater exits so all imports come from the installed release.
+if __name__ == "__main__" and len(sys.argv) == 1:
+    from pathlib import Path
+    from launcher_files import desktop_files
+
+    try:
+        with desktop_files(Path(__file__).resolve().parent) as ready:
+            if not ready:
+                raise SystemExit(0)
+            from run_bot import main
+            raise SystemExit(main(session_lock_held=True))
+    except (OSError, RuntimeError) as error:
+        print(f"Błąd launchera: {error}", file=sys.stderr)
+        raise SystemExit(1)
+
 import argparse
 import asyncio
-from contextlib import contextmanager
+from contextlib import nullcontext
 from datetime import timedelta
 import json
 import os
 from pathlib import Path
 import shutil
 import socket
-import sys
 from tray_exit import EXIT_FILE_ENV, tray_input
+from launcher_lock import launcher_lock
 
 ROOT = Path(__file__).resolve().parent
 # These actions must always require an explicit choice in the panel after start.
@@ -32,27 +50,6 @@ def occupied_ports(ports):
         except OSError:
             pass
     return busy
-
-
-@contextmanager
-def launcher_lock(path):
-    """OS releases the lock on exit/crash; don't delete another process's lock."""
-    import msvcrt
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('a+b') as handle:
-        handle.seek(0, 2)
-        if handle.tell() == 0:
-            handle.write(b'0'); handle.flush()
-        handle.seek(0)
-        try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError as exc:
-            raise RuntimeError('Bot jest już uruchomiony. W jego konsoli wpisz: panel') from exc
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def prepare_environment(game_port):
@@ -225,7 +222,7 @@ async def run_local_transport(upstream_port):
         await manager.stop()
 
 
-def main():
+def main(*, session_lock_held=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game-port',type=int,default=7475,help='DBVictory world port; current local client uses 7475')
     mode = parser.add_mutually_exclusive_group()
@@ -247,7 +244,7 @@ def main():
         parser.error('This launcher requires Windows.')
     os.chdir(ROOT)
     try:
-        with launcher_lock(ROOT/'.codex/standalone.lock'):
+        with (nullcontext() if session_lock_held else launcher_lock(ROOT/'.codex/standalone.lock')):
             asyncio.run(run(args,prepare_environment(args.game_port)))
     except KeyboardInterrupt:
         print('\nBot zakończony. Ponowny start: z listy postaci.')

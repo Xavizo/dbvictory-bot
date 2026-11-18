@@ -42,7 +42,10 @@ def _engine_label(root):
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             ).strip()
         except (OSError, subprocess.SubprocessError):
-            pass
+            from dbv_revision import read_head_revision
+            head = read_head_revision(root)
+            if head:
+                revision = head[:7]
     return f"Silnik {revision} · start {started}"
 
 
