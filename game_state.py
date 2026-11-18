@@ -114,6 +114,7 @@ class GameState:
         self.server_events: deque = deque(maxlen=100)
         # Timestamp of last CANCEL_WALK from server
         self.cancel_walk_time: float = 0
+        self.last_walk_cancel: tuple[float, tuple[int, int, int]] | None = None
         # Last client walk delta for cancel_walk revert
         self._last_walk_delta: tuple[int, int] = (0, 0)
 
@@ -176,7 +177,7 @@ def parse_server_packet(opcode: int, reader, gs: GameState) -> None:
         log.debug(f"parse_server_packet error opcode 0x{opcode:02X}: {e}")
 
 
-def scan_packet(data: bytes, gs: GameState) -> None:
+def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None) -> None:
     """Scan full decrypted packet for ALL known opcodes.
 
     OT packets bundle multiple messages. We iterate sequentially:
@@ -184,6 +185,8 @@ def scan_packet(data: bytes, gs: GameState) -> None:
     For messages we can't consume (map data etc.), we stop and
     then do a targeted search for important opcodes we missed.
     """
+    if received_at is None:
+        received_at = time.monotonic()
     gs._server_packet_seq = getattr(gs, "_server_packet_seq", 0) + 1
     position_before = gs.packet_position
     pos = 0
@@ -194,7 +197,7 @@ def scan_packet(data: bytes, gs: GameState) -> None:
         opcode = data[pos]
         pos += 1
         try:
-            new_pos = _parse_at(opcode, data, pos, gs)
+            new_pos = _parse_at(opcode, data, pos, gs, received_at=received_at)
         except Exception:
             break
         if new_pos < 0:
@@ -449,7 +452,7 @@ def _record_kill(gs: GameState, cid: int) -> None:
 
 
 
-def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
+def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=None) -> int:
     """Parse one message at `pos` (after opcode byte).
 
     Returns new position after consuming the message, or -1 if we can't
@@ -811,6 +814,8 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
             if px > 100:
                 gs.packet_position = (px - dx, py - dy, pz)
             gs._last_walk_delta = (0, 0)
+        if received_at is not None:
+            gs.last_walk_cancel = (received_at, tuple(gs.position))
         gs.server_events.append((now, "cancel_walk", {"direction": direction, "pos": list(gs.position)}))
         log.info(f"CANCEL_WALK direction={direction} → reverted pos to {gs.position}")
         return pos + _pcw_size

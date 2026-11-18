@@ -1493,7 +1493,7 @@ async def start_bot() -> str:
             gs.alert_chat_callback = lambda message, source: state.alert_center.observe_chat(message, state, source) if gs is state.game_state else None
             gs.potion_message_callback = observe_potion
             if gs is not state.game_state:return
-            scan_packet(data, gs)
+            scan_packet(data, gs, received_at=received_at)
             if gs is state.game_state:state.potion_diagnostics.observe_stats(gs)
         loop.run_in_executor(_scan_pool, scan_and_observe)
 

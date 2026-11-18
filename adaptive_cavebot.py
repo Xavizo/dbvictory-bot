@@ -144,6 +144,7 @@ class AdaptiveCavebot:
         self.manual_until=0;self.motion_generation=0;self.recovery_next_at=0;self._route_command=False;self._route_boundary=False;self._route_attempt=None
         self._walk_number = 0
         self._map_after_walk = None
+        self._uncertain_walk_origin = None
         self.combat_only=False;self.draft_id=None;self.combat=CombatRuntime(self,validate_combat())
 
     def waypoint_progress(self):
@@ -420,13 +421,14 @@ class AdaptiveCavebot:
         self.replace_path(self.index,end,local);self.variation_until=self.index+len(local)-1
         return True
 
-    def describe_blockage(self,sample,target):
+    def describe_blockage(self,sample,target,*,cancelled=False):
         pos=list(self.state.game_state.position)
         cell=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
         if not cell:cause='brak świeżego odczytu pola'
         elif cell.get('occupants',0)>cell.get('occupant_types',{}).get('self',0):cause='pole zajęte: '+str(cell.get('occupant_types',{}))
         elif cell.get('kind')!='clear':cause='przeszkoda terenowa'
         elif any(f['kind'] not in {'rope_spot','ladder'} for f in cell.get('navigation',[])):cause='obiekt wymaga jawnego przejścia'
+        elif cancelled:cause='serwer anulował krok; sprawdzam obejście'
         elif tuple(target) in self.blocked:cause='poprzedni krok bez potwierdzenia; krótka przerwa przed ponowieniem'
         else:cause='brak bezpiecznego połączenia z kolejnym odcinkiem'
         detail=dict(origin=pos,target=list(target),cause=cause,waypoint=self.waypoint_progress()['current'],
@@ -571,7 +573,7 @@ class AdaptiveCavebot:
         origin=list(self.state.game_state.position)
         from session_lifetime import SessionLease,current_task,task_alive
         lease=SessionLease(self.state);owner=current_task() if getattr(self.state.game_proxy,'command_delivery',False) else None
-        attempt=dict(valid=None,checks=0,sent=sent)
+        attempt=dict(valid=None,checks=0,sent=sent,motion=motion)
         if route_command:self._route_attempt=attempt
         def allowed():
             try:
@@ -582,6 +584,9 @@ class AdaptiveCavebot:
                     (validate is None or validate()))
             except Exception:valid=False
             attempt['valid']=valid;attempt['checks']+=1
+            # The transport checks the guard again immediately before writing.
+            if valid and route_command and attempt['checks'] >= 2 and payload[0] in WALK_OPCODES:
+                attempt['walk_checked_at'] = time.monotonic()
             return valid
         if not allowed():
             # A moving/dying monster or changed cast condition is normal. Keep
@@ -626,6 +631,16 @@ class AdaptiveCavebot:
             if motion!=self.motion_generation or time.monotonic()<self.manual_until:
                 if recover:return False
                 raise MovementDeferred('Ręczny ruch — ponownie sprawdzam pozycję.')
+            if recover and attempt and pos == origin and attempt.get('motion') == self.motion_generation:
+                cancel = self.state.game_state.last_walk_cancel
+                checked_at = attempt.get('walk_checked_at')
+                # A cancel reports the resulting position, with no command ID.
+                # A late reply to an unresolved walk from here is ambiguous.
+                if (cancel and checked_at is not None
+                        and cancel[0] > checked_at and cancel[1] == tuple(origin)
+                        and self._uncertain_walk_origin != cancel[1]):
+                    attempt['cancelled'] = True
+                    return False
             if (self._route_command and self.combat.lure_stop_reason and pos==origin
                     and not self.combat.positioning_step(origin,expected)):
                 raise MovementDeferred('Grupa wymaga walki przed dalszą trasą.')
@@ -660,8 +675,12 @@ class AdaptiveCavebot:
         try:
             arrived = await self.wait_position(target, origin, timeout, intermediate, recover)
             outcome = "position_confirmed" if arrived else "position_unconfirmed"
+            if not arrived and self._route_command and self._route_attempt and self._route_attempt.get('cancelled'):
+                outcome = "position_cancelled"
             return arrived
         finally:
+            if recover:
+                self._uncertain_walk_origin = tuple(origin) if outcome in {"position_unconfirmed", "position_interrupted"} else None
             timing.position_ms = (perf_counter() - started) * 1000
             if outcome == "position_confirmed":
                 self._map_after_walk = timing
@@ -964,7 +983,8 @@ class AdaptiveCavebot:
                 finally:self._route_command=False;self._route_boundary=False
                 if not arrived:
                     self.failures+=1;self.blocked[tuple(target)]=time.monotonic()+1
-                    self.describe_blockage(await self.fresh_map(),target)
+                    cancelled = bool(self._route_attempt and self._route_attempt.get('cancelled'))
+                    self.describe_blockage(await self.fresh_map(),target,cancelled=cancelled)
                     if self.failures>=3:self.reason='Brak potwierdzenia kroku — sprawdzam obejście; walka aktywna.'
                     continue
             self.index+=1;self.mark_waypoint();self.failures=0;self.blockage=None
