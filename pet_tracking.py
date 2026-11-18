@@ -14,6 +14,7 @@ class PetTracker:
         self._lock = threading.Lock()
         self._slots = {}
         self._captured = 0
+        self._map_generation = 0
         self._pending = None
         self._deadline = 0
         self._names = {}
@@ -30,10 +31,11 @@ class PetTracker:
                     del self._names[key]
             self._slots = slots
             self._captured = captured_at
+            self._map_generation += 1
             if self._pending and slots.get(self._pending[0]) != self._pending[1]:
                 self._pending = None
             if not self._names:
-                return
+                return self._map_generation
             pets_by_position = defaultdict(list)
             for slot, key in slots.items():
                 if key in self._names:
@@ -47,6 +49,7 @@ class PetTracker:
                         del types["monster"]
                     types["pet"] = len(pets)
                     cell["pet_names"] = pets
+            return self._map_generation
 
     def look(self, position, stack):
         now = time.monotonic()
@@ -86,8 +89,8 @@ class PetTracker:
                 known = row.get("name") if time.time() - row.get("t", 0) < .6 else None
                 if known in (None, "", "?") or known.casefold() == label.casefold():
                     if cid not in self._names:
-                        if self._confirmed_map != self._captured:
-                            self._confirmed_map = self._captured
+                        if self._confirmed_map != self._map_generation:
+                            self._confirmed_map = self._map_generation
                             self._new_on_tile.clear()
                         self._new_on_tile[slot[:3]] += 1
                     self._names[cid] = label
@@ -97,7 +100,7 @@ class PetTracker:
         with self._lock:
             return cid in self._names
 
-    def confirmed_after_map(self, position, captured_at):
+    def confirmed_after_map(self, position, generation):
         """Exclude a new confirmation during the tick before the next map read."""
         with self._lock:
-            return self._new_on_tile[position] if captured_at == self._confirmed_map else 0
+            return self._new_on_tile[position] if generation == self._confirmed_map else 0

@@ -26,8 +26,9 @@ def sample(gs, placements, age=0):
         slots[(*pos, stack)] = identity
     cells = list(cells.values())
     captured = time.time()-age
-    gs.pets.observe_map(cells, captured, slots)
-    return dict(cells=cells, status="ready", center=gs.position, age_seconds=age, captured_at=captured)
+    generation = gs.pets.observe_map(cells, captured, slots)
+    return dict(cells=cells, status="ready", center=gs.position, age_seconds=age, captured_at=captured,
+                pet_map_generation=generation)
 
 
 def look(gs, position=START, stack=1):
@@ -46,7 +47,10 @@ def reply(gs, text, legacy=False, message_type=25):
 
 
 @pytest.mark.parametrize("battle_pet", [True, False])
-def test_pet_moves_as_occupied_tile_but_is_never_a_target_group_member_or_spell_count(battle_pet):
+def test_pet_moves_as_occupied_tile_but_is_never_a_target_group_member_or_spell_count(battle_pet, monkeypatch):
+    # Consecutive Windows wall-clock readings can coincide as a creature moves.
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now)
     gs = GameState()
     gs.position = (50, 50, 7)
     gs.hp = gs.mana = gs.max_hp = gs.max_mana = 100

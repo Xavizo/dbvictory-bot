@@ -76,7 +76,7 @@ def eligible_monsters(gs,sample,config,now=None):
         if cid==gs.player_id or type(cid)is not int or not 0<cid<2**32 or c.get('source')!='dll' or not 0<=now-c.get('t',0)<=.6 or not 0<c.get('health',0)<=100:continue
         if pos not in accessible:continue
         if pos[2]!=gs.position[2] or tile.get('occupants')!=1 or tile.get('occupant_types',{}).get('monster')!=1:continue
-        if pets and pets.confirmed_after_map(pos,sample.get('captured_at')):continue
+        if pets and pets.confirmed_after_map(pos,sample.get('pet_map_generation')):continue
         if sum((v.get('x'),v.get('y'),v.get('z'))==pos for _,v in creatures)!=1:continue
         distance=max(abs(pos[0]-gs.position[0]),abs(pos[1]-gs.position[1]))
         if config.get('engage','near')!='visible' and distance>config['radius']:continue
@@ -193,7 +193,7 @@ class CombatRuntime:
             point=(tile['x'],tile['y'],tile['z'])
             monsters=tile.get('occupant_types',{}).get('monster',0)
             if point not in accessible or not monsters:continue
-            if pets and pets.confirmed_after_map(point,sample.get('captured_at'))>=monsters:continue
+            if pets and pets.confirmed_after_map(point,sample.get('pet_map_generation'))>=monsters:continue
             gap=max(abs(point[0]-pos[0]),abs(point[1]-pos[1]))
             if self.config['engage']!='visible' and gap>self.config['radius']:continue
             rows=[(cid,c) for cid,c in gs.creatures.items() if (c.get('x'),c.get('y'),c.get('z'))==point and not (pets and pets.is_pet(cid))]

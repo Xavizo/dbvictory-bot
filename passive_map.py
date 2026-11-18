@@ -386,7 +386,7 @@ class PassiveMapMonitor:
                         gs = self.state.game_state
                         reader = MapReader(source.read, source.base, allow_confirmed=True, profile=source.profile, asset_sha256=asset.get("sha256"))
                         result = reader.snapshot()
-                        gs.pets.observe_map(result["cells"], result["captured_at"], reader.monster_slots)
+                        result["pet_map_generation"] = gs.pets.observe_map(result["cells"], result["captured_at"], reader.monster_slots)
                         if gs is not self.state.game_state or not self.state.connected:
                             continue
                         result = self._learn(result,asset)
