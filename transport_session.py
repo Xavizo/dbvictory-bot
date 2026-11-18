@@ -1,0 +1,122 @@
+"""Bot-side supervision for an explicit, transparent loopback session."""
+import asyncio
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
+
+WORKER = Path(__file__).resolve().parent / "scripts" / "local_transport.py"
+
+
+class _Worker:
+    def __init__(self, upstream_port):
+        self.upstream_port = upstream_port
+        self.first_report = threading.Event()
+        self.report = None
+        # Isolated interpreter and a small environment. Dashboard credentials
+        # and application settings are not inputs to the transport.
+        env = {k: os.environ[k] for k in ("SystemRoot", "WINDIR", "TEMP", "TMP")
+               if k in os.environ}
+        self.process = subprocess.Popen(
+            [sys.executable, "-I", "-B", str(WORKER), str(upstream_port), "--managed"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env=env, close_fds=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        self.reader = threading.Thread(target=self._read_reports, daemon=True)
+        self.reader.start()
+
+    def _read_reports(self):
+        try:
+            with self.process.stdout as stream:
+                while line := stream.readline(512):
+                    if not line.endswith(b"\n"):
+                        break
+                    data = json.loads(line)
+                    if (not isinstance(data, dict) or data.get("state") not in
+                            ("listening", "connecting", "connected")
+                            or type(data.get("port")) is not int or not 1 <= data["port"] <= 65535
+                            or any(type(data.get(k)) is not int or data[k] < 0
+                                   for k in ("connections", "failures"))):
+                        break
+                    self.report = {k: data[k] for k in ("port", "state", "connections", "failures")}
+                    self.first_report.set()
+        except (OSError, ValueError):
+            pass
+        finally:
+            self.first_report.set()
+
+    def snapshot(self):
+        info = dict(self.report or {"state": "starting"})
+        info.update(upstream_port=self.upstream_port, pid=self.process.pid)
+        code = self.process.poll()
+        if code is not None:
+            info.update(state="exited", exit_code=code)
+        elif not self.reader.is_alive():
+            info["state"] = "status_unavailable"
+        return info
+
+    def stop(self):
+        # Only the owned process handle is terminated by an explicit stop.
+        self.process.stdin.close()
+        if self.process.poll() is None:
+            self.process.terminate()
+        try:
+            self.process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=3)
+        self.reader.join(timeout=1)
+
+
+class LocalTransportSession:
+    def __init__(self):
+        self._worker = None
+        self._lock = asyncio.Lock()
+
+    def snapshot(self):
+        return self._worker.snapshot() if self._worker else {"state": "stopped"}
+
+    async def _stop_worker(self):
+        if self._worker is None:
+            return
+        stopping = asyncio.create_task(asyncio.to_thread(self._worker.stop))
+        try:
+            await asyncio.shield(stopping)
+        except asyncio.CancelledError:
+            # Keep the lock until this handle has been reaped. A second Start
+            # must never reuse a worker already being stopped in another thread.
+            await stopping
+            raise
+        finally:
+            if self._worker.process.poll() is not None:
+                self._worker = None
+
+    async def start(self, upstream_port):
+        if type(upstream_port) is not int or not 1 <= upstream_port <= 65535:
+            raise ValueError("Port must be between 1 and 65535")
+        async with self._lock:
+            if self._worker:
+                if self._worker.process.poll() is None:
+                    if self._worker.upstream_port != upstream_port:
+                        raise ValueError("Stop the current local transport before changing its endpoint")
+                    return self.snapshot()
+                await self._stop_worker()
+            worker = _Worker(upstream_port)
+            self._worker = worker
+            try:
+                ready = await asyncio.to_thread(worker.first_report.wait, 5)
+                info = worker.snapshot()
+                if not ready or info["state"] not in {"listening", "connecting", "connected"}:
+                    raise RuntimeError("Transport failed to become ready")
+                return info
+            except BaseException:
+                await self._stop_worker()
+                raise
+
+    async def stop(self):
+        async with self._lock:
+            await self._stop_worker()
+            return self.snapshot()

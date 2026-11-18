@@ -11,6 +11,30 @@ The Diagnostics panel reports queue depth, lag and drops without packet content.
 The normal game launcher still owns both sockets in its controller process.
 
 
+## Loopback transport test mode
+
+From the worktree, `python run_bot.py --local-transport PORT` opens a separate
+test session for a service you run on 127.0.0.1. Connect a test client to the
+listener address printed by the launcher. The launcher owns the forwarding
+process and the MCP controller as siblings. Both data sockets live in the
+forwarding process. The control endpoint uses a per-launch secret and accepts
+only the configured upstream port. MCP receives states and counters.
+
+Type `status` to distinguish a listening port from an established connection.
+Type `restart` to replace MCP while the existing client keeps using the same
+socket. The replacement controller can read the current state and stop the
+transport. Type `quit` to close the local test session and its connections.
+The regular game launcher still uses its existing transport.
+
+Run `python -m pytest -q tests/test_local_transport.py tests/test_mcp_local_transport.py`
+for the offline checks. They exercise the real launcher and stdio MCP on
+loopback, reconnect the controller during a stream, verify a final response
+after TCP half-close, and check explicit shutdown and recovery after worker exit.
+Closing the local supervisor stops accepting commands, closes idle control
+connections, and waits for in-flight command handlers to finish cancellation
+before releasing the worker. An incomplete request cannot start a new worker
+after its owner has exited.
+
 ## Staged session and command architecture (2026-11-17)
 
 Rollback baseline is private GitHub tag `v1.0.0`, commit

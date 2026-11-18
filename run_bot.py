@@ -139,11 +139,69 @@ async def run_console(args, env, lines):
                         print('Polecenia: panel, status, actions, quit',flush=True)
 
 
+async def local_controller_console(params, upstream_port):
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        for name in ("get_status", "list_actions"):
+            result = await session.call_tool(name, {})
+            if result.isError:
+                raise RuntimeError(f"Nie udało się odczytać {name}.")
+        result = await session.call_tool("start_local_transport", {"upstream_port": upstream_port})
+        if result.isError:
+            raise RuntimeError(result.content[0].text)
+        port = result.structuredContent["port"]
+        print(f"Transport testowy 127.0.0.1:{port} -> 127.0.0.1:{upstream_port}", flush=True)
+        print("status = stan | restart = uruchom MCP ponownie | quit = zakończ test", flush=True)
+        while True:
+            line = await asyncio.to_thread(sys.stdin.readline)
+            command = line.strip().lower()
+            if not line or command == "quit":
+                return False
+            if command == "restart":
+                return True
+            if command == "status":
+                await call(session, "get_status")
+
+
+async def run_local_transport(upstream_port):
+    from mcp import StdioServerParameters
+    from mcp.shared.exceptions import McpError
+    from transport_control import local_transport_host
+
+    async with local_transport_host(upstream_port) as control_env:
+        params = StdioServerParameters(command=sys.executable, args=["-B", str(ROOT / "run_mcp.py")],
+                                       cwd=ROOT, env={**control_env, "PYTHONUTF8": "1"})
+        while True:
+            try:
+                if not await local_controller_console(params, upstream_port):
+                    return
+            except (McpError, OSError, RuntimeError, ExceptionGroup):
+                # Keep ownership of the data plane if only the controller fails.
+                print("Błąd kontrolera MCP. Wpisz restart, aby połączyć ponownie, lub quit, aby zakończyć test.",
+                      flush=True)
+                if (await asyncio.to_thread(sys.stdin.readline)).strip().lower() != "restart":
+                    return
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game-port',type=int,default=7475,help='DBVictory world port; current local client uses 7475')
-    parser.add_argument('--start',action='store_true',help='Confirm that the client is already logged out; skip the prompt')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--start',action='store_true',help='Confirm that the client is already logged out; skip the prompt')
+    mode.add_argument('--local-transport', type=int, metavar='PORT',
+                      help='Run a separate transport session for a loopback test server')
     args = parser.parse_args()
+    if args.local_transport is not None:
+        if not 1 <= args.local_transport <= 65535:
+            parser.error('local-transport port must be 1..65535')
+        try:
+            asyncio.run(run_local_transport(args.local_transport))
+        except KeyboardInterrupt:
+            pass
+        return 0
     if not 1 <= args.game_port <= 65535:
         parser.error('game-port must be 1..65535')
     if os.name != 'nt':

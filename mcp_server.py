@@ -57,6 +57,7 @@ from tray_exit import EXIT_FILE_ENV, tray_input
 
 from proxy import OTProxy
 from game_state import GameState, parse_server_packet, scan_packet
+from transport_control import LocalTransportControl
 from protocol import (
     Direction,
     build_walk_packet,
@@ -112,6 +113,7 @@ class BotState:
     """Holds proxy references and connection status."""
 
     def __init__(self):
+        self.local_transport = LocalTransportControl()
         self.login_proxy: OTProxy | None = None
         self.game_proxy: OTProxy | None = None
         self.packet_observer = None
@@ -1970,9 +1972,30 @@ async def send_ping() -> str:
 
 
 @mcp.tool()
+async def start_local_transport(upstream_port: int) -> dict[str, int | str]:
+    """Start the separate transparent transport for an explicitly local test server.
+
+    Returns the loopback listener port. 'listening' means ready for a client;
+    'connected' means a client has reached the upstream service.
+    """
+    return await state.local_transport.start(upstream_port)
+
+
+@mcp.tool()
+async def stop_local_transport() -> dict[str, int | str]:
+    """Stop the launcher's local transport and close its test connection."""
+    return await state.local_transport.stop()
+
+
+@mcp.tool()
 async def get_status() -> str:
     """Get the current connection state and packet statistics."""
     status = _build_status_report()
+    local = await state.local_transport.snapshot()
+    status += f"\nLocal transport: {local['state']}"
+    if local.get("port"):
+        status += (f" · 127.0.0.1:{local['port']} · connections {local['connections']}"
+                   f" · failures {local['failures']}")
     status += f"\nEmergency pause: {'ACTIVE' if state.automation_paused else 'off'}"
 
     # Running actions
