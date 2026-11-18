@@ -425,6 +425,8 @@ class AdaptiveCavebot:
         pos=list(self.state.game_state.position)
         cell=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
         if not cell:cause='brak świeżego odczytu pola'
+        elif cell.get('kind')=='unknown':cause=cell.get('reason') or 'niepełny odczyt pola'
+        elif cell.get('kind')=='no_ground':cause='brak potwierdzonego podłoża'
         elif cell.get('occupants',0)>cell.get('occupant_types',{}).get('self',0):cause='pole zajęte: '+str(cell.get('occupant_types',{}))
         elif cell.get('kind')!='clear':cause='przeszkoda terenowa'
         elif any(f['kind'] not in {'rope_spot','ladder'} for f in cell.get('navigation',[])):cause='obiekt wymaga jawnego przejścia'
@@ -432,6 +434,7 @@ class AdaptiveCavebot:
         elif tuple(target) in self.blocked:cause='poprzedni krok bez potwierdzenia; krótka przerwa przed ponowieniem'
         else:cause='brak bezpiecznego połączenia z kolejnym odcinkiem'
         detail=dict(origin=pos,target=list(target),cause=cause,waypoint=self.waypoint_progress()['current'],
+                    tile_kind=cell.get('kind') if cell else None,
                     item_ids=[i['id'] for i in (cell or {}).get('items',[])],
                     occupants=(cell or {}).get('occupant_types',{}),navigation=(cell or {}).get('navigation',[]))
         key=repr(detail);now=time.monotonic()
@@ -441,7 +444,7 @@ class AdaptiveCavebot:
         self.blockage=detail
         self.reason=f'Pole {tuple(target)}: {cause}. Czekam; '+('walka aktywna.' if self.combat.config['enabled'] else 'ruch będzie ponowiony.')
 
-    def tolerate_waypoint(self,sample):
+    def tolerate_waypoint(self,sample,*,recovering=False):
         """A blocked ordinary anchor within 2 SQM may be passed via fresh terrain.
 
         A transition or object action is never credited by proximity. Nor is a
@@ -452,17 +455,25 @@ class AdaptiveCavebot:
         if (sample.get('status')!='ready' or sample.get('stale') or sample.get('age_seconds',99)>.6 or
             list(sample.get('center',[]))!=list(self.state.game_state.position)):return False
         checkpoint=next((r for r in self.checkpoints if r['index']>self.index),None)
-        if not checkpoint:return False
+        if not checkpoint or checkpoint['index'] >= len(self.path):return False
         k=checkpoint['index'];point=self.path[k];pos=list(self.state.game_state.position)
-        if pos!=self.path[self.index] or not 0<distance(pos,point)<=2:return False
+        expected = self.path[self.index]
+        displaced = pos != expected
+        if displaced and (not recovering or distance(pos, expected) > 6):return False
+        if not 0<distance(pos,point)<=2:return False
         protected={tuple(e[key]) for e in self.edges for key in ('origin','entry','exit')}
         cell=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==point),None)
         if (not cell or cell.get('navigation') or tuple(point) in protected or
-            cell.get('kind') not in {'clear','blocked'}):return False
+            cell.get('kind') not in {'clear','blocked','unknown','no_ground'}):return False
         occupied=cell.get('occupants',0)>cell.get('occupant_types',{}).get('self',0)
-        if not occupied and cell['kind']!='blocked' and self.blocked.get(tuple(point),0)<=time.monotonic():return False
+        if not occupied and cell['kind']=='clear' and self.blocked.get(tuple(point),0)<=time.monotonic():return False
         # Never skip a transition's approach/exit, even on the same floor.
         if any(tuple(p) in protected or p[2]!=pos[2] for p in self.path[self.index+1:k+1]):return False
+        excluded = set(self.blocked) | protected | {tuple(point)}
+        # Keep the lap continuous for the next visit. The player has already
+        # covered this part by hand, so advance past it without issuing steps.
+        bridge = detour(sample['cells'], expected, pos, excluded) if displaced else [pos]
+        if not bridge or len(bridge) > 13:return False
         wrap=k==len(self.path)-1 and self.loop
         if wrap:
             begin=self.loop_start
@@ -478,15 +489,17 @@ class AdaptiveCavebot:
             if tuple(self.path[j]) in protected or self.path[j][2]!=pos[2]:break
             usable.append(j)
         for j in reversed(usable):
-            local=detour(sample['cells'],pos,self.path[j],set(self.blocked)|protected|{tuple(point)})
-            if not local or len(local)<2:continue
+            local=detour(sample['cells'],pos,self.path[j],excluded | ({tuple(expected)} if displaced else set()))
+            if not local or (len(local)<2 and not displaced):continue
+            replacement = bridge[1:] + local[1:]
             number=checkpoint['waypoint'];gap=distance(pos,point)
             if wrap:
                 joined=next((r['waypoint'] for r in self.checkpoints if r['index']==j),None)
                 self.loop_start=j
-                self.replace_path(self.index+1,len(self.path)-1,local[1:])
+                self.replace_path(self.index+1,len(self.path)-1,replacement)
                 if joined is not None:self.checkpoints.append(dict(index=len(self.path)-1,waypoint=joined))
-            else:self.replace_path(self.index+1,j,local[1:])
+            else:self.replace_path(self.index+1,j,replacement)
+            self.index += len(bridge) - 1
             self.last_waypoint=number;self.tolerated_waypoints+=1
             self.logs.append(f'Waypoint {number+1}: zaliczony z {gap} SQM, obejście przeszkody po świeżej mapie.')
             return True
@@ -500,6 +513,11 @@ class AdaptiveCavebot:
         if distance(pos,expected)>6:raise ValueError('Recovery: poza lokalnym zasięgiem lub inne piętro — sprawdź drogę powrotną.')
         if now<self.recovery_next_at:return False
         self.recovery_next_at=now+.25
+        if pos != expected and self.tolerate_waypoint(sample, recovering=True):
+            self.recovery_attempts.append(now)
+            self.recovery_count += 1
+            self.reason='Kontynuuję trasę od ręcznie osiągniętego pola.'
+            return True
         stop=min(len(self.path),self.index+9,self.loop_start+1 if self.index<self.loop_start else len(self.path))
         stop=self.checkpoint_limit(stop)
         for j in range(self.index,stop):
@@ -586,7 +604,7 @@ class AdaptiveCavebot:
             attempt['valid']=valid;attempt['checks']+=1
             # The transport checks the guard again immediately before writing.
             if valid and route_command and attempt['checks'] >= 2 and payload[0] in WALK_OPCODES:
-                attempt['walk_checked_at'] = time.monotonic()
+                attempt['walk_checked_at'] = perf_counter()
             return valid
         if not allowed():
             # A moving/dying monster or changed cast condition is normal. Keep

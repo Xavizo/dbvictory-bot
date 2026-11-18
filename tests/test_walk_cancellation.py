@@ -14,6 +14,19 @@ def cancel_walk(gs, direction, received_at):
     scan_packet(bytes([ServerOpcode.PLAYER_CANCEL_WALK, direction]), gs, received_at=received_at)
 
 
+@pytest.mark.parametrize("invalid_direction", [8, 138, 255])
+def test_invalid_cancel_leaves_position_and_previous_event_intact(state, invalid_direction):
+    gs = state.game_state
+    gs.position = gs.packet_position = (673, 411, 9)
+    gs._last_walk_delta = (0, 1)
+    gs.last_walk_cancel = (10., (673, 410, 9))
+    cancel_walk(gs, invalid_direction, 20.)
+    assert gs.position == gs.packet_position == (673, 411, 9)
+    assert gs._last_walk_delta == (0, 1)
+    assert gs.last_walk_cancel == (10., (673, 410, 9))
+    assert gs.cancel_walk_time == 0 and not gs.server_events
+
+
 @pytest.mark.parametrize("origin,target,facing,during_wait", [
     ((697, 394, 9), (697, 395, 9), 3, False),
     ((671, 475, 7), (672, 476, 7), 2, True),
@@ -27,11 +40,10 @@ def test_cancel_from_saiyan_walk_releases_position_wait(state, tmp_path, caplog,
     async def inject(payload, guard):
         assert guard()
         if during_wait:
-            asyncio.get_running_loop().call_later(.02, lambda: cancel_walk(state.game_state, facing, time.monotonic()))
+            asyncio.get_running_loop().call_later(.02, lambda: cancel_walk(state.game_state, facing, time.perf_counter()))
         else:
             # The parser can publish the reply before transport drain returns.
-            await asyncio.sleep(.01)
-            cancel_walk(state.game_state, facing, time.monotonic())
+            cancel_walk(state.game_state, facing, time.perf_counter())
 
     async def scenario():
         ctrl.status = "running"
@@ -56,7 +68,7 @@ def test_cancelled_route_step_replans_and_finishes_without_manual_resume(state, 
         if not visited:
             assert guard()
             await asyncio.sleep(.02)
-            cancel_walk(state.game_state, 3, time.monotonic())
+            cancel_walk(state.game_state, 3, time.perf_counter())
         else:
             await accept(payload, guard)
         visited.append(state.game_state.position)
@@ -78,8 +90,8 @@ def test_uncorrelated_cancel_does_not_abort_next_position_confirmation(state, tm
     async def scenario():
         ctrl.status = "running"
         ctrl._route_command = True
-        dispatch = time.monotonic()
-        ctrl._route_attempt = dict(valid=True, checks=2, sent=dispatch, motion=ctrl.motion_generation,
+        dispatch = time.perf_counter()
+        ctrl._route_attempt = dict(valid=True, checks=2, sent=time.monotonic(), motion=ctrl.motion_generation,
                                    walk_checked_at=dispatch)
         if case == "ambiguous_retry":
             assert not await ctrl._confirm_walk(target, origin, timeout=0, recover=True)

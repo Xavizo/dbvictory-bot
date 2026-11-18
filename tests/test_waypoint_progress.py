@@ -95,6 +95,55 @@ def test_tolerance_marks_original_waypoint_and_replans_continuation(state,tmp_pa
     assert sent and c.waypoint_progress()['last_reached']==2
 
 
+@pytest.mark.parametrize('missing_kind', ['unknown', 'no_ground'])
+def test_route_passes_beside_unreadable_saiyan_anchor_using_only_observed_floor(state, tmp_path, missing_kind):
+    start, anchor, end = [673, 411, 9], [673, 412, 9], [676, 412, 9]
+    cells = [cell(x, y, 9) for x in range(672, 677) for y in range(410, 415)]
+    controller, _, _ = setup(state, tmp_path, cells, [start, anchor, end])
+    tile = next(c for c in cells if [c['x'], c['y'], c['z']] == anchor)
+    tile.update(kind=missing_kind, items=[])
+    walked = []
+    connect_fake_walk(state, controller)
+    accept = state.game_proxy.inject_to_server
+
+    async def walk(payload, guard):
+        await accept(payload, guard)
+        walked.append(list(state.game_state.position))
+
+    state.game_proxy.inject_to_server = walk
+    asyncio.run(asyncio.wait_for(controller.run(), 2))
+    assert controller.status == 'complete' and controller.tolerated_waypoints == 1
+    assert walked[-1] == end and anchor not in walked
+
+
+def test_manual_step_around_unreadable_waypoint_keeps_future_laps_connected(state, tmp_path):
+    start, anchor, end = [673, 411, 9], [673, 412, 9], [676, 412, 9]
+    manual = [674, 411, 9]
+    cells = [cell(x, y, 9) for x in range(672, 677) for y in range(410, 415)]
+    controller, _, _ = setup(state, tmp_path, cells, [start, anchor, end, start], loop=True)
+    next(tile for tile in cells if [tile['x'], tile['y'], tile['z']] == anchor).update(kind='unknown', items=[])
+    state.game_state.position = tuple(manual)
+    controller.status = 'running'
+    assert controller.recover_local(state.passive_map_monitor.snapshot())
+    assert controller.path[controller.index] == manual and controller.tolerated_waypoints == 1
+    assert controller.path[controller.loop_start] == controller.path[-1] == start
+    assert all(max(abs(a-b) for a, b in zip(prev, curr)) == 1
+               for prev, curr in zip(controller.path, controller.path[1:]))
+    connect_fake_walk(state, controller)
+    accept = state.game_proxy.inject_to_server
+    walked = []
+
+    async def walk_two_laps(payload, guard):
+        await accept(payload, guard)
+        walked.append(list(state.game_state.position))
+        if controller.laps == 2:
+            controller.stop(preserve_progress=True)
+
+    state.game_proxy.inject_to_server = walk_two_laps
+    asyncio.run(asyncio.wait_for(controller.run(), 3))
+    assert walked[0] != start and anchor not in walked and controller.laps == 2
+
+
 @pytest.mark.parametrize('reason',['clear','distant','unknown','stairs','door','entry','exit','origin','paused','stale','no_path','no_continuation','floor'])
 def test_tolerance_does_not_falsely_credit_special_unreachable_or_distant_points(state,tmp_path,reason):
     c,cells,_=stage(state,tmp_path);c.status='running'

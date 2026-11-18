@@ -1484,6 +1484,7 @@ async def start_bot() -> str:
         gs = state.game_state
         usage = getattr(gs, 'senzu_usage', None)
         received_at = _time.monotonic()
+        walk_received_at = _time.perf_counter()
         def observe_potion(msg_type, text, batch_id=None):
             if gs is state.game_state:
                 state.potion_diagnostics.observe_message(msg_type, text, batch_id=batch_id)
@@ -1493,7 +1494,7 @@ async def start_bot() -> str:
             gs.alert_chat_callback = lambda message, source: state.alert_center.observe_chat(message, state, source) if gs is state.game_state else None
             gs.potion_message_callback = observe_potion
             if gs is not state.game_state:return
-            scan_packet(data, gs, received_at=received_at)
+            scan_packet(data, gs, received_at=walk_received_at)
             if gs is state.game_state:state.potion_diagnostics.observe_stats(gs)
         loop.run_in_executor(_scan_pool, scan_and_observe)
 

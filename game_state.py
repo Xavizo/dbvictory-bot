@@ -14,7 +14,7 @@ from client_player_state import client_field
 from pet_tracking import PetTracker
 
 from constants import PACKET_FORMATS as PF
-from protocol import ServerOpcode
+from protocol import Direction, ServerOpcode
 
 log = logging.getLogger("game_state")
 
@@ -186,7 +186,7 @@ def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None)
     then do a targeted search for important opcodes we missed.
     """
     if received_at is None:
-        received_at = time.monotonic()
+        received_at = time.perf_counter()
     gs._server_packet_seq = getattr(gs, "_server_packet_seq", 0) + 1
     position_before = gs.packet_position
     pos = 0
@@ -803,6 +803,9 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
         if pos + _pcw_size > len(data):
             return -1
         direction = data[pos]
+        if direction > Direction.NORTHWEST:
+            # A match inside another message must not undo an observed step.
+            return -1
         now = time.time()
         gs.cancel_walk_time = now
         # Revert the optimistic client-walk position update
