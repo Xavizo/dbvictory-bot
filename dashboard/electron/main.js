@@ -8,6 +8,8 @@ const path = require("node:path");
 const NEXT_URL = "http://127.0.0.1:4747";
 const sessionToken = process.env.DBV_DASHBOARD_TOKEN;
 delete process.env.DBV_DASHBOARD_TOKEN;
+const trayExitFile = process.env.DBV_TRAY_EXIT_FILE;
+delete process.env.DBV_TRAY_EXIT_FILE;
 
 function isDashboardUrl(url) {
   try { return new URL(url).origin === NEXT_URL; }
@@ -70,7 +72,7 @@ function createWindow() {
   // Next sets the document title on navigation. Keep the parent engine's identity visible.
   win.on("page-title-updated", (event) => event.preventDefault());
   trustWindow(win);
-  installTray(electron, win, () => editorWindow);
+  installTray(electron, win, () => editorWindow, trayExitFile);
   win.on("closed", () => { if (editorWindow && !editorWindow.isDestroyed()) editorWindow.close(); });
   ipcMain.handle("dbv:open-route-editor", (event, draftId) => {
     if (!trustedSender(event) || event.sender !== win.webContents) throw new Error("Only the main dashboard may open its editor.");

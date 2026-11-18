@@ -13,6 +13,7 @@ from pathlib import Path
 import shutil
 import socket
 import sys
+from tray_exit import EXIT_FILE_ENV, tray_input
 
 ROOT = Path(__file__).resolve().parent
 # These actions must always require an explicit choice in the panel after start.
@@ -92,17 +93,22 @@ async def start_checked(session, settings):
 
 
 async def run(args, env):
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
     ports = (4747, 8089, 8090, int(env.get('DBV_LOGIN_PORT','7171')), args.game_port)
     if occupied_ports(ports):
         raise RuntimeError('Inna sesja bota lub program zajmuje porty. Nie uruchamiam drugiej. Jeśli bot działa, wpisz panel w jego konsoli.')
+    with tray_input(sys.stdin.encoding) as (exit_file, lines):
+        await run_console(args, {**env, EXIT_FILE_ENV: str(exit_file)}, lines)
+
+
+async def run_console(args, env, lines):
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
     print('DBVictory Bot — uruchamianie bez Codexa\n', flush=True)
     if not args.start:
         print('Pozostaw klienta na LIŚCIE POSTACI lub ekranie logowania.\n'
               'Start z zalogowanej gry zerwałby połączenie.\n'
               'Naciśnij Enter, gdy postać jest wylogowana; wpisz q, aby zrezygnować.', flush=True)
-        answer = await asyncio.to_thread(sys.stdin.readline)
+        answer = await anext(lines, '')
         if not answer or answer.strip().lower() != '':
             return
     settings = json.loads((ROOT/'bot_settings.json').read_text(encoding='utf-8')) if (ROOT/'bot_settings.json').exists() else {}
@@ -117,10 +123,7 @@ async def run(args, env):
                       'Zapisane pozostałe akcje (np. mikstury) ruszą po logowaniu.\n'
                       'Pozostaw tę konsolę otwartą (możesz zminimalizować).\n'
                       'panel = otwórz panel | status = stan | actions = akcje | quit = zakończ bota',flush=True)
-                while True:
-                    line = await asyncio.to_thread(sys.stdin.readline)
-                    if not line:
-                        break
+                async for line in lines:
                     command = line.strip().lower()
                     if command in {'quit','exit'}:
                         break

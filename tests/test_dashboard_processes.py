@@ -42,7 +42,8 @@ def test_launch_refuses_unowned_port_and_passes_token_only_to_electron(monkeypat
     build_dir.mkdir(parents=True)
     (build_dir / "BUILD_ID").write_text("test-build")
     monkeypatch.setattr(server, "__file__", str(tmp_path / "mcp_server.py"))
-    monkeypatch.setattr(server, "os", SimpleNamespace(name="nt", environ={}))
+    monkeypatch.setattr(server, "os", SimpleNamespace(name="nt", environ={server.EXIT_FILE_ENV: "stale"}))
+    monkeypatch.setattr(server.state, "tray_exit_file", tmp_path / "quit", raising=False)
     monkeypatch.setattr(server.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.setattr("shutil.which", lambda _: r"C:\Program Files\nodejs\npm.cmd")
     monkeypatch.setattr(server, "_dashboard_processes", {})
@@ -58,6 +59,8 @@ def test_launch_refuses_unowned_port_and_passes_token_only_to_electron(monkeypat
     next_call, electron_call = popen.call_args_list
     assert next_call.args[0].endswith('run start')
     assert "DBV_DASHBOARD_TOKEN" not in next_call.kwargs["env"]
+    assert server.EXIT_FILE_ENV not in next_call.kwargs["env"]
+    assert electron_call.kwargs["env"][server.EXIT_FILE_ENV] == str(tmp_path / "quit")
     assert electron_call.kwargs["env"]["DBV_DASHBOARD_TOKEN"] == SESSION_TOKEN
     assert electron_call.kwargs["env"]["DBV_ENGINE_LABEL"] == server.ENGINE_LABEL
     assert next_call.kwargs['creationflags'] == 0x08000000

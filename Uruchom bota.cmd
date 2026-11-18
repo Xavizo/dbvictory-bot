@@ -7,6 +7,8 @@ if not exist "venv\Scripts\python.exe" (
   exit /b 1
 )
 "venv\Scripts\python.exe" -X utf8 "run_bot.py"
-echo.
-echo Sesja bota zakonczona. Nacisnij dowolny klawisz, aby zamknac.
-pause >nul
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
+exit /b 0

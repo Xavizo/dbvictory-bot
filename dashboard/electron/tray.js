@@ -1,13 +1,25 @@
+const fs = require("node:fs");
 const path = require("node:path");
 
 // Hiding keeps renderer state, including unsaved sketches, in the same window.
-// This process owns only the panel, never the game connection or automation.
-function installTray({ app, Tray, Menu, nativeImage }, win, getEditor) {
+function installTray({ app, Tray, Menu, nativeImage, dialog }, win, getEditor, exitFile) {
   const icon = nativeImage.createFromPath(path.join(__dirname, "tray.png"));
   if (icon.isEmpty()) throw new Error("Missing dashboard tray icon");
   const tray = new Tray(icon);
   let quitting = false;
   let editorWasVisible = false;
+  const exitBot = () => {
+    if (!exitFile || quitting) return;
+    try {
+      fs.writeFileSync(exitFile, "", { flag: "wx" });
+    } catch (error) {
+      if (error.code !== "EEXIST") {
+        dialog.showErrorBox("Zakończ bota", "Nie udało się przekazać żądania zamknięcia do silnika.");
+        return;
+      }
+    }
+    app.quit();
+  };
   const show = () => {
     if (win.isDestroyed()) return;
     if (win.isMinimized()) win.restore();
@@ -31,8 +43,8 @@ function installTray({ app, Tray, Menu, nativeImage }, win, getEditor) {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "Pokaż panel", click: show },
     { type: "separator" },
-    { label: "Zamknięcie panelu nie zatrzymuje bota", enabled: false },
     { label: "Zamknij panel", click: () => app.quit() },
+    { label: "Zakończ bota", enabled: Boolean(exitFile), click: exitBot },
   ]));
   tray.on("click", show);
   tray.on("double-click", show);

@@ -53,6 +53,7 @@ ENGINE_LABEL = _engine_label(Path(__file__).resolve().parent)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from mcp.server.fastmcp import FastMCP
+from tray_exit import EXIT_FILE_ENV, tray_input
 
 from proxy import OTProxy
 from game_state import GameState, parse_server_packet, scan_packet
@@ -1013,7 +1014,10 @@ def _launch_dashboard() -> None:
                 continue
             env = os.environ.copy()
             env.pop("DBV_DASHBOARD_TOKEN", None)
+            env.pop(EXIT_FILE_ENV, None)
             if name == "electron":
+                if getattr(state, "tray_exit_file", None):
+                    env[EXIT_FILE_ENV] = str(state.tray_exit_file)
                 env["DBV_DASHBOARD_TOKEN"] = SESSION_TOKEN
                 env["DBV_ENGINE_LABEL"] = ENGINE_LABEL
             _dashboard_processes[name] = subprocess.Popen(
@@ -2248,5 +2252,19 @@ async def analyze_route() -> str:
 
 # ── Entry point ─────────────────────────────────────────────────────
 
+async def serve_with_tray_exit():
+    from mcp.server.stdio import stdio_server
+    with tray_input("utf-8") as (exit_file, lines):
+        state.tray_exit_file = exit_file
+        server = mcp._mcp_server
+        async with stdio_server(stdin=lines) as (reader, writer):
+            await server.run(reader, writer, server.create_initialization_options())
+
+
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    state.tray_exit_file = os.environ.pop(EXIT_FILE_ENV, None)
+    if state.tray_exit_file:
+        # The standalone launcher owns stdin and closes this child on exit.
+        mcp.run(transport="stdio")
+    else:
+        asyncio.run(serve_with_tray_exit())

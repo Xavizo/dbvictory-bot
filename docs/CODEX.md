@@ -487,9 +487,10 @@ including labels, transition links and loop setting. Adding a known transition
 retains it even when an earlier leg has a gap, and reports that actual gap.
 The original follow icon is active by default; there is no extra checkbox.
 Closing the main panel with X hides it and its editor to the Windows tray,
-preserving unsaved renderer state. Tray menu restores or exits only the panel;
-the game proxy and healing are independent. Tests remain offline unless a
-separate live verification is explicitly recorded.
+preserving unsaved renderer state. In the tray menu, **Zamknij panel** closes
+Electron. **Zakończ bota** ends the owning engine session, its panel and the
+standalone launcher. Log out to the character list first if connected through
+the proxy. The game client stays open.
 
 ## Explicit route transitions and Barrier Band (2026-11-17)
 
