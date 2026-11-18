@@ -326,6 +326,7 @@ class _Handler(BaseHTTPRequestHandler):
                 recording=cavebot.load_recording(name)
                 optimize=body.get('optimize',False)
                 if type(optimize) is not bool:raise ValueError('Nieprawidłowa opcja optymalizacji.')
+                observations=atlas.remember_recorded_ropes(recording,observations)
                 points,original=recording_points(recording,observations,optimize=optimize)
                 from map_atlas import trace_links
                 trace=[row['pos'] for row in recording.get('observed_path',[]) if not row.get('break_before')]

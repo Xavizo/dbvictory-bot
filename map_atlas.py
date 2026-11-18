@@ -14,6 +14,7 @@ import uuid
 from transition_learning import position,gate_entry_record
 from cavebot_combat import validate_combat
 from navigation_tools import tool_kind
+from recorded_rope import recorded_rope_edges
 
 CACHE_TILES=4096
 PAGE_SIZE=16
@@ -279,6 +280,7 @@ class MapAtlas:
         self.path=Path(directory)/f"map_atlas-{scope[:16]}.sqlite3"
         self.tiles=OrderedDict();self.total=0;self.floors=set();self.error=None;self.revision=0
         self.lock=threading.RLock()
+        self.recorded_ropes={}
         try:
             self.path.parent.mkdir(parents=True,exist_ok=True)
             with sqlite3.connect(self.path) as db:
@@ -286,6 +288,8 @@ class MapAtlas:
                 row=db.execute("SELECT scope FROM meta").fetchone()
                 if row is None:db.execute("INSERT INTO meta VALUES (?)",(scope,))
                 elif row[0]!=scope:raise ValueError("scope")
+                db.execute("CREATE TABLE IF NOT EXISTS recorded_ropes (id TEXT PRIMARY KEY, recording TEXT NOT NULL, edge TEXT NOT NULL)")
+                self.recorded_ropes={key:json.loads(raw) for key,raw in db.execute("SELECT id,edge FROM recorded_ropes")}
                 db.execute("CREATE TABLE IF NOT EXISTS tiles (x INT,y INT,z INT,data TEXT,seen REAL,PRIMARY KEY(x,y,z))")
                 db.execute("CREATE INDEX IF NOT EXISTS tiles_floor_xy ON tiles(z,x,y)")
                 db.execute("CREATE INDEX IF NOT EXISTS tiles_seen ON tiles(seen DESC)")
@@ -390,11 +394,28 @@ class MapAtlas:
                 db.execute('UPDATE drafts SET combat=?,loop=?,updated=? WHERE id=?',(json.dumps(config),int(loop),time.time(),draft_id))
             else:db.execute('UPDATE drafts SET deleted=?,updated=? WHERE id=?',(int(operation=='delete'),time.time(),draft_id))
 
+    def with_recorded_ropes(self,observations):
+        rows=list(observations)
+        known={r.get('id') for r in rows}
+        with self.lock:
+            return rows+[row for key,row in self.recorded_ropes.items() if key not in known]
+
+    def remember_recorded_ropes(self,recording,observations):
+        edges=recorded_rope_edges(recording,observations)
+        with self.lock:
+            fresh=[r for r in edges if r['id'] not in self.recorded_ropes]
+            if fresh:
+                with closing(sqlite3.connect(self.path)) as db, db:
+                    db.executemany("INSERT OR IGNORE INTO recorded_ropes VALUES (?,?,?)", [
+                        (r['id'],recording['name'],json.dumps(r)) for r in fresh])
+                self.recorded_ropes.update((r['id'],r) for r in fresh)
+        return self.with_recorded_ropes(observations)
+
     def route_transitions(self,observations,cells):
         if self.error:return []
         visible={(c['x'],c['y'],c['z']) for c in cells}
         with self.lock:tiles=PagedTiles(self.path,self.tiles)
-        edges=navigation_edges(tiles,[r for r in observations if tuple(r.get('entry') or ()) in visible])
+        edges=navigation_edges(tiles,[r for r in self.with_recorded_ropes(observations) if tuple(r.get('entry') or ()) in visible])
         return [{k:r.get(k) for k in ('id','origin','entry','exit','action','item_id','tool_id','prepared_item_id','tool_ids','count')}
                 for values in edges.values() for dest,r in values
                 if tuple(r['entry']) in visible and tuple(r['origin']) in tiles and dest in tiles and r['action']!='unknown']
@@ -404,6 +425,7 @@ class MapAtlas:
         if not isinstance(points,list) or not 2<=len(points)<=MAX_ANCHORS or not all(position(p) for p in points):
             raise ValueError("Wskaż od 2 do 2048 punktów trasy.")
         anchors=points
+        observations=self.with_recorded_ropes(observations)
         links=validate_links(links,points);selected={r['from_index']:r['id'] for r in links}
         # Keep drawn anchors intact. A nearby endpoint may close via verified
         # ordinary terrain; distant returns still require explicit waypoints.
