@@ -1084,6 +1084,55 @@ class TestFarUseItemPreservation:
         use_items = [n for n in nodes if n["type"] == "use_item"]
         assert len(use_items) == 1
 
+    @pytest.mark.parametrize("item_id", [4561, 4445])
+    def test_keyboard_stairs_do_not_turn_previous_ground_click_into_use(self, item_id):
+        wps = [
+            _use_item(540, 972, 7, item_id, player_pos=(535, 970, 7)),
+            *[_walk("east", (x, 971, 7)) for x in range(536, 542)],
+            _floor_change("up", [543, 971, 6]),
+            _walk("north", (543, 971, 6)),
+        ]
+        nodes = build_actions_map(_rec(wps))
+        assert all(n["type"] == "walk_to" for n in nodes)
+        assert [540, 972, 7] not in [n["target"] for n in nodes]
+        assert [536, 971, 7] in [n["target"] for n in nodes]
+        assert any(n["target"] == [542, 971, 7] and n.get("exact") for n in nodes)
+        assert nodes[-1]["target"] == [543, 970, 6]
+
+    def test_extended_use_owns_its_floor_change(self):
+        wps = [
+            _use_item(120, 200, 7, 4445, player_pos=(110, 200, 7)),
+            _use_item_ex((65535, 0, 0), 2120, (120, 200, 7), (119, 200, 7)),
+            _floor_change("up", [120, 200, 6]),
+        ]
+        nodes = build_actions_map(_rec(wps))
+        assert not any(n["type"] == "use_item" for n in nodes)
+        assert nodes[-1]["type"] == "use_item_ex"
+
+    @pytest.mark.parametrize("item_id,expected", [(4561, "walk_to"), (4560, "use_item")])
+    def test_confirmed_ground_is_distinct_from_adjacent_stairs(self, item_id, expected):
+        nodes = build_actions_map(_rec([
+            _use_item(540, 972, 7, item_id, player_pos=(540, 971, 7)),
+        ]))
+        assert nodes[-1]["type"] == expected
+
+    def test_ground_click_is_not_an_interaction_even_next_to_a_floor_event(self):
+        nodes = build_actions_map(_rec([
+            _use_item(540, 972, 7, 4561, player_pos=(535, 970, 7)),
+            _floor_change("up", [543, 971, 6]),
+        ]))
+        assert all(n["type"] == "walk_to" for n in nodes)
+
+    @pytest.mark.parametrize("event", [
+        _floor_change("up", [120, 200, 6], t=-10),
+        _floor_change("up", [120, 200, 7]),
+    ])
+    def test_stale_or_unchanged_floor_is_not_evidence_of_an_interaction(self, event):
+        nodes = build_actions_map(_rec([
+            _use_item(120, 200, 7, 4445, player_pos=(110, 200, 7)), event,
+        ]))
+        assert all(n["type"] == "walk_to" for n in nodes)
+
 
 # ── Position waypoints ───────────────────────────────────────────────
 

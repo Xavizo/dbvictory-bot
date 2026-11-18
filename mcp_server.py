@@ -1,13 +1,14 @@
 """
 DBVictory Bot — MCP Server
 
-Exposes the bot's actions as MCP tools so Claude Code can control the
+Exposes the bot's actions as MCP tools so Codex or Claude Code can control the
 game character through natural language.
 
 Transport: stdio  (stdout = JSON-RPC, all logging → stderr)
 """
 
 import asyncio
+import atexit
 import collections
 import importlib
 import importlib.util
@@ -55,6 +56,10 @@ from protocol import (
 )
 from constants import SERVER_HOST, LOGIN_PORT, GAME_PORT
 import cavebot
+from potions import PotionScheduler, PotionDiagnostics, ITEMS as HEALING_ITEMS, LEGACY_HEALING_ACTIONS, validate_config as validate_potion_config
+from barrier_band import BandScheduler, validate_config as validate_band_config
+from route_safety import route_entry
+from dashboard_security import SESSION_TOKEN
 
 # ── Constants ───────────────────────────────────────────────────────
 SETTINGS_FILE = Path(__file__).parent / "bot_settings.json"
@@ -94,9 +99,24 @@ class BotState:
         self._login_event: asyncio.Event | None = None
         self._proxy_tasks: list[asyncio.Task] = []
         self.settings: dict = load_settings()
+        self.automation_paused = bool(self.settings.get("automation_paused", False))
+        self.automation_pause_kind = self.settings.get("automation_pause_kind", "emergency") if self.automation_paused else None
+        self._paused_playback = None
+        self._stopping_tasks = []
+        self._emergency_stopping = False
+        self.band_scheduler = BandScheduler()
+        from speed_up import SpeedScheduler
+        self.speed_scheduler = SpeedScheduler()
+        self.potion_scheduler = PotionScheduler()
+        self.potion_diagnostics = PotionDiagnostics()
         self._action_tasks: dict[str, asyncio.Task] = {}
         self._action_completed: set[str] = set()
+        self._adaptive_prepare_token = None
         self.game_state: GameState = GameState()
+        from game_alerts import AlertCenter
+        self.alert_center = AlertCenter(self.settings.get("alerts"))
+        from bot_profiles import ProfileStore
+        self.profile_store = ProfileStore()
         self.action_logs: dict[str, collections.deque] = {}
 
         # Cavebot recording state
@@ -141,6 +161,69 @@ class BotState:
 state = BotState()
 
 
+async def _async_toggle_all():
+    if state._emergency_stopping:
+        return "Trwa zatrzymywanie akcji."
+    if state.automation_paused:
+        return await _async_resume_automation()
+    return await _async_pause_automation()
+
+
+async def _async_profiles(body):
+    from bot_profiles import bot_config, validate_bot, applied_bot_settings, require_stopped
+    from cavebot_combat import validate_combat
+    kind=body.get('kind');command=body.get('command');ident=body.get('id')
+    if kind not in {'bot','combat'}:raise ValueError('Nieznany typ profilu.')
+    store=state.profile_store
+    if command=='bind':
+        if kind!='combat':raise ValueError('Do trasy przypisujemy profil walki.')
+        scope=body.get('scope');draft_id=body.get('draft_id')
+        atlas=getattr(getattr(state,'passive_map_monitor',None),'atlas',None)
+        if not atlas or atlas.scope!=scope or not any(d['id']==draft_id for d in atlas.drafts()):
+            raise ValueError('Brak trasy w bieżącym atlasie.')
+        if ident is not None:store.get(ident,'combat')
+        links=dict(state.settings.get('route_combat_profiles',{}));key=f'{scope}:{draft_id}'
+        if ident is None:links.pop(key,None)
+        else:links[key]=ident
+        candidate={**state.settings,'route_combat_profiles':links};save_settings(candidate);state.settings=candidate
+        return {'bound':ident}
+    if command=='save':
+        cfg=body.get('config') if kind=='combat' else bot_config(state.settings)
+        row=store.save(kind,body.get('name'),cfg,ident)
+        return row
+    if command=='delete':
+        store.delete(ident,kind)
+        state.settings['route_combat_profiles']={k:v for k,v in state.settings.get('route_combat_profiles',{}).items() if v!=ident}
+        save_settings(state.settings)
+        key='selected_'+kind+'_profile'
+        if state.settings.get(key)==ident:state.settings.pop(key,None);save_settings(state.settings)
+        return {'deleted':True}
+    if command!='apply':raise ValueError('Nieznane polecenie profilu.')
+    require_stopped(state,kind);row=store.get(ident,kind)
+    if kind=='combat':
+        cfg=validate_combat(row['config']);candidate={**state.settings,'combat_profile':cfg,'selected_combat_profile':ident}
+    else:
+        candidate=applied_bot_settings(state.settings,row['config']);candidate['selected_bot_profile']=ident
+    save_settings(candidate);state.settings=candidate
+    if kind=='bot':state.alert_center.configure(candidate['alerts'])
+    return {'config':candidate['combat_profile'] if kind=='combat' else validate_bot(row['config'])}
+
+
+async def _async_alerts(command, body):
+    from game_alerts import validate_config
+    if command == "configure":
+        config = validate_config(body.get("config"))
+        candidate = {**state.settings, "alerts": config}
+        save_settings(candidate)
+        state.settings["alerts"] = config
+        state.alert_center.configure(config)
+    elif command == "acknowledge":
+        state.alert_center.acknowledge(body.get("through"))
+    else:
+        raise ValueError("Nieznana operacja alertów.")
+    return "Ustawienia alertów zapisane." if command == "configure" else "Alerty przeczytane."
+
+
 # ── Bot context (passed to action scripts as `bot`) ────────────────
 
 class BotContext:
@@ -149,6 +232,8 @@ class BotContext:
     def __init__(self, action_name: str = ""):
         self._log = logging.getLogger("action")
         self._action_name = action_name
+        from session_lifetime import SessionLease
+        self._session = SessionLease(state)
 
     # ── connection ──────────────────────────────────────────────────
     @property
@@ -156,12 +241,24 @@ class BotContext:
         return state.connected
 
     # ── low-level ───────────────────────────────────────────────────
-    async def inject_to_server(self, packet: bytes) -> None:
+    async def inject_to_server(self, packet: bytes, *, guard=None):
+        self.last_receipt=None
+        if state.automation_paused or not self._session.valid():
+            raise asyncio.CancelledError()
         if state.game_proxy:
-            await state.game_proxy.inject_to_server(packet)
+            from command_delivery import delivery
+            from session_lifetime import SessionLease, current_task, task_alive
+            lease=SessionLease(state); owner=current_task()
+            def allowed():
+                return (self._session.valid() and lease.valid() and task_alive(owner)
+                        and not state.automation_paused and (guard is None or guard()))
+            self.last_receipt=await state.game_proxy.inject_to_server(packet,guard=allowed)
+            return await delivery(self.last_receipt)
 
     async def sleep(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
+        if state.automation_paused and self._action_name not in INTERNAL_ACTIONS:
+            raise asyncio.CancelledError()
 
     # ── convenience helpers ─────────────────────────────────────────
     async def use_item_in_container(
@@ -288,9 +385,47 @@ def _load_action_module(name: str):
     return mod
 
 
+def _healing_conflict(name: str) -> str | None:
+    others = LEGACY_HEALING_ACTIONS if name == "auto_potions" else {"auto_potions"} if name in LEGACY_HEALING_ACTIONS else set()
+    conflicts = [other for other in sorted(others)
+                 if state.settings.get("actions", {}).get(other, {}).get("enabled")
+                 or (state._action_tasks.get(other) and not state._action_tasks[other].done())]
+    if conflicts:
+        return "Disable conflicting healing actions first: " + ", ".join(conflicts)
+    return None
+
+
 def _start_action(name: str) -> str | None:
     """Load an action script and launch its run(bot) as a background task.
     Returns an error string on failure, None on success."""
+    if name in {"cavebot","cavebot2"}:
+        return "Ten starszy silnik jest wyłączony. Użyj Cavebot."
+    if name=="adaptive_cavebot":
+        controller=getattr(state,"adaptive_cavebot",None)
+        if controller is None or controller.status not in {"ready","paused"} or not controller.path:
+            return "Wybierz zapisaną trasę i użyj Start w Cavebot."
+        try:
+            controller.guard()
+            if not controller.combat_only and list(state.game_state.position)!=controller.path[controller.index]:return "Pozycja zmieniła się podczas pauzy. Uruchom od początku trasy."
+        except ValueError as exc:return str(exc)
+    if state.automation_paused and name not in INTERNAL_ACTIONS:
+        return "Emergency pause is active. Unlock it before enabling actions."
+    conflict = _healing_conflict(name)
+    if conflict:
+        return conflict
+    if name == "speed_up":
+        try:
+            from speed_up import validate_config
+            validate_config(state.settings.get("actions", {}).get(name, {}))
+        except ValueError as exc: return str(exc)
+    if name == "auto_potions":
+        try:
+            validate_potion_config(state.settings.get("actions", {}).get(name, {}), require_cooldowns=True)
+        except ValueError as exc:
+            return str(exc)
+    if name == "auto_barrier_band":
+        try: validate_band_config(state.settings.get("actions", {}).get(name, {}))
+        except ValueError as exc: return str(exc)
     # Don't double-start
     if name in state._action_tasks and not state._action_tasks[name].done():
         return f"'{name}' is already running."
@@ -307,6 +442,14 @@ def _start_action(name: str) -> str | None:
     async def _wrapper():
         try:
             log.info(f"[action:{name}] Started")
+            if name not in INTERNAL_ACTIONS:
+                session = state.game_state
+                while (state.connected and state.game_state is session
+                       and (not session.player_id or (session.client_state_required
+                            and not session.client_player_id))):
+                    await asyncio.sleep(.05)
+                if not state.connected or state.game_state is not session:
+                    return
             await mod.run(ctx)
             state._action_completed.add(name)
         except asyncio.CancelledError:
@@ -315,6 +458,9 @@ def _start_action(name: str) -> str | None:
         except Exception:
             state._action_completed.discard(name)
             log.error(f"[action:{name}] Crashed:\n{traceback.format_exc()}")
+        finally:
+            if name=="adaptive_cavebot" and not state.automation_paused:
+                state.settings.setdefault("actions",{}).setdefault(name,{})["enabled"]=False
 
     state._action_tasks[name] = asyncio.create_task(_wrapper())
     return None
@@ -322,6 +468,9 @@ def _start_action(name: str) -> str | None:
 
 def _stop_action(name: str) -> bool:
     """Cancel a running action task. Returns True if it was running."""
+    if name=="adaptive_cavebot":state._adaptive_prepare_token=None
+    if name=="adaptive_cavebot" and getattr(state,"adaptive_cavebot",None) and state.adaptive_cavebot.path:
+        state.adaptive_cavebot.pause("Nawigacja wstrzymana.")
     task = state._action_tasks.pop(name, None)
     if task and not task.done():
         task.cancel()
@@ -348,6 +497,9 @@ def _start_all_enabled_actions() -> int:
             count += 1
     # Start user-enabled actions
     for name, cfg in state.settings.get("actions", {}).items():
+        if name in {"cavebot","cavebot2","adaptive_cavebot"}:
+            cfg["enabled"]=False
+            continue  # Navigation never resumes automatically after login.
         if name in INTERNAL_ACTIONS:
             continue  # already started above
         if cfg.get("enabled", False):
@@ -370,8 +522,27 @@ def _discover_actions() -> list[str]:
 
 async def _async_toggle_action(name: str, enabled: bool) -> str:
     """Enable or disable an action. Returns a status message."""
+    if enabled and name in {"cavebot","cavebot2","adaptive_cavebot"}:
+        return "Error: Starsze silniki są wyłączone; V2 uruchamiaj przez Start zapisanej trasy."
     if name in INTERNAL_ACTIONS:
         return f"Action '{name}' is an internal service and cannot be toggled."
+    if enabled and state.automation_paused:
+        return "Error: Emergency pause is active. Unlock it first."
+    if enabled and (conflict := _healing_conflict(name)):
+        return f"Error: {conflict}"
+    if enabled and name == "speed_up":
+        try:
+            from speed_up import validate_config
+            validate_config(state.settings.get("actions", {}).get(name, {}))
+        except ValueError as exc: return f"Error: {exc}"
+    if enabled and name == "auto_potions":
+        try:
+            validate_potion_config(state.settings.get("actions", {}).get(name, {}), require_cooldowns=True)
+        except ValueError as exc:
+            return f"Error: {exc}"
+    if enabled and name == "auto_barrier_band":
+        try: validate_band_config(state.settings.get("actions", {}).get(name, {}))
+        except ValueError as exc: return f"Error: {exc}"
     path = ACTIONS_DIR / f"{name}.py"
     if not path.exists():
         return f"actions/{name}.py not found."
@@ -389,11 +560,274 @@ async def _async_toggle_action(name: str, enabled: bool) -> str:
         return f"Action '{name}' enabled. It will auto-start when the bot connects."
     else:
         was_running = _stop_action(name)
+        if state._paused_playback and state._paused_playback["engine"]==name:
+            state._paused_playback=None
+        if name in {"cavebot","cavebot2"}:
+            state.playback_active=state.playback_loop=False
+            state.game_state.lure_active=False
+            if state.game_proxy and was_running:
+                await state.game_proxy.send_emergency_stop()
         return f"Action '{name}' disabled{' and stopped' if was_running else ''}."
+
+
+async def _async_update_action_config(name: str, changes: dict) -> dict:
+    if name not in _discover_actions() or name in INTERNAL_ACTIONS:
+        raise ValueError("Unknown or internal action")
+    if not isinstance(changes, dict) or "enabled" in changes:
+        raise ValueError("Use the toggle endpoint to enable/disable actions")
+    cfg = {**state.settings.get("actions", {}).get(name, {}), **changes}
+    if name == "auto_potions":
+        cfg = validate_potion_config(cfg, require_cooldowns=cfg.get("enabled", False))
+    if name == "auto_barrier_band": cfg = validate_band_config(cfg)
+    if name == "speed_up":
+        from speed_up import validate_config
+        cfg = validate_config(cfg)
+    state.settings.setdefault("actions", {})[name] = cfg
+    save_settings(state.settings)
+    return cfg
+
+
+async def _async_emergency_stop(*, preserve_enabled=False) -> str:
+    # Latch and cancel before the first await, including packets already queued.
+    state._adaptive_prepare_token=None
+    if state._emergency_stopping:
+        if not preserve_enabled and state.automation_pause_kind=="manual":
+            state.automation_pause_kind="emergency"
+            state.settings["automation_pause_kind"]="emergency"
+            state.settings.pop("paused_actions",None)
+            state._paused_playback=None
+            for name,cfg in state.settings.get("actions",{}).items():
+                if name not in INTERNAL_ACTIONS:cfg["enabled"]=False
+            save_settings(state.settings)
+        return "Emergency pause is already stopping actions."
+    state._emergency_stopping = True
+    state.automation_paused = True
+    state.settings["automation_paused"] = True
+    state.automation_pause_kind = "manual" if preserve_enabled else "emergency"
+    state.settings["automation_pause_kind"] = state.automation_pause_kind
+    if preserve_enabled:
+        state.settings["paused_actions"] = sorted((set(n for n,c in state.settings.get("actions",{}).items() if c.get("enabled")) | set(state._action_tasks)) - INTERNAL_ACTIONS - state._action_completed)
+        state._paused_playback = ({"name":state.playback_recording_name,"loop":state.playback_loop,
+                                   "engine":"cavebot2" if "cavebot2" in state._action_tasks else "cavebot"}
+                                  if state.playback_active else None)
+    else:
+        state.settings.pop("paused_actions",None)
+        state._paused_playback = None
+    if state.game_proxy:
+        state.game_proxy.pause_injections()
+    names = set(_discover_actions()) | set(state.settings.get("actions", {})) | set(state._action_tasks)
+    tasks = []
+    for name in names - INTERNAL_ACTIONS:
+        if not preserve_enabled:
+            state.settings.setdefault("actions", {}).setdefault(name, {})["enabled"] = False
+        task = state._action_tasks.get(name)
+        if task and not task.done():
+            tasks.append(task)
+        _stop_action(name)
+    if state._auto_task and not state._auto_task.done():
+        state._auto_task.cancel()
+        tasks.append(state._auto_task)
+    state._auto_task = None
+    state._stopping_tasks = tasks
+    state.playback_active = False
+    state.playback_loop = False
+    state.game_state.lure_active = False
+    state.game_state.force_target = None
+    if not preserve_enabled:
+        if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Awaryjny STOP — wybierz trasę ponownie.")
+        state.potion_diagnostics.set_active(False)
+    warning = ""
+    try:
+        save_settings(state.settings)
+    except OSError:
+        log.exception("Could not persist emergency pause")
+        warning = " Settings could not be saved; pause is active for this session only."
+    try:
+        if tasks:
+            await asyncio.wait(tasks, timeout=1)
+        if state.game_proxy:
+            try:
+                await state.game_proxy.send_emergency_stop()
+            except (OSError, asyncio.TimeoutError):
+                warning += " Could not confirm movement/target cancellation on the server."
+    finally:
+        state._emergency_stopping = False
+    return ("Automation paused. Selected actions are preserved for explicit resume." if preserve_enabled else "Emergency pause active. All user actions disabled; enable them individually after unlocking.") + warning
+
+
+async def _async_pause_automation() -> str:
+    if state.automation_paused:
+        return "Automation is already paused."
+    return await _async_emergency_stop(preserve_enabled=True)
+
+
+async def _async_resume_automation() -> str:
+    if not state.automation_paused:
+        return "Automation is already running."
+    if state.automation_pause_kind != "manual":
+        raise ValueError("Emergency STOP requires unlocking and enabling actions individually")
+    if state._emergency_stopping or any(not task.done() for task in state._stopping_tasks):
+        raise ValueError("Wait for actions to finish stopping")
+    names = [n for n in state.settings.get("paused_actions",[]) if n not in INTERNAL_ACTIONS
+             and state.settings.get("actions",{}).get(n,{}).get("enabled")]
+    route = state._paused_playback if state.connected else None
+    if route:
+        rec = cavebot.load_recording(route["name"])
+        if rec is None: raise ValueError("Paused route no longer exists")
+        _,error = route_entry(cavebot.build_actions_map(rec),state.game_state.position)
+        if error: raise ValueError(error)
+    previous=dict(state.settings)
+    state.settings.update(automation_paused=False,automation_pause_kind=None)
+    state.settings.pop("paused_actions",None)
+    try: save_settings(state.settings)
+    except OSError:
+        state.settings=previous
+        raise
+    state.automation_paused=False
+    state.automation_pause_kind=None
+    if state.game_proxy: state.game_proxy.injections_paused=False
+    errors=[]
+    if state.connected:
+        if route:
+            state.playback_active=True
+            state.playback_recording_name=route["name"]
+            state.playback_loop=route["loop"]
+            names=list(dict.fromkeys([*names,route["engine"]]))
+        for name in names:
+            if name=='adaptive_cavebot':
+                try:await _async_adaptive_control('resume')
+                except (ValueError,RuntimeError) as exc:errors.append(str(exc))
+            else:
+                error=_start_action(name)
+                if error: errors.append(error)
+    if errors:
+        await _async_pause_automation()
+        raise ValueError("Resume failed; paused again: " + "; ".join(errors))
+    state._paused_playback=None
+    return "Selected actions resumed." if state.connected else "Pause removed; selected actions will start after login."
+
+
+async def _async_unlock_automation() -> str:
+    if state._emergency_stopping:
+        raise ValueError("Wait for emergency stop to finish before unlocking")
+    if any(not task.done() for task in state._stopping_tasks):
+        raise ValueError("Wait for actions to finish stopping")
+    if state.automation_pause_kind == "manual":
+        raise ValueError("Use resume for a manual pause")
+    previous = state.settings.get("automation_paused", False)
+    state.settings["automation_paused"] = False
+    try:
+        save_settings(state.settings)
+    except OSError:
+        state.settings["automation_paused"] = previous
+        raise
+    state.automation_paused = False
+    state.automation_pause_kind = None
+    if state.game_proxy:
+        state.game_proxy.injections_paused = False
+    return "Unlocked. All user actions remain disabled."
+
+
+async def _async_potion_diagnostics(enabled: bool) -> dict:
+    state.potion_diagnostics.set_active(enabled)
+    return state.potion_diagnostics.snapshot()
+
+
+async def _async_adaptive_preview(config=None) -> dict:
+    from cavebot_combat import validate_combat,eligible_monsters,choose_target,target_policy,attack_distance_ok
+    from combat_spell_conditions import evaluate_spells
+    config=validate_combat(config)
+    monitor=getattr(state,'passive_map_monitor',None)
+    sample=monitor.snapshot() if state.connected and monitor else None
+    candidates=eligible_monsters(state.game_state,sample,config) if sample else []
+    target=choose_target(candidates,config)
+    spells=target_policy(config,target)['spells'] if target else config['spells']
+    checks=evaluate_spells(spells,state.game_state,candidates,target,sample=sample)
+    if target and not attack_distance_ok(config,target):
+        for row in checks:row.update(ready=False,selected=False,reason='Strategia dystansowa: cel za blisko')
+    return {'targets':sorted(candidates,key=lambda c:(-c['priority'],c['distance'])),'selected':target,'spells':checks,
+            'message':'Podgląd niczego nie atakuje. Cel jest rozpoznawany tylko ze świeżego odczytu potwora i pola.'}
+
+
+async def _async_adaptive_control(command: str, config: dict | None=None) -> dict:
+    from adaptive_cavebot import AdaptiveCavebot,MANUAL_MOVES
+    from route_identity import same_route
+    name="adaptive_cavebot";controller=getattr(state,name,None)
+    task=state._action_tasks.get(name)
+    if command=='configure_combat':
+        from cavebot_combat import validate_combat
+        if task and not task.done():raise ValueError('Zatrzymaj przed zmianą profilu walki.')
+        state.settings['combat_profile']=validate_combat((config or {}).get('combat'))
+        selected=state.settings.get('selected_combat_profile')
+        if selected:
+            row=state.profile_store.get(selected,'combat')
+            state.profile_store.save('combat',row['name'],state.settings['combat_profile'],selected)
+        save_settings(state.settings)
+        return {'configured':True}
+    if command=='resume' and controller and controller.status=='running' and controller.navigation_hold:
+        controller.retry_navigation()
+        return controller.snapshot()
+    if command in {'start','start_combat','resume'}:
+        if task and not task.done():raise ValueError("V2 już wykonuje trasę.")
+        if state._adaptive_prepare_token is not None:raise ValueError('Trwa przygotowanie trasy. Poczekaj lub naciśnij Stop.')
+        config=config or {};candidate=AdaptiveCavebot(state)
+        token=object();session=state;state._adaptive_prepare_token=token
+        proxy=state.game_proxy
+        def cancel_preparation(opcode,reader):
+            if opcode in MANUAL_MOVES or opcode in {ClientOpcode.USE_ITEM,ClientOpcode.USE_ITEM_EX,ClientOpcode.CANCEL_ATTACK}:
+                if session._adaptive_prepare_token is token:session._adaptive_prepare_token=None
+        if proxy:proxy.register_client_packet_callback(cancel_preparation)
+        try:
+            resume=(command=='resume' or (command=='start' and controller and
+                    controller.resumable_for(config.get('scope'),config.get('draft_id'),config.get('loop',True)) and
+                    same_route(next((d for d in state.passive_map_monitor.atlas.drafts() if d['id']==controller.draft_id),None),controller.route_draft)))
+            if resume:
+                if not controller or not controller.path or controller.status not in {'idle','paused','ready'}:
+                    raise ValueError('Nie ma postępu trasy do wznowienia.')
+                candidate=await controller.resume_candidate()
+                candidate.status='ready'
+            elif command=='start_combat':candidate.prepare_combat_only(config.get('combat',state.settings.get('combat_profile')))
+            else:await candidate.prepare_async(config.get("scope"),config.get("draft_id"),config.get("loop",True),0)
+            if state is not session or state._adaptive_prepare_token is not token:
+                raise ValueError('Przygotowanie trasy anulowano. V2 pozostaje wyłączony.')
+            active=state._action_tasks.get(name)
+            if active and not active.done():raise ValueError('V2 jest już uruchomiony.')
+            candidate.guard();candidate.map_now()
+            previous=getattr(state,name,None);state.adaptive_cavebot=candidate
+            error=_start_action(name)
+            if error:
+                state.adaptive_cavebot=previous
+                raise ValueError(error)
+            controller=candidate
+            state.settings.setdefault("actions",{}).setdefault(name,{})["enabled"]=True
+        finally:
+            if proxy:proxy.unregister_client_packet_callback(cancel_preparation)
+            if session._adaptive_prepare_token is token:session._adaptive_prepare_token=None
+    elif command=="discard_progress":
+        if (task and not task.done()) or (controller and controller.status=='running'):
+            raise ValueError('Najpierw zatrzymaj V2, potem odrzuć postęp.')
+        state._adaptive_prepare_token=None
+        if controller:controller.stop('Postęp odrzucony. Zapisana trasa i ustawienia walki pozostają zachowane.')
+        state.settings.setdefault('actions',{}).setdefault(name,{})['enabled']=False
+    elif command in {"pause","stop"}:
+        _stop_action(name)
+        if task:
+            await asyncio.gather(task,return_exceptions=True)
+            if state.game_proxy and state.connected and not getattr(controller,"combat_only",False):
+                await state.game_proxy.inject_to_server(build_stop_walk_packet())
+        state.settings.setdefault("actions",{}).setdefault(name,{})["enabled"]=False
+        if controller and command=="stop":controller.stop(preserve_progress=True)
+    else:raise ValueError("Nieznane polecenie V2.")
+    return controller.snapshot() if controller else {"status":"idle","reason":"V2 jest wyłączony."}
 
 
 async def _async_restart_action(name: str) -> str:
     """Stop and re-start an action. Returns a status message."""
+    if name in {"cavebot","cavebot2","adaptive_cavebot"}:
+        return "Użyj Start/Wznów w Cavebot."
+    if name == "auto_barrier_band":
+        try: validate_band_config(state.settings.get("actions", {}).get(name, {}))
+        except ValueError as exc: return f"Error: {exc}"
     path = ACTIONS_DIR / f"{name}.py"
     if not path.exists():
         return f"actions/{name}.py not found."
@@ -407,28 +841,37 @@ async def _async_restart_action(name: str) -> str:
 
 
 _dashboard_launched = False
+_dashboard_processes: dict[str, subprocess.Popen] = {}
 DASHBOARD_PORT = 4747
 
 
-def _kill_port(port: int) -> None:
-    """Kill any process listening on the given TCP port (Windows)."""
-    try:
-        result = subprocess.run(
-            f'netstat -ano | findstr "LISTENING" | findstr ":{port} "',
-            capture_output=True, text=True, shell=True,
-        )
-        pids = set()
-        for line in result.stdout.strip().splitlines():
-            parts = line.split()
-            if parts:
-                pids.add(parts[-1])
-        for pid in pids:
-            if pid and pid != "0" and pid.isdigit():
-                subprocess.run(["taskkill", "/F", "/PID", pid],
-                               capture_output=True)
-                log.info(f"Killed PID {pid} on port {port}")
-    except Exception as e:
-        log.debug(f"_kill_port({port}): {e}")
+def _dashboard_running(name: str) -> bool:
+    process = _dashboard_processes.get(name)
+    return process is not None and process.poll() is None
+
+
+def _stop_dashboard() -> None:
+    """Stop only process trees started by this MCP server, never other apps."""
+    global _dashboard_launched
+    for process in _dashboard_processes.values():
+        if process.poll() is not None:
+            continue
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                process.terminate()
+            process.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            log.warning("Could not stop dashboard child PID %s", process.pid)
+    _dashboard_processes.clear()
+    _dashboard_launched = False
+
+
+atexit.register(_stop_dashboard)
 
 
 def _check_process_running(name: str) -> bool:
@@ -444,24 +887,23 @@ def _check_process_running(name: str) -> bool:
 
 
 def _check_port_listening(port: int) -> bool:
-    """Check if something is listening on the given TCP port."""
+    """Probe loopback without shelling out to netstat."""
+    import socket
     try:
-        result = subprocess.run(
-            f'netstat -ano | findstr "LISTENING" | findstr ":{port} "',
-            capture_output=True, text=True, shell=True, timeout=5,
-        )
-        return bool(result.stdout.strip())
-    except Exception:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
         return False
 
 
 def _check_pipe_exists() -> bool:
     """Check if the dbvbot named pipe exists (DLL loaded and running)."""
     try:
+        bridge = getattr(state.game_state, "dll_bridge", None)
+        if bridge is not None:
+            return bridge.connected
         from dll_bridge import DllBridge
-        bridge = DllBridge()
-        exists = bridge.pipe_exists()
-        return exists
+        return DllBridge().pipe_exists()
     except Exception:
         return False
 
@@ -506,11 +948,11 @@ def _build_status_report() -> str:
 
     # Dashboard / Electron
     dashboard_listening = _check_port_listening(DASHBOARD_PORT)
-    electron_running = _check_process_running("electron.exe")
+    electron_running = _dashboard_running("electron")
     if electron_running and dashboard_listening:
         lines.append(f"[OK] Dashboard: Electron running on port {DASHBOARD_PORT}")
     elif dashboard_listening:
-        lines.append(f"[OK] Dashboard: dev server on port {DASHBOARD_PORT} (Electron starting...)")
+        lines.append(f"[OK] Dashboard: server on port {DASHBOARD_PORT} (Electron starting...)")
     elif _dashboard_launched:
         lines.append("[..] Dashboard: launch requested, waiting for startup...")
     else:
@@ -527,55 +969,39 @@ def _build_status_report() -> str:
 
 
 def _launch_dashboard() -> None:
-    """Fire-and-forget launch of the Electron dashboard.
-
-    Re-launches Electron if it has exited; skips Next.js if already on port.
-    """
+    """Launch the built, loopback-only dashboard and its authenticated Electron UI."""
     global _dashboard_launched
     import shutil
     dashboard_dir = Path(__file__).parent / "dashboard"
-    if not (dashboard_dir / "package.json").exists():
-        log.warning("Dashboard not found — skipping launch.")
+    if os.name != "nt":
+        log.warning("The game dashboard requires Windows.")
         return
-
-    npm = shutil.which("npm.cmd") or shutil.which("npm")
+    if not (dashboard_dir / ".next" / "BUILD_ID").exists():
+        log.warning("Build the dashboard first: cd dashboard && npm ci && npm run build")
+        return
+    npm = shutil.which("npm.cmd")
     if npm is None:
-        log.warning("npm not found on PATH — cannot launch dashboard.")
+        log.warning("npm.cmd not found on PATH — cannot launch dashboard.")
         return
-
-    nextjs_running = _check_port_listening(DASHBOARD_PORT)
-    electron_running = _check_process_running("electron.exe")
-
-    if nextjs_running and electron_running:
-        log.info("Dashboard already fully running — skipping launch.")
-        _dashboard_launched = True
+    if not _dashboard_running("next") and _check_port_listening(DASHBOARD_PORT):
+        log.error("Dashboard port %s is occupied by another process; refusing to reuse it.", DASHBOARD_PORT)
         return
-
     try:
-        # Start Next.js dev server only if not already listening
-        if not nextjs_running:
-            _kill_port(DASHBOARD_PORT)
-            subprocess.Popen(
-                f'"{npm}" run dev',
-                cwd=str(dashboard_dir),
-                shell=True,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
+        for name, script in (("next", "start"), ("electron", "electron:only")):
+            if _dashboard_running(name):
+                continue
+            env = os.environ.copy()
+            env.pop("DBV_DASHBOARD_TOKEN", None)
+            if name == "electron":
+                env["DBV_DASHBOARD_TOKEN"] = SESSION_TOKEN
+            _dashboard_processes[name] = subprocess.Popen(
+                f'"{npm}" run {script}', cwd=str(dashboard_dir), shell=True,
+                env=env, creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            log.info(f"Next.js dev server launching on port {DASHBOARD_PORT}")
-
-        # Start Electron only if not already running
-        if not electron_running:
-            subprocess.Popen(
-                f'"{npm}" run electron:only',
-                cwd=str(dashboard_dir),
-                shell=True,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
-            log.info("Electron launching (waiting for Next.js).")
-
         _dashboard_launched = True
     except Exception as e:
-        log.warning(f"Failed to launch dashboard: {e}")
+        log.warning("Failed to launch dashboard: %s", e)
+        _stop_dashboard()
 
 
 # ── MCP Server ──────────────────────────────────────────────────────
@@ -583,8 +1009,10 @@ def _launch_dashboard() -> None:
 mcp = FastMCP(
     "dbvictory-bot",
     instructions=(
-        "DBVictory game bot. Use start_bot first to patch the client and "
-        "launch the proxy. Then use the other tools to control the character."
+        "DBVictory game bot. Inspect get_status and list_actions first. "
+        "Call start_bot only when the user wants to connect to the Windows game client. "
+        "It patches client memory and launches local proxies. Login happens in the "
+        "game client; never request or log credentials. Enable only requested actions."
     ),
 )
 
@@ -622,13 +1050,14 @@ async def _reset_bot() -> str:
     """Tear down the running bot, hot-reload modules, and reset state."""
     global _dashboard_launched
     import game_state as _gs_mod
-    import dashboard_api as _da_mod
 
     log.info("=== RESETTING BOT ===")
 
+    state._adaptive_prepare_token=None
     # 1. Stop all running actions
     for name in list(state._action_tasks):
         _stop_action(name)
+    if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Sesja została zresetowana.")
     await asyncio.sleep(0.1)
 
     # 2. Close listening servers FIRST (prevents old server accepting new clients)
@@ -681,16 +1110,8 @@ async def _reset_bot() -> str:
 
     await asyncio.sleep(1.0)  # Windows needs time for port release
 
-    # 4. Kill dashboard (Electron + Next.js dev server)
-    _kill_port(DASHBOARD_PORT)
-    try:
-        subprocess.run(
-            'taskkill /F /IM electron.exe',
-            shell=True, capture_output=True,
-        )
-    except Exception:
-        pass
-    _dashboard_launched = False
+    # 4. Stop only our dashboard process trees.
+    _stop_dashboard()
 
     # 5. Hot-reload Python modules
     try:
@@ -698,11 +1119,8 @@ async def _reset_bot() -> str:
         log.info("Reloaded game_state.py")
     except Exception as e:
         log.warning(f"Failed to reload game_state: {e}")
-    try:
-        importlib.reload(_da_mod)
-        log.info("Reloaded dashboard_api.py")
-    except Exception as e:
-        log.warning(f"Failed to reload dashboard_api: {e}")
+    # Keep dashboard_api alive: its loopback listeners, credentials and client
+    # registry belong to this MCP process, not to one game connection.
     import cavebot as _cb_mod
     try:
         importlib.reload(_cb_mod)
@@ -733,6 +1151,10 @@ async def _reset_bot() -> str:
     state._action_tasks.clear()
     state.game_state = GameState()
     state.settings = load_settings()
+    state.automation_paused = bool(state.settings.get("automation_paused", False))
+    state.automation_pause_kind = state.settings.get("automation_pause_kind","emergency") if state.automation_paused else None
+    state._paused_playback = None
+    state._stopping_tasks = []
 
     # Reset cavebot state
     state.recording_active = False
@@ -869,7 +1291,23 @@ async def start_bot() -> str:
     redirect traffic through the local proxy, then waits for the player
     to log in through the game client.
     """
-    if state.ready:
+    if os.name != "nt":
+        return "ERROR: start_bot requires native Windows and the running DBVictory client."
+
+    # Fail before any patch, socket closure or session teardown on unknown builds.
+    try:
+        from passive_map_win32 import ReadOnlyClient
+        verified_client = ReadOnlyClient()
+        try:
+            observer = verified_client.profile.observer
+        finally:
+            verified_client.close()
+        if observer and not Path(__file__).with_name("dll").joinpath("dbvobserver_20261116.dll").is_file():
+            return "ERROR: Build dll/dbvobserver_20261116.dll before starting this client version."
+    except Exception as exc:
+        return f"ERROR: Client compatibility check failed: {exc}"
+
+    if state.ready or state.game_proxy or state.login_proxy:
         # Auto-reset: tear down everything and continue to fresh start
         log.info("Bot already running — auto-resetting...")
         await _reset_bot()
@@ -912,6 +1350,7 @@ async def start_bot() -> str:
     # ── Create proxies ──────────────────────────────────────────────
     state.login_proxy = OTProxy(SERVER_HOST, LOGIN_PORT, LOGIN_PORT, is_login_proxy=True)
     state.game_proxy = OTProxy(SERVER_HOST, GAME_PORT, GAME_PORT, is_login_proxy=False)
+    state.game_proxy.injections_paused = state.automation_paused
 
     # Callbacks
     # NOTE: on_server_packet removed — scan_packet handles all opcodes via
@@ -923,6 +1362,9 @@ async def start_bot() -> str:
         except ValueError:
             name = "?"
         log.debug(f"[C->S] 0x{opcode:02X} ({name})")
+        if opcode in (ClientOpcode.MOVE_THING, ClientOpcode.REQUEST_TRADE, ClientOpcode.ACCEPT_TRADE,
+                      ClientOpcode.BUY_ITEM, ClientOpcode.SELL_ITEM):
+            state.potion_diagnostics.invalidate_inventory()
         # Track current attack target in game_state
         if opcode == ClientOpcode.ATTACK:
             try:
@@ -931,16 +1373,31 @@ async def start_bot() -> str:
             except Exception:
                 pass
         # Log USE_ITEM details so we can discover item IDs
-        elif opcode == ClientOpcode.USE_ITEM:
+        elif opcode in (ClientOpcode.USE_ITEM, ClientOpcode.USE_ITEM_EX, ClientOpcode.USE_ON_CREATURE):
             try:
                 pos = reader.read_position()
                 item_id = reader.read_u16()
                 stack_pos = reader.read_u8()
+                if item_id in HEALING_ITEMS:
+                    mode = "self" if opcode == ClientOpcode.USE_ON_CREATURE else "use" if opcode == ClientOpcode.USE_ITEM else "use_with"
+                    if opcode == ClientOpcode.USE_ON_CREATURE and reader.read_u32() != state.game_state.player_id:
+                        mode = "other_creature"
+                    state.potion_diagnostics.record_use(item_id, mode, state.game_state)
+                    cfg = validate_potion_config(state.settings.get("actions", {}).get("auto_potions", {}))
+                    state.potion_scheduler.record_item_use(item_id, cfg, _time.monotonic(), state.game_state.stats_updated_at)
                 log.info(f"[SNIFF] USE_ITEM pos={pos} item_id={item_id} stack={stack_pos}")
             except Exception:
                 pass
 
     def on_login_success(keys):
+        # New identity/stats/conditions for every login, including reconnects.
+        state.game_state = GameState()
+        login_state = state.game_state
+        login_state.client_state_required = observer
+        login_state.session_id = getattr(state.game_proxy,'session_generation',0)
+        monitor = getattr(state, "passive_map_monitor", None)
+        if monitor:
+            monitor.reset_learning_session()
         state.ready = True
         state.game_state.lure_active = False  # always clear stale lure state on reconnect
         log.info("=== BOT READY — game session established ===")
@@ -958,6 +1415,9 @@ async def start_bot() -> str:
                 if (state.game_proxy and state.game_proxy.logged_in
                         and state.game_proxy.server_writer is not None):
                     break
+            if (not state.connected or not state.game_proxy.logged_in
+                    or state.game_state is not login_state):
+                return
             n = _start_all_enabled_actions()
             log.info(f"on_login_success: {n} action(s) auto-started")
         asyncio.ensure_future(_direct_start())
@@ -972,10 +1432,43 @@ async def start_bot() -> str:
         # Fire-and-forget: scan in thread pool so event loop stays responsive
         # for healing (auto_senzu), combat (auto_combat), and targeting actions.
         loop = asyncio.get_event_loop()
-        loop.run_in_executor(_scan_pool, scan_packet, data, state.game_state)
+        gs = state.game_state
+        def scan_and_observe():
+            gs.alert_chat_callback = lambda message, source: state.alert_center.observe_chat(message, state, source) if gs is state.game_state else None
+            gs.potion_message_callback = lambda *args, **kwargs: state.potion_diagnostics.observe_message(*args, **kwargs) if gs is state.game_state else None
+            if gs is not state.game_state:return
+            scan_packet(data, gs)
+            if gs is state.game_state:state.potion_diagnostics.observe_stats(gs)
+        loop.run_in_executor(_scan_pool, scan_and_observe)
+
+    def on_disconnect():
+        state._adaptive_prepare_token=None
+        state.potion_diagnostics.invalidate_inventory()
+        monitor = getattr(state, "passive_map_monitor", None)
+        if monitor:
+            monitor.reset_learning_session()
+        state.ready = False
+        state._paused_playback = None
+        state.playback_active = False
+        state.game_state.stats_updated_at = 0
+        state.game_state.lure_active = False
+        state.game_state.force_target = None
+        for name in list(state._action_tasks):
+            _stop_action(name)  # The passive reader also belongs to this login.
+        if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Rozłączono — wymagany ponowny Start.")
+        if state._auto_task:
+            state._auto_task.cancel()
+        state.game_proxy.pause_injections()
+        state.game_proxy.injections_paused = state.automation_paused
 
     state.game_proxy.register_client_packet_callback(on_client_packet)
+    def observe_navigation_command(opcode, reader):
+        monitor = getattr(state, "passive_map_monitor", None)
+        if monitor:
+            monitor.record_client_packet(opcode, reader)
+    state.game_proxy.register_client_packet_callback(observe_navigation_command)
     state.game_proxy.on_login_success = on_login_success
+    state.game_proxy.on_game_disconnected = on_disconnect
     state.game_proxy.on_raw_server_data = on_raw_server_data
 
     # ── Launch proxies as background tasks ──────────────────────────
@@ -1138,6 +1631,11 @@ async def autowalk(direction: str, steps: int = 100, delay: float = 0.5) -> str:
         steps: Maximum number of steps (default 100).
         delay: Seconds between each step (default 0.5).
     """
+    navigation=state._action_tasks.get("adaptive_cavebot")
+    if navigation and not navigation.done():
+        return "Zatrzymaj Cavebot przed uruchomieniem auto-walk."
+    if state.automation_paused:
+        return "Emergency pause is active. Unlock it first."
     if not state.connected:
         return "Bot is not connected. Call start_bot first."
 
@@ -1406,6 +1904,7 @@ async def send_ping() -> str:
 async def get_status() -> str:
     """Get the current connection state and packet statistics."""
     status = _build_status_report()
+    status += f"\nEmergency pause: {'ACTIVE' if state.automation_paused else 'off'}"
 
     # Running actions
     running = [n for n, t in state._action_tasks.items() if t and not t.done()]
@@ -1414,8 +1913,48 @@ async def get_status() -> str:
 
     auto = "running" if (state._auto_task and not state._auto_task.done()) else "idle"
     status += f"\nAuto-walk: {auto}"
+    if state.game_proxy and hasattr(state.game_proxy,'command_snapshot'):
+        commands=state.game_proxy.command_snapshot()
+        status += f"\nSession: {commands['session']} · queued commands: {commands['queued']}"
 
     return f"=== Component Status ===\n{status}"
+
+
+@mcp.tool()
+async def open_dashboard() -> str:
+    """Reopen this session's panel without touching game sockets or actions."""
+    if state.game_proxy is None:
+        return "ERROR: Bot session is not started. Start from the character list first."
+    _launch_dashboard()
+    if _dashboard_running('electron'):
+        return "Panel opened. Game connection and actions unchanged."
+    return "ERROR: Could not open panel. Check the installed dashboard and Node.js."
+
+
+@mcp.tool()
+async def emergency_stop() -> str:
+    """Latch off all user actions and cavebot. Relay and read-only status remain available."""
+    return await _async_emergency_stop()
+
+
+@mcp.tool()
+async def unlock_automation() -> str:
+    """Clear emergency latch, without restarting any action or route."""
+    return await _async_unlock_automation()
+
+
+@mcp.tool()
+async def configure_potions(config: dict) -> dict:
+    """Configure ordered healing rules (HP/Ki, item 10161/10160/8465, threshold, jitter, interval, cooldown, mode). Legacy potion fields remain supported until rules are saved. Does not enable it."""
+    return await _async_update_action_config("auto_potions", config)
+
+
+@mcp.tool()
+async def potion_diagnostics(enabled: bool | None = None) -> dict:
+    """Observe manual potion use for up to 5 minutes; never sends item-use packets."""
+    if enabled is not None:
+        return await _async_potion_diagnostics(enabled)
+    return state.potion_diagnostics.snapshot()
 
 
 @mcp.tool()
@@ -1485,6 +2024,8 @@ async def delete_recording(name: str) -> str:
 
 async def _async_play_recording(name: str, loop: bool = False) -> str:
     """Start playback (shared by MCP tool and dashboard API)."""
+    if state.automation_paused:
+        return "Error: Emergency pause is active. Unlock it first."
     if not state.connected:
         return "Bot is not connected. Call start_bot first."
     if state.playback_active:
@@ -1497,6 +2038,10 @@ async def _async_play_recording(name: str, loop: bool = False) -> str:
     waypoints = rec.get("waypoints", [])
     if not waypoints:
         return f"Recording '{name}' has no waypoints."
+
+    _, error = route_entry(cavebot.build_actions_map(rec), state.game_state.position)
+    if error:
+        return f"Error: {error}"
 
     state.playback_active = True
     state.playback_recording_name = name
@@ -1531,6 +2076,7 @@ async def _async_play_recording(name: str, loop: bool = False) -> str:
 
 async def _async_stop_playback() -> str:
     """Stop playback (shared by MCP tool and dashboard API)."""
+    state._paused_playback = None
     # Always clear lure_active, even if playback_active is already False
     # (cavebot may have crashed/ended without clearing it)
     was = state.game_state.lure_active

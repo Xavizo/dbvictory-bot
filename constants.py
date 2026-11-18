@@ -16,8 +16,15 @@ _PROJECT_ROOT = Path(__file__).parent
 
 # ── Network ────────────────────────────────────────────────────────
 SERVER_HOST = os.environ.get("DBV_SERVER_HOST", "87.98.220.215")
-LOGIN_PORT = 7171
-GAME_PORT = 7172
+def _configured_port(name: str, default: int) -> int:
+    value = int(os.environ.get(name, str(default)))
+    if not 1 <= value <= 65535:
+        raise ValueError(f"{name} must be a TCP port from 1 to 65535")
+    return value
+
+
+LOGIN_PORT = _configured_port("DBV_LOGIN_PORT", 7171)
+GAME_PORT = _configured_port("DBV_GAME_PORT", 7172)
 
 # Packed binary forms used by proxy IP replacement
 SERVER_IP_BYTES = bytes(int(b) for b in SERVER_HOST.split("."))  # e.g. b'\x57\x62\xdc\xd7'

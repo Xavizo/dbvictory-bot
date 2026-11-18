@@ -30,6 +30,20 @@ dll/test_dll*.txt
 
 # Node
 node_modules/
+.venv/
+.pytest_cache/
+*.tsbuildinfo
+.codex/
 
 # Electron
 electron_err.log
+
+# Local passive navigation observations
+local_data/
+
+# Local client spell catalogue and graphics
+/dashboard/public/local-spells/
+
+# Local build backups and newly recorded gameplay routes
+/dashboard/.next-*/
+/recordings/atlas_*.json

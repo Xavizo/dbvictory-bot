@@ -3,6 +3,7 @@
 import sys
 import os
 import time
+from route_safety import route_entry
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -449,7 +450,7 @@ async def _execute_walk_to(bot, node, prefix="", exact=False):
     cancel_count = 0
     last_cancel_pos = None
 
-    bot.log(f"{prefix} walk_to ({target[0]},{target[1]},{target[2]}) dist={dist}{' [exact]' if exact else ''}")
+    bot.log(f"{prefix} walk_to ({target[0]},{target[1]},{target[2]}) dist={dist}{' [exact]' if exact else ''} [ground-click item_id={item_id} stack=0]")
 
     # Phase 0: approach if target is beyond server click range
     chebyshev = max(abs(current[0] - target[0]), abs(current[1] - target[1]))
@@ -1020,7 +1021,9 @@ async def _run_playback(bot):
     if not hasattr(state, 'playback_failed_nodes'):
         state.playback_failed_nodes = set()
 
+    completed_pass = False
     while state.playback_active:
+        await bot.sleep(0.1)
         if not bot.is_connected:
             await bot.sleep(1)
             continue
@@ -1040,6 +1043,12 @@ async def _run_playback(bot):
         actions_map = build_actions_map(rec)
         state.playback_actions_map = actions_map
         state.playback_total = len(actions_map)
+
+        entry_index, route_error = route_entry(actions_map, bot.position, restart=completed_pass)
+        if route_error:
+            bot.log(f"Playback stopped: {route_error}")
+            state.playback_active = False
+            break
 
         # Snapshot start time/XP on first loop (not on re-loops)
         if state.playback_start_time == 0:
@@ -1071,9 +1080,10 @@ async def _run_playback(bot):
             bot.log(f"{lure_label} strategy active — suppressing auto-targeting while walking")
 
         aborted = False
-        i = 0
+        i = entry_index
         consecutive_walk_failures = 0
         while i < len(actions_map):
+            await bot.sleep(0)  # always yield, including skipped nodes
             node = actions_map[i]
             if not state.playback_active or not bot.is_connected:
                 break
@@ -1287,24 +1297,14 @@ async def _run_playback(bot):
             player_z = player_pos[2]
             expected_z = _node_expected_z(node)
             if player_z != expected_z:
-                best_j = None
-                best_dist = float("inf")
-                for j in range(len(actions_map)):
-                    if _node_expected_z(actions_map[j]) == player_z:
-                        t = actions_map[j]["target"]
-                        d = max(abs(player_pos[0] - t[0]), abs(player_pos[1] - t[1]))
-                        if d < best_dist:
-                            best_dist = d
-                            best_j = j
-                if best_j is not None:
-                    bot.log(f"{prefix} Z mismatch (on Z={player_z}, node expects Z={expected_z}), "
-                            f"nearest Z={player_z} node [{best_j+1}/{len(actions_map)}] dist={best_dist}")
-                    i = best_j
-                    continue
-                else:
-                    bot.log(f"{prefix} Z mismatch (on Z={player_z}, node expects Z={expected_z}), no matching node")
-                    i += 1
-                    continue
+                best_j, route_error = route_entry(actions_map, player_pos)
+                if route_error:
+                    bot.log(f"Playback stopped: {route_error}")
+                    state.playback_active = False
+                    break
+                bot.log(f"{prefix} Floor changed, rejoining nearby node {best_j + 1}")
+                i = best_j
+                continue
 
             ntype = node["type"]
 
@@ -1387,6 +1387,7 @@ async def _run_playback(bot):
         )
 
         if state.playback_active and state.playback_loop and not aborted:
+            completed_pass = True
             state.playback_loop_count += 1
             _accumulate_segment_stats()
             state.segment_enter_time.clear()

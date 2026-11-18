@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "asset_sha256": "26e6342c67378183dd422d3a044a7ef159e27ebfe2af1594fae8e0a35f200c91",
+  "types": {
+    "4560": {
+      "kind": "stairs",
+      "evidence": "User-confirmed DBV v5 stairs, distinct from ground 4561."
+    },
+    "1956": {
+      "kind": "stairs",
+      "evidence": "User and visual comparison at 115,57,8; approach decoration 1957 is separate."
+    },
+    "11652": {
+      "kind": "teleport",
+      "evidence": "User identified teleport at 74,79,7."
+    },
+    "11941": {
+      "kind": "teleport",
+      "evidence": "User identified teleport at 75,79,7."
+    },
+    "14606": {
+      "kind": "hole",
+      "evidence": "User and visual comparison at 536,1166,5 above ladder 14607 at z=6."
+    },
+    "6264": {
+      "kind": "door",
+      "evidence": "User confirmed gate at 986,609,7. Level requirement is location-specific."
+    }
+  },
+  "locations": {
+    "986,609,7": {
+      "kind": "level_gate",
+      "item_id": 6264,
+      "required_level": 320,
+      "evidence": "2026-11-16 user look report: gate of expertise for level 320. No successful crossing observed."
+    }
+  },
+  "profiles": {
+    "cc6d91160218e7565ab1247d19ae483485dedaf6a18e24a05978ef31badb3669": {
+      "asset_sha256": "cc6d91160218e7565ab1247d19ae483485dedaf6a18e24a05978ef31badb3669",
+      "types": {
+        "9410": {
+          "kind": "rope_spot",
+          "evidence": "User report 2026-11-16: Rope 3003 or fly up. Destination not observed."
+        },
+        "606": {
+          "kind": "covered_hole",
+          "evidence": "User report: Shovel 3457 or multitool opens 606 into 607; then step in."
+        },
+        "607": {
+          "kind": "hole",
+          "evidence": "User report: open state of 606, enter by stepping."
+        },
+        "476": {
+          "kind": "hole",
+          "evidence": "User confirmed trapdoor 2026-11-17; passive records confirm step 658,424,7 to 658,424,8 twice."
+        },
+        "1948": {
+          "kind": "ladder",
+          "evidence": "User identified ladder 2026-11-17; passive use records at 658,424,8 and 660,422,7 confirm upward exits."
+        }
+      }
+    }
+  }
+}

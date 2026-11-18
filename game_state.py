@@ -10,6 +10,7 @@ import struct
 import sys
 import time
 from collections import deque
+from client_player_state import client_field
 
 from constants import PACKET_FORMATS as PF
 from protocol import ServerOpcode
@@ -29,9 +30,24 @@ MAX_VALID_CAPACITY = 100000
 class GameState:
     """Plain data holder for parsed game state."""
 
+    hp = client_field("hp")
+    max_hp = client_field("max_hp")
+    mana = client_field("mana")
+    max_mana = client_field("max_mana")
+    stats_updated_at = client_field("stats_updated_at")
+    level = client_field("level")
+    magic_level = client_field("magic_level")
+    position = client_field("position", (0,0,0))
+
     def __init__(self):
+        self.client_state_required = False
+        self.client_snapshot = None
+        self.client_player_id = 0
+        self.session_id = 0
         # Player identity
         self.player_id: int = 0  # creature ID of the player (from 0x0A)
+
+        self.player_name = ""
 
         # Player stats
         self.hp: int = 0
@@ -166,10 +182,12 @@ def scan_packet(data: bytes, gs: GameState) -> None:
     For messages we can't consume (map data etc.), we stop and
     then do a targeted search for important opcodes we missed.
     """
+    gs._server_packet_seq = getattr(gs, "_server_packet_seq", 0) + 1
+    position_before = gs.packet_position
     pos = 0
-    found_stats = False
     found_icons = False
-    handled_map_slice = False
+    map_anchor = None
+    gs._map_update_seen = False
     while pos < len(data):
         opcode = data[pos]
         pos += 1
@@ -178,35 +196,36 @@ def scan_packet(data: bytes, gs: GameState) -> None:
         except Exception:
             break
         if new_pos < 0:
-            # _parse_at returned -1 but may have updated position (MAP_SLICE/MAP_DESCRIPTION)
-            if opcode in (ServerOpcode.MAP_SLICE_NORTH, ServerOpcode.MAP_SLICE_EAST,
-                          ServerOpcode.MAP_SLICE_SOUTH, ServerOpcode.MAP_SLICE_WEST,
-                          ServerOpcode.MAP_DESCRIPTION, ServerOpcode.LOGIN_OR_PENDING):
-                handled_map_slice = True
-                _map_slice_dbg(f"SEQ handled 0x{opcode:02X} at pos={pos-1} → pos={gs.position}")
-            else:
-                _map_slice_dbg(f"SEQ STOPPED at 0x{opcode:02X} pos={pos-1} pktlen={len(data)} "
-                               f"next5={data[pos-1:pos+4].hex()}")
+            if gs._map_update_seen:
+                map_anchor = gs.position
             break
-        if opcode == ServerOpcode.PLAYER_STATS:
-            found_stats = True
         if opcode == ServerOpcode.PLAYER_ICONS:
             found_icons = True
         pos = new_pos
 
-    # Fallback disabled — brute-force byte search hits false positives in text
-    # data (0x65='e', 0x67='g'). Position is now tracked via client walk packets.
-    if not handled_map_slice:
-        # Only log, don't try to fix from server data
-        pass
+    # A stair step can bundle a map strip followed by a complete floor refresh.
+    # Tile payloads are opaque; require corroborating ordered floor headers,
+    # never interpret a lone direction/position-like byte inside map data.
+    if map_anchor is not None:
+        _search_for_floor_position(data, pos, gs, map_anchor)
+
+    # Feed the recorder from confirmed packet positions. The DLL no longer
+    # supplies authoritative coordinates, so waiting for its old Z detector
+    # loses stair events (especially when recording stops on the new floor).
+    after = gs.packet_position
+    if (gs._map_update_seen and all(0 < c < 65535 for c in position_before[:2])
+            and abs(after[2] - position_before[2]) == 1
+            and max(abs(after[0] - position_before[0]), abs(after[1] - position_before[1])) <= 2):
+        event = "floor_change_up" if after[2] < position_before[2] else "floor_change_down"
+        gs.server_events.append((time.time(), event, {"pos": list(after), "z": after[2]}))
 
     # Search full packet for tile update opcodes (0x6A/0x6B/0x6C)
     # Done on full data (not just remainder) because tile updates can appear
     # anywhere, including after map data that stopped sequential parsing.
     _search_for_tile_updates(data, 0, gs)
 
-    # Fallback: search remaining data for PLAYER_STATS if not found yet
-    if not found_stats and pos < len(data):
+    # Apply later stats even when an earlier stats message was parsed already.
+    if pos < len(data):
         _search_for_stats(data, pos, gs)
 
     # Fallback: search remaining data for PLAYER_ICONS if not found yet
@@ -225,71 +244,42 @@ def scan_packet(data: bytes, gs: GameState) -> None:
         }
 
 
-_map_slice_dbg_f = None
-_map_slice_dbg_count = 0
+def _search_for_floor_position(data: bytes, start: int, gs: GameState, anchor) -> None:
+    """Recover a bundled floor refresh after a verified local map update.
 
-
-def _map_slice_dbg(msg: str) -> None:
-    return  # disabled — was writing 29 MB+ to disk, causing I/O lag
-
-
-def _search_for_map_slice(data: bytes, gs: GameState) -> None:
-    """Search packet for MAP_SLICE opcodes (0x65-0x68) to update position.
-
-    Scans the first 50 bytes of the packet for a MAP_SLICE opcode.
-    Applies at most ONE direction per packet.
+    DBV sends several 0x4B floor descriptions with the same central position.
+    Require at least three adjacent, ordered floors, including that position's
+    floor. An isolated plausible byte pattern is not a position update.
+    This is deliberately limited to nearby stairs and verified map contexts.
     """
-    global _map_slice_dbg_count
-    _N = ServerOpcode.MAP_SLICE_NORTH  # 0x65
-    _E = ServerOpcode.MAP_SLICE_EAST   # 0x66
-    _S = ServerOpcode.MAP_SLICE_SOUTH  # 0x67
-    _W = ServerOpcode.MAP_SLICE_WEST   # 0x68
-    if len(data) < 1:
+    marker = PF.get("floor_description", {}).get("opcode")
+    if marker is None:
         return
-
-    # Debug: log first bytes of packets that weren't handled by sequential parser
-    _map_slice_dbg_count += 1
-    if _map_slice_dbg_count <= 200:
-        hdr = data[:min(20, len(data))].hex()
-        _map_slice_dbg(f"fallback pkt len={len(data)} first20={hdr} "
-                       f"pos={gs.position} pkt_pos={gs.packet_position}")
-
-    # Search first 50 bytes for a MAP_SLICE opcode
-    scan_end = min(50, len(data))
-    b = None
-    for i in range(scan_end):
-        if data[i] in (_N, _E, _S, _W):
-            b = data[i]
-            if _map_slice_dbg_count <= 200:
-                _map_slice_dbg(f"  FOUND 0x{b:02X} at offset {i}")
-            break
-
-    if b is None:
-        return
-
-    # Update gs.position
-    x, y, z = gs.position
-    if b == _N:
-        gs.position = (x, y - 1, z)
-    elif b == _E:
-        gs.position = (x + 1, y, z)
-    elif b == _S:
-        gs.position = (x, y + 1, z)
-    elif b == _W:
-        gs.position = (x - 1, y, z)
-    # Update gs.packet_position
-    if gs.packet_position[0] < 100 and gs.position[0] > 100:
-        gs.packet_position = gs.position
-    px, py, pz = gs.packet_position
-    if b == _N:
-        gs.packet_position = (px, py - 1, pz)
-    elif b == _E:
-        gs.packet_position = (px + 1, py, pz)
-    elif b == _S:
-        gs.packet_position = (px, py + 1, pz)
-    elif b == _W:
-        gs.packet_position = (px - 1, py, pz)
-    gs.last_map_time = time.time()
+    marker = bytes([marker])
+    groups = {}
+    i = data.find(marker, start)
+    while i >= 0 and i + 7 <= len(data):
+        xyz = struct.unpack_from('<HHB', data, i + 1)
+        floor = data[i + 6]
+        x, y, z = xyz
+        if (0 < x < 65535 and 0 < y < 65535 and z < 16 and floor < 16
+                and abs(x - anchor[0]) <= 2 and abs(y - anchor[1]) <= 2
+                and abs(z - anchor[2]) <= 1):
+            groups.setdefault(xyz, []).append((i, floor))
+        i = data.find(marker, i + 1)
+    accepted = []
+    for xyz, headers in groups.items():
+        floors = [floor for _, floor in headers]
+        if len(floors) < 3 or xyz[2] not in floors:
+            continue
+        deltas = [b - a for a, b in zip(floors, floors[1:])]
+        if not (all(d == 1 for d in deltas) or all(d == -1 for d in deltas)):
+            continue
+        accepted.append((headers[-1][0], xyz))
+    if accepted:
+        _, xyz = max(accepted)
+        gs.position = gs.packet_position = xyz
+        gs.last_map_time = time.time()
 
 
 def _search_for_tile_updates(data: bytes, start: int, gs: GameState) -> None:
@@ -351,7 +341,10 @@ def _search_for_stats(data: bytes, start: int, gs: GameState) -> None:
     _st_mana = _st.get("mana", 23)
     _st_max_mana = _st.get("max_mana", 27)
     _st_capacity = _st.get("capacity", 8)
+    skip_until = start
     for i in range(start, len(data) - STATS_SIZE):
+        if i < skip_until:
+            continue
         if data[i] != ServerOpcode.PLAYER_STATS:
             continue
         p = i + 1
@@ -373,14 +366,19 @@ def _search_for_stats(data: bytes, start: int, gs: GameState) -> None:
             capacity = struct.unpack_from('<I', data, p + _st_capacity)[0]
         except (struct.error, IndexError):
             continue
-        if max_mana > MAX_VALID_MANA or mana > max_mana:
+        # DBV can report bonus Ki above its nominal maximum (e.g. 119/100).
+        # Do not discard HP and the whole login snapshot in that case.
+        if max_mana > MAX_VALID_MANA or mana > MAX_VALID_MANA:
             continue
-        if capacity == 0 or capacity > MAX_VALID_CAPACITY:
+        if mana > max_mana and not _st.get("allow_mana_over_max", False):
+            continue
+        if capacity > MAX_VALID_CAPACITY * _st.get("capacity_scale", 1):
             continue
         # Looks valid — parse fully
         _parse_at(ServerOpcode.PLAYER_STATS, data, p, gs)
-        log.info(f"STATS found via fallback search at offset {i}")
-        return
+        skip_until = p + STATS_SIZE
+        # A bundled packet can contain several stats messages. Apply all in
+        # order so the last (newest) update wins, without scanning inside stats.
 
 
 def _search_for_icons(data: bytes, start: int, gs: GameState) -> None:
@@ -464,8 +462,6 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
         needed = _st.get("size", 36)
         if pos + needed > len(data):
             return -1
-        # Raw hex dump for HP/Mana diagnosis
-        raw_hex = data[pos:pos + needed].hex()
         gs.hp = struct.unpack_from('<I', data, pos + _st.get("hp", 0))[0]
         gs.max_hp = struct.unpack_from('<I', data, pos + _st.get("max_hp", 4))[0]
         gs.capacity = struct.unpack_from('<I', data, pos + _st.get("capacity", 8))[0]
@@ -491,7 +487,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
             f"Stats: HP={gs.hp}/{gs.max_hp} MP={gs.mana}/{gs.max_mana} "
             f"Lv={gs.level} XP={gs.experience} ML={gs.magic_level}"
         )
-        _dump_stats_debug(gs, raw_hex)
+        _dump_stats_debug(gs, None)
         return pos + needed
 
     # CREATURE_HEALTH — 5 bytes: u32 + u8
@@ -524,13 +520,51 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
             gs._recent_kills_cleanup = now
         return pos + _ch_size
 
-    # CREATURE_MOVE — 11 bytes: pos(5) + u8 + pos(5)
+    # Mapped thing(6) + destination(5), plus u16 step duration for GameNewWalking.
+    # Consuming only 11 bytes in DBV interprets the duration as another opcode.
     if opcode == ServerOpcode.CREATURE_MOVE:
         _cm_size = PF.get("creature_move", {}).get("size", 11)
         if pos + _cm_size > len(data):
             return -1
-        # Skip — we just consume the bytes
+        # A move immediately followed by the matching map strip identifies the
+        # local player's move. Use its absolute destination, including both
+        # axes on diagonal steps. The strip's tile data is opaque, so stop here
+        # instead of counting the same step a second time or scanning its bytes.
+        # Ordinary nearby-creature moves do not change the player's position.
+        end = pos + _cm_size
+        if _cm_size >= 11 and end < len(data):
+            old = struct.unpack_from('<HHB', data, pos)
+            new = struct.unpack_from('<HHB', data, pos + 6)
+            if all(0 < x < 65535 and 0 < y < 65535 and z < 16 for x, y, z in (old, new)):
+                dx, dy, dz = (new[i] - old[i] for i in range(3))
+                strip_matches = {0x65: dy == -1, 0x66: dx == 1,
+                                 0x67: dy == 1, 0x68: dx == -1}
+                local_step = (dz == 0 and abs(dx) <= 1 and abs(dy) <= 1
+                              and strip_matches.get(data[end], False))
+                floor_opcode = PF.get("floor_description", {}).get("opcode")
+                floor_matches = (data[end] == floor_opcode and end + 7 <= len(data)
+                                 and struct.unpack_from('<HHB', data, end + 1) == new)
+                if local_step or floor_matches:
+                    gs.position = gs.packet_position = new
+                    gs.last_map_time = time.time()
+                    gs._map_update_seen = True
+                    return -1
         return pos + _cm_size
+
+    # Only known sequential boundaries; never fallback-scan chat inside map data.
+    if opcode == ServerOpcode.TALK:
+        from chat_messages import parse_talk
+        parsed = parse_talk(data, pos)
+        if parsed is None:
+            return -1
+        end, message = parsed
+        callback = getattr(gs, "alert_chat_callback", None)
+        if callback and message['kind'] is not None:
+            try:
+                callback(message, gs)
+            except Exception:
+                pass  # Optional notifications cannot break game state parsing.
+        return end
 
     # TEXT_MESSAGE — variable: u8 type + string(u16 len + chars)
     if opcode == ServerOpcode.TEXT_MESSAGE:
@@ -548,6 +582,12 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
             return -1
         text = data[pos + _tm_text:end].decode('latin-1', errors='replace')
         gs.messages.append({"type": msg_type, "text": text})
+        callback = getattr(gs, "potion_message_callback", None)
+        if callback and msg_type in (25,26) and len(text)<=240:
+            try:
+                callback(msg_type, text, batch_id=getattr(gs,"_server_packet_seq",None))
+            except Exception:
+                log.debug("Optional potion observation failed")
         if "can't throw there" in text.lower():
             gs.last_cant_throw = time.time()
         # "Creature is not reachable." — instantly blacklist current attack target
@@ -559,6 +599,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
                 log.info(f"NOT REACHABLE: blacklisted 0x{target_id:08X} for 10s")
         _check_pz_message(text, gs)
         log.info(f"TEXT_MESSAGE(type={msg_type}): {text}")
+
         return end
 
     # LOGIN_OR_PENDING — u32 player_id, u16 draw_speed, u8 can_report_bugs
@@ -567,7 +608,6 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
         _lp = PF.get("login_or_pending", {})
         _lp_pid = _lp.get("player_id_size", 4)
         _lp_hdr = _lp.get("header_before_position", 4)
-        _lp_win = _lp.get("map_description_search_window", 10)
         _pos = PF.get("position", {})
         _pos_x = _pos.get("x", 0)
         _pos_y = _pos.get("y", 2)
@@ -576,86 +616,77 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
             return -1
         new_pid = struct.unpack_from('<I', data, pos)[0]
         # Guard: only accept player_id in valid player range (0x10xxxxxx)
-        if 0x10000000 <= new_pid < 0x20000000 or gs.player_id == 0:
+        if gs.client_player_id:
+            pass  # Identity is pinned to the verified LocalPlayer for this login.
+        elif 0x10000000 <= new_pid < 0x20000000 or gs.player_id == 0:
             gs.player_id = new_pid
             log.info(f"LOGIN: player_id=0x{gs.player_id:08X}")
         else:
             log.warning(f"LOGIN: rejected suspicious player_id=0x{new_pid:08X} "
                         f"(keeping 0x{gs.player_id:08X})")
         pos += _lp_pid
-        # Search for MAP_DESCRIPTION within next N bytes (skip draw_speed/flags)
-        search_end = min(pos + _lp_win, len(data) - 5)
-        found_pos = False
-        for i in range(pos, search_end):
-            if data[i] == ServerOpcode.MAP_DESCRIPTION:
-                x = struct.unpack_from('<H', data, i + 1)[0]
-                y = struct.unpack_from('<H', data, i + 3)[0]
-                z = data[i + 5]
-                if 100 < x < 65000 and 100 < y < 65000 and z < 16:
-                    gs.position = (x, y, z)
-                    gs.packet_position = (x, y, z)
-                    gs.creatures = {cid: info for cid, info in gs.creatures.items() if info.get("source") == "dll"}
-                    gs.last_map_time = time.time()
-                    log.info(f"LOGIN position: ({x}, {y}, {z})")
-                    found_pos = True
-                    break
-        # Fallback: server may have changed the marker byte (was 0x64, now 0x4B).
-        # Position is still at fixed offset: draw_speed(2) + flags(1) + marker(1) = +4
-        if not found_pos and pos + _lp_hdr + 5 <= len(data):
-            i = pos + _lp_hdr
+        # The login header varies by client. Use the verified profile offset
+        # and marker, not a byte search that can match draw-speed/flag data.
+        i = pos + _lp_hdr
+        marker = _lp.get("map_description_marker", int(ServerOpcode.MAP_DESCRIPTION))
+        if i > pos and i + 5 <= len(data) and data[i - 1] == marker:
             x = struct.unpack_from('<H', data, i + _pos_x)[0]
             y = struct.unpack_from('<H', data, i + _pos_y)[0]
             z = data[i + _pos_z]
-            if 100 < x < 65000 and 100 < y < 65000 and z < 16:
+            if 0 < x < 65535 and 0 < y < 65535 and z < 16:
                 gs.position = (x, y, z)
                 gs.packet_position = (x, y, z)
                 gs.creatures = {cid: info for cid, info in gs.creatures.items() if info.get("source") == "dll"}
                 gs.last_map_time = time.time()
-                log.info(f"LOGIN position (fixed offset fallback): ({x}, {y}, {z})")
+                gs._map_update_seen = True
+                log.info(f"LOGIN position: ({x}, {y}, {z})")
         return -1  # Can't skip the rest (tile data follows)
 
-    # MAP_DESCRIPTION — read position then stop (can't skip tile data)
-    if opcode == ServerOpcode.MAP_DESCRIPTION:
+    # Full map or OTCv8 floor description. A floor description includes the
+    # central position and the described floor; other-floor tiles must not
+    # change the player's position.
+    floor_opcode = PF.get("floor_description", {}).get("opcode")
+    if opcode == ServerOpcode.MAP_DESCRIPTION or opcode == floor_opcode:
         _md = PF.get("map_description", {})
-        if pos + 5 > len(data):
+        is_floor = opcode == floor_opcode
+        if pos + (6 if is_floor else 5) > len(data):
             return -1
         x = struct.unpack_from('<H', data, pos + _md.get("position_x", 0))[0]
         y = struct.unpack_from('<H', data, pos + _md.get("position_y", 2))[0]
         z = data[pos + _md.get("position_z", 4)]
+        if not (0 < x < 65535 and 0 < y < 65535 and z < 16):
+            return -1
+        if is_floor and data[pos + 5] != z:
+            return -1
         gs.position = (x, y, z)
         gs.packet_position = (x, y, z)
         gs.creatures = {cid: info for cid, info in gs.creatures.items() if info.get("source") == "dll"}
         gs.last_map_time = time.time()
+        gs._map_update_seen = True
         log.info(f"MAP_DESCRIPTION: pos=({x}, {y}, {z}) — creatures cleared")
         return -1  # Can't skip tile data
 
     # MAP_SLICE — update position, but can't skip tile data
     if opcode in (ServerOpcode.MAP_SLICE_NORTH, ServerOpcode.MAP_SLICE_EAST,
                   ServerOpcode.MAP_SLICE_SOUTH, ServerOpcode.MAP_SLICE_WEST):
-        x, y, z = gs.position
+        # Standalone legacy strip: seed before applying the delta.
+        # Coordinates below 100 are valid.
+        x, y, z = gs.packet_position if gs.packet_position != (0, 0, 0) else gs.position
+        if not (0 < x < 65535 and 0 < y < 65535 and z < 16):
+            return -1
         if opcode == ServerOpcode.MAP_SLICE_NORTH:
-            gs.position = (x, y - 1, z)
+            y -= 1
         elif opcode == ServerOpcode.MAP_SLICE_EAST:
-            gs.position = (x + 1, y, z)
+            x += 1
         elif opcode == ServerOpcode.MAP_SLICE_SOUTH:
-            gs.position = (x, y + 1, z)
+            y += 1
         elif opcode == ServerOpcode.MAP_SLICE_WEST:
-            gs.position = (x - 1, y, z)
-        # Always track packet-derived position for recording accuracy
-        # Seed from gs.position if packet_position looks uninitialized
-        # (real game coordinates are always > 100)
-        if gs.packet_position[0] < 100 and gs.position[0] > 100:
-            gs.packet_position = gs.position
-        px, py, pz = gs.packet_position
-        if opcode == ServerOpcode.MAP_SLICE_NORTH:
-            gs.packet_position = (px, py - 1, pz)
-        elif opcode == ServerOpcode.MAP_SLICE_EAST:
-            gs.packet_position = (px + 1, py, pz)
-        elif opcode == ServerOpcode.MAP_SLICE_SOUTH:
-            gs.packet_position = (px, py + 1, pz)
-        elif opcode == ServerOpcode.MAP_SLICE_WEST:
-            gs.packet_position = (px - 1, py, pz)
+            x -= 1
+        if not (0 < x < 65535 and 0 < y < 65535):
+            return -1
+        gs.position = gs.packet_position = (x, y, z)
         gs.last_map_time = time.time()
+        gs._map_update_seen = True
         return -1  # Can't skip tile data
 
     # ── Fixed-size opcodes we can safely skip ──────────────────────
@@ -736,6 +767,17 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
         # Just consume the bytes — we don't track skills yet
         return pos + needed
 
+    # Standard OTClient spell/group cooldown: U8 spell/group ID + U32 ms.
+    if opcode in (0xA4, 0xA5):
+        if pos + 5 > len(data):
+            return -1
+        delay = struct.unpack_from('<I',data,pos+1)[0]
+        if delay > 3600000:
+            return -1
+        if opcode == 0xA4 and data[pos] == 195:
+            gs.haste_cast_at = time.monotonic()
+        return pos + 5
+
     # PLAYER_ICONS — 2 bytes: u16 icons bitmask
     if opcode == ServerOpcode.PLAYER_ICONS:
         _pi_size = PF.get("player_icons", {}).get("size", 2)
@@ -772,11 +814,10 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
     # NOTE: FLOOR_CHANGE_UP (0xBE) / FLOOR_CHANGE_DOWN (0xBF) are standard OT
     # opcodes but DBVictory does NOT use them. Sniffing confirmed that floor changes
     # arrive as CREATURE_MOVE (0x6D) + map data, not as standalone 0xBE/0xBF opcodes.
-    # Floor change events are generated by the DLL bridge (actions/dll_bridge.py)
-    # when it detects z-coordinate changes in game memory.
+    # scan_packet generates floor events from confirmed local position changes.
 
     # PING — 0 bytes
-    if opcode == ServerOpcode.PING:
+    if opcode in (ServerOpcode.PING, ServerOpcode.PONG):
         return pos
 
     # PLAYER_CANCEL_ATTACK — 0 bytes
@@ -805,7 +846,9 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
 def _parse(opcode: int, reader, gs: GameState) -> None:
     """Legacy single-opcode parser (used by first-opcode callback)."""
     if opcode == ServerOpcode.LOGIN_OR_PENDING:
-        gs.player_id = reader.read_u32()
+        new_pid = reader.read_u32()
+        if not gs.client_player_id:
+            gs.player_id = new_pid
         log.info(f"LOGIN: player_id={gs.player_id}")
     elif opcode == ServerOpcode.CREATURE_HEALTH:
         creature_id = reader.read_u32()
@@ -835,6 +878,12 @@ def _parse(opcode: int, reader, gs: GameState) -> None:
         msg_type = reader.read_u8()
         text = reader.read_string()
         gs.messages.append({"type": msg_type, "text": text})
+        callback = getattr(gs, "potion_message_callback", None)
+        if callback and msg_type in (25,26) and len(text)<=240:
+            try:
+                callback(msg_type, text, batch_id=getattr(gs,"_server_packet_seq",None))
+            except Exception:
+                log.debug("Optional potion observation failed")
         if "can't throw there" in text.lower():
             gs.last_cant_throw = time.time()
         _check_pz_message(text, gs)

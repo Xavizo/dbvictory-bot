@@ -1,0 +1,5 @@
+# Direct dependencies pinned; Windows-only memory access isn't needed for tests.
+mcp==1.30.0
+pycryptodome==3.24.1
+websockets==17.4
+pymem==1.14.0; sys_platform == "win32"
