@@ -7,7 +7,7 @@ import { saveMapAnnotation } from "@/lib/api";
 import {activationLabels,activations,defaultActivation} from "@/lib/mapInteractions";
 import { transitionActions } from "./TransitionLearningPanel";
 
-import {tileStyles as styles,navigationStyles} from "@/lib/mapVisuals";
+import {tileStyles as styles,navigationStyles,petStyle} from "@/lib/mapVisuals";
 const flags: Record<string, string> = {
   ground: "podłoże", on_top: "górna warstwa", container: "kontener", force_use: "używalny", multi_use: "użycie na celu",
   not_walkable: "blokuje chodzenie", not_moveable: "nieruchomy", blocks_projectiles: "blokuje pociski",
@@ -18,9 +18,10 @@ const creatureStyles = {
   player: {label:"Gracz",symbol:"G",color:"#38bdf8"},
   npc: {label:"NPC",symbol:"N",color:"#facc15"},
   monster: {label:"Potwór",symbol:"M",color:"#fb7185"},
+  pet: petStyle,
   unknown: {label:"Typ nieustalony",symbol:"?",color:"#c084fc"},
 };
-const creatureKinds = ["player","npc","monster","unknown"] as const;
+const creatureKinds = ["player","npc","pet","monster","unknown"] as const;
 function creatureCounts(cell: PassiveMapCell) {
   return creatureKinds.filter(k => (cell.occupant_types?.[k] ?? (k === "unknown" && !cell.occupant_types ? cell.occupants : 0)) > 0)
     .map(k => ({kind:k, count:cell.occupant_types?.[k] ?? cell.occupants, ...creatureStyles[k]}));
@@ -31,7 +32,7 @@ export function copyCellText(cell: PassiveMapCell) {
     `Blokada przekazana przez serwer: ${cell.server_blocking === undefined ? "nieustalona" : cell.server_blocking ? `tak (${cell.server_blocking})` : "nie"}`,
     ...cell.items.map(i => `ID ${i.id} · warstwa ${i.stack} · ${i.flags.map(f=>flags[f] ?? f).join(", ") || "brak flag"}${i.lens_help !== undefined ? ` · kod pomocy ${i.lens_help}` : ""}${i.minimap_color !== undefined ? ` · kolor minimapy ${i.minimap_color}` : ""}`),
     ...(cell.navigation ?? []).map(f=>`${navigationStyles[f.kind].label} · ID ${f.item_id} · ${f.source === "observed" ? `zaobserwowano ${f.observation_count ?? 1}×` : f.source === "client_hint" ? "wskazówka klienta" : f.source === "user_annotation" ? "własny opis pola" : "potwierdzone"}${f.required_level ? ` · wymagany poziom ${f.required_level} (zgłoszenie użytkownika dla tego pola)` : ""}${f.activation_hint ? ` · ${activationLabels[f.activation_hint]}` : ""}${f.door_state_hint ? ` · stan: ${f.door_state_hint === "open" ? "otwarte" : f.door_state_hint === "closed" ? "zamknięte" : "nieznany"}` : ""}${f.note ? ` · ${f.note}` : ""}`),
-    ...creatureCounts(cell).map(c=>`${c.label}: ${c.count}`),
+    ...creatureCounts(cell).map(c=>`${c.label}: ${c.count}${c.kind==="pet" && cell.pet_names?.length ? " · "+cell.pet_names.join(", ") : ""}`),
     ...(cell.transitions ?? []).map(t=>`Zaobserwowane przejście → (${t.exit.join(", ")}) · ${transitionActions[t.action]} · ${t.count} razy`),
   ].join("\n");
 }
@@ -65,7 +66,7 @@ function CellDetails({ cell }: { cell: PassiveMapCell | undefined }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
       <strong className="font-mono">({cell.x}, {cell.y}, {cell.z})</strong>
       <span>{styles[cell.kind]?.label ?? "Nieznane"}</span>
-      {creatureCounts(cell).map(c=><span key={c.kind} style={{color:c.color}}>{c.label}: {c.count}</span>)}
+      {creatureCounts(cell).map(c=><span key={c.kind} style={{color:c.color}}>{c.label}: {c.count}{c.kind==="pet" && cell.pet_names?.length ? " · "+cell.pet_names.join(", ") : ""}</span>)}
       {!!cell.occupant_types?.self && <span>Twoja postać</span>}
     </div>
     {cell.reason && <p className="mt-1 text-xs text-gray-400">{cell.reason}</p>}

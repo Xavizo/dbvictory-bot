@@ -26,7 +26,7 @@ function capture(state:BotState|null, online:boolean, now:number) {
       if(cell.z!==position[2])continue;
       const types=cell.occupant_types??{};
       unclassified+=Math.max(types.unknown??0,(cell.occupants??0)-
-        (types.player??0)-(types.self??0)-(types.npc??0)-(types.monster??0),0);
+        (types.player??0)-(types.self??0)-(types.npc??0)-(types.monster??0)-(types.pet??0),0);
       const n=cell.occupant_types?.monster;
       if(typeof n==="number" && Number.isInteger(n) && n>0)
         monsters.push([cell.x,cell.y,cell.z,n]);

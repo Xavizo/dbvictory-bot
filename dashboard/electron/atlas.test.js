@@ -48,6 +48,17 @@ test('fresh map replaces historical door state without erasing surrounding atlas
   for(const rejected of [{...map,stale:true},{...map,annotation_scope:'different'},{...map,status:'waiting'}])
     assert.equal(visibleAtlasCells([old],rejected,'profile',[10,10,7],12)[0].kind,'blocked');
 });
+test('pet labels follow only live occupants and disappear on returning to historical terrain',()=>{
+  const saved=[cell(10,10,7),cell(11,10,7)];
+  const map={status:'ready',stale:false,annotation_scope:'test',cells:[]};
+  for(const index of [0,1]) {
+    map.cells=[{...saved[index],occupants:1,occupant_types:{pet:1},pet_names:['Bills']}];
+    const merged=visibleAtlasCells(saved,map,'test',[10,10,7],12);
+    assert.deepEqual(merged[index].pet_names,['Bills']);
+    assert.equal(merged[1-index].pet_names,undefined);
+  }
+  assert.ok(visibleAtlasCells(saved,{...map,stale:true},'test',[10,10,7],12).every(c=>!c.pet_names));
+});
 test('floor changes and teleports do not draw fictitious walk lines',()=>{
   assert.deepEqual(routeLines([[10,10,7],[11,10,7],[50,50,7],[50,50,6],[12,10,7]],7),
     [[[10,10,7],[11,10,7]],[[50,50,7]],[[12,10,7]]]);

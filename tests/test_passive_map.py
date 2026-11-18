@@ -98,10 +98,11 @@ def test_updated_profile_decodes_relocated_map_without_old_confirmations(world):
 
 
 @pytest.mark.parametrize("rva,kind",[(0x8B6974,"player"),(0x8B6A50,"self"),(0x8BCCB0,"monster"),(0x8BCD70,"npc"),(0x8B63E4,"unknown")])
-def test_creature_kind_uses_verified_runtime_class_not_id_or_name(world,rva,kind):
+@pytest.mark.parametrize("cid", [0x10000042, 0])
+def test_creature_kind_uses_verified_runtime_class_not_id_or_name(world,rva,kind,cid):
     raw=bytearray(56)
     struct.pack_into("<I",raw,0,world.base+rva)
-    struct.pack_into("<I",raw,0x34,0x10000042)
+    struct.pack_into("<I",raw,0x34,cid)
     world.mem.put(0x75000,raw)
     table=bytearray(52)
     struct.pack_into("<I",table,8*4,world.base+pm.TRUE_GETTER_RVA)
@@ -110,7 +111,9 @@ def test_creature_kind_uses_verified_runtime_class_not_id_or_name(world,rva,kind
     struct.pack_into("<III",world.mem.regions[world.tile],44,0x31000,0x31010,0x31010)
     cell=center_cell(world.reader.snapshot())
     assert cell["occupants"]==1 and cell["occupant_types"]=={kind:1}
-    assert cell["alert_players"]==([{ "id":0x10000042}] if kind=="player" else [])
+    assert world.reader.monster_slots == ({(100,100,7,1): cid or ("visible", 0x75000)} if kind=="monster" else {})
+    assert cell["alert_players"]==([{ "id":cid}] if kind=="player" and cid else [])
+    assert "monster_slots" not in cell and str(0x75000) not in json.dumps(cell)
     assert cell["kind"]=="clear"  # Presence does not guess collision or hostility.
 
 

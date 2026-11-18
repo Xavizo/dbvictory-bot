@@ -1,4 +1,5 @@
 import type {MapNavigationFeature} from "./api";
+export const petStyle = {label:"Pet",symbol:"P",color:"#5eead4"};
 export const tileStyles: Record<string, { fill: string; label: string }> = {
   clear: { fill: "#334946", label: "Brak blokady" },
   blocked: { fill: "#57404b", label: "Blokada" },

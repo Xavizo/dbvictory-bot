@@ -5,7 +5,32 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import mcp_server as server
+import pytest
 from dashboard_security import SESSION_TOKEN
+
+
+def test_only_matching_build_is_activated_on_next_start(tmp_path, monkeypatch):
+    current, stage = tmp_path / ".next", tmp_path / ".next-ready-123abcd"
+    for folder in [current, stage]:
+        folder.mkdir()
+        (folder / "BUILD_ID").write_text(folder.name)
+        (folder / "routes-manifest.json").write_text("{}")
+    monkeypatch.setattr(server, "ENGINE_LABEL", "Silnik 0000000 · start 10:00")
+    server._activate_staged_dashboard(tmp_path)
+    assert (current / "BUILD_ID").read_text() == ".next"
+    monkeypatch.setattr(server, "ENGINE_LABEL", "Silnik 123abcd · start 10:01")
+    original = type(stage).rename
+    def simulate_locked(path, destination):
+        if path == stage:
+            raise PermissionError("locked")
+        return original(path, destination)
+    with monkeypatch.context() as patch:
+        patch.setattr(type(stage), "rename", simulate_locked)
+        with pytest.raises(PermissionError):
+            server._activate_staged_dashboard(tmp_path)
+    assert (current / "BUILD_ID").read_text() == ".next"
+    server._activate_staged_dashboard(tmp_path)
+    assert (current / "BUILD_ID").read_text() == stage.name and not stage.exists()
 
 
 def test_engine_label_includes_revision_and_timezone_and_survives_missing_git(monkeypatch, tmp_path):

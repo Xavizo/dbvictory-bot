@@ -91,6 +91,7 @@ class MapReader:
         self.profile = profile
         self.read = read
         self.base = base
+        self.monster_slots = {}
         asset_sha256 = asset_sha256 or profile.dat_sha256
         self.navigation_types = load_confirmed_types(asset_sha256=asset_sha256) if allow_confirmed else {}
         self.location_notes = load_location_notes(asset_sha256=asset_sha256) if allow_confirmed else {}
@@ -159,6 +160,7 @@ class MapReader:
         items, occupants = [], 0
         occupant_types = Counter()
         alert_players = []
+        monster_stacks = []
         for i in range(count):
             thing = _u32(things, i * 8)
             data = self.read(thing, 56)
@@ -174,10 +176,18 @@ class MapReader:
                 occupants += 1
                 creature_kind = dict(self.profile.creature_vtables).get(vtable-self.base,"unknown")
                 occupant_types[creature_kind] += 1
-                if creature_kind == "player":
-                    cid = _u32(self.read(thing + 0x38, 4)) if self.profile.observer else _u32(data, 0x34)
-                    if 0x10000000 <= cid < 0x40000000:
+                if creature_kind in ("player", "monster"):
+                    try:
+                        cid = _u32(self.read(thing + 0x38, 4)) if self.profile.observer else _u32(data, 0x34)
+                    except (MapReadError, struct.error):
+                        cid = 0  # A missing optional ID does not change occupancy.
+                    if creature_kind == "player" and 0x10000000 <= cid < 0x40000000:
                         alert_players.append({"id": cid})
+                    elif creature_kind == "monster":
+                        # A map-only summon can lack a battle ID. Its local
+                        # identity stays private and expires when it leaves view.
+                        identity = cid if cid not in (0, 0xffffffff) else ("visible", thing)
+                        monster_stacks.append((i, identity))
             else:
                 raise MapReadError("Nieprawidłowy typ obiektu na polu.")
         # Detect container changes rather than publishing a mixed snapshot.
@@ -195,6 +205,8 @@ class MapReader:
                                "closing_policy":"unknown"})
         if any(f["kind"] == "stairs" and f["source"] == "confirmed_id" for f in navigation):
             stairs = "confirmed_id"
+        for stack, identity in monster_stacks:
+            self.monster_slots[(*xyz, stack)] = identity
         return {"x": xyz[0], "y": xyz[1], "z": xyz[2], "kind": kind,
                 "stairs": stairs, "items": items, "occupants": occupants,
                 "occupant_types":dict(occupant_types), "alert_players": alert_players,
@@ -202,6 +214,7 @@ class MapReader:
                 "server_blocking": blocking, "ground_speed": struct.unpack_from("<H", raw, 80)[0]}
 
     def snapshot(self):
+        self.monster_slots.clear()
         started = time.perf_counter()
         center = struct.unpack("<III", self.read(self.base + self.profile.map_center, 12))
         x, y, z = center
@@ -292,6 +305,13 @@ class PassiveMapMonitor:
         return "Usunięto własny opis." if body["operation"]=="remove" else "Zapisano własny opis pola."
 
     def record_client_packet(self, opcode, reader):
+        from protocol import ClientOpcode
+        if opcode == ClientOpcode.LOOK and self.state.connected:
+            if reader.remaining == 8:
+                pos = reader.read_position()
+                reader.read_u16()
+                self.state.game_state.pets.look(pos, reader.read_u8())
+            return
         if self.learner is None or not self.state.connected:
             return
         from transition_learning import decode_command
@@ -363,7 +383,12 @@ class PassiveMapMonitor:
                             source = ReadOnlyClient()
                             asset = inspect_dat(source.path.parent / "bytes" / "things" / "file.dat")
                             asset["client_sha256"] = source.profile.sha256
-                        result = MapReader(source.read, source.base, allow_confirmed=True, profile=source.profile, asset_sha256=asset.get("sha256")).snapshot()
+                        gs = self.state.game_state
+                        reader = MapReader(source.read, source.base, allow_confirmed=True, profile=source.profile, asset_sha256=asset.get("sha256"))
+                        result = reader.snapshot()
+                        gs.pets.observe_map(result["cells"], result["captured_at"], reader.monster_slots)
+                        if gs is not self.state.game_state or not self.state.connected:
+                            continue
                         result = self._learn(result,asset)
                         self._result = {**result, "asset": asset}
                 except MapChanged as exc:

@@ -21,7 +21,8 @@ export interface PassiveMapCell {
   kind: "clear" | "blocked" | "avoid" | "no_ground" | "unknown";
   stairs: "confirmed_id" | "type_flag" | null;
   occupants: number;
-  occupant_types?: Partial<Record<"player" | "self" | "npc" | "monster" | "unknown", number>>;
+  occupant_types?: Partial<Record<"player" | "self" | "npc" | "monster" | "pet" | "unknown", number>>;
+  pet_names?: string[];
   items: { id: number; flags: string[]; stack: number; lens_help?: number; minimap_color?: number }[];
   navigation?: MapNavigationFeature[];
   transitions?: MapTransitionLink[];

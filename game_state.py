@@ -11,6 +11,7 @@ import sys
 import time
 from collections import deque
 from client_player_state import client_field
+from pet_tracking import PetTracker
 
 from constants import PACKET_FORMATS as PF
 from protocol import ServerOpcode
@@ -48,6 +49,7 @@ class GameState:
         self.player_id: int = 0  # creature ID of the player (from 0x0A)
 
         self.player_name = ""
+        self.pets = PetTracker()
 
         # Player stats
         self.hp: int = 0
@@ -582,6 +584,8 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState) -> int:
             return -1
         text = data[pos + _tm_text:end].decode('latin-1', errors='replace')
         gs.messages.append({"type": msg_type, "text": text})
+        if msg_type == 25:  # DBVictory's server Look description
+            gs.pets.description(text, gs.creatures)
         callback = getattr(gs, "potion_message_callback", None)
         if callback and msg_type in (25,26) and len(text)<=240:
             try:
@@ -878,6 +882,8 @@ def _parse(opcode: int, reader, gs: GameState) -> None:
         msg_type = reader.read_u8()
         text = reader.read_string()
         gs.messages.append({"type": msg_type, "text": text})
+        if msg_type == 25:
+            gs.pets.description(text, gs.creatures)
         callback = getattr(gs, "potion_message_callback", None)
         if callback and msg_type in (25,26) and len(text)<=240:
             try:

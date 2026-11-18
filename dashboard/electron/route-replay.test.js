@@ -19,7 +19,8 @@ test('route recording keeps local coordinates and group counters with one-based 
   const run=new RouteReplay(start);
   const initial=sample([{x:94,y:449,z:10,occupant_types:{monster:1},alert_players:['PRIVATE PLAYER']},
     {x:90,y:450,z:10,occupant_types:{npc:1}},{x:91,y:448,z:10,occupant_types:{monster:2}},
-    {x:91,y:448,z:9,occupant_types:{monster:1}},{x:95,y:449,z:10,occupants:2}]);
+    {x:91,y:448,z:9,occupant_types:{monster:1}},{x:95,y:449,z:10,occupants:2},
+    {x:95,y:450,z:10,occupants:1,occupant_types:{pet:1},pet_names:["PRIVATE PET"]}]);
   initial.adaptive_cavebot.blockage={target:[93,450,10],reason:'PRIVATE CHAT'};
   run.observe(initial,true,start);
   initial.player.position[0]=77;

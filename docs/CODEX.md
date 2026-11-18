@@ -492,6 +492,12 @@ Electron. **Zakończ bota** ends the owning engine session, its panel and the
 standalone launcher. Log out to the character list first if connected through
 the proxy. The game client stays open.
 
+Use **Look** on a pet in the game world. Once the server identifies its owner
+with `Master of …`, the live map and atlas show **P · Pet**. Cavebot excludes
+that creature from targeting, spell conditions and lure counts. Its tile still
+counts as occupied. Inspect again after a new login or summon. A pet without
+a battle ID can be followed while its map instance stays visible.
+
 ## Explicit route transitions and Barrier Band (2026-11-17)
 
 Ordinary waypoint legs and the approach to the route stay on one floor and

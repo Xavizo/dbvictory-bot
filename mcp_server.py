@@ -990,6 +990,24 @@ def _build_status_report() -> str:
     return "\n".join(lines)
 
 
+def _activate_staged_dashboard(directory):
+    """Switch the prebuilt panel for this engine before starting its web server."""
+    version = ENGINE_LABEL.split(" · ", 1)[0].removeprefix("Silnik ")
+    if len(version) != 7 or any(c not in "0123456789abcdef" for c in version):
+        return
+    staged = directory / f".next-ready-{version}"
+    if not (staged / "BUILD_ID").is_file() or not (staged / "routes-manifest.json").is_file():
+        return
+    current = directory / ".next"
+    previous = directory / f".next-before-{_time.time_ns()}"
+    current.rename(previous)
+    try:
+        staged.rename(current)
+    except OSError:
+        previous.rename(current)
+        raise
+
+
 def _launch_dashboard() -> None:
     """Launch the built, loopback-only dashboard and its authenticated Electron UI."""
     global _dashboard_launched
@@ -1012,6 +1030,8 @@ def _launch_dashboard() -> None:
         for name, script in (("next", "start"), ("electron", "electron:only")):
             if _dashboard_running(name):
                 continue
+            if name == "next":
+                _activate_staged_dashboard(dashboard_dir)
             env = os.environ.copy()
             env.pop("DBV_DASHBOARD_TOKEN", None)
             env.pop(EXIT_FILE_ENV, None)

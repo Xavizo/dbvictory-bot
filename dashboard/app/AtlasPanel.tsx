@@ -9,7 +9,7 @@ import {readAtlasWhenReady,createAtlasRegionReader} from "@/lib/atlasLoading";
 import type {BotState,PassiveMapCell} from "@/lib/api";
 import {atlasCenter,visibleAtlasCells,routeLines,simulationStep,simulationReport,fastSimulationNext,atlasViewport,panCenter,routeSegments,routeColor,directionMarkers,transitionChoices,transitionDestination,transitionStages,segmentLane,stepFloor,atlasWheel,moveAnchor,isRouteClosed,canCloseNearby,draftFingerprint,hasDraftChanges,closeRoute,finishAnchorEdit,insertAnchor,removeAnchor,appendTransition,rememberEdit,remapLabels,unresolvedLegs,undoShortcut,remapLinks,selectTransition,type RouteLink,type RouteTransition,type RouteEdit} from "@/lib/atlasModel";
 import AtlasRouteOverview from "./AtlasRouteOverview";
-import {tileStyles,navigationStyles} from "@/lib/mapVisuals";
+import {tileStyles,navigationStyles,petStyle} from "@/lib/mapVisuals";
 import {NavigationDetails,TileContextMenu,copyCellText,type TileMenuPosition} from "./PassiveMapPanel";
 import {transitionActions} from "./TransitionLearningPanel";
 import {transitionMarkers,transitionApproaches,endpointMarkers,routeExecutionIssues,MAX_ATLAS_RADIUS} from "@/lib/atlasModel";
@@ -304,7 +304,10 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
               <text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+(detailed ? .45 : .66)} textAnchor="middle" fontSize={detailed ? .23 : .45} fontWeight="700" fill={style.color}>{detailed?(names[f!.kind]??style.label):style.symbol}{!detailed&&suffix}</text>
               {detailed&&<text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+.78} textAnchor="middle" fontSize={.22} fill={style.color}>{destination|| (f?.door_state_hint==="open"?"otw.":f?.door_state_hint==="closed"?"zamk.":suffix)}</text>}
             </g>}
-            <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?"na żywo":"zapis historyczny"} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}`}</title></g>;})}
+            {c.live && !!c.occupant_types?.pet && <g pointerEvents="none" transform={`translate(${c.x-center[0]+ox+.8} ${c.y-center[1]+oy+.23})`}>
+              <circle r={.19} fill="#132d2c" stroke={petStyle.color} strokeWidth={.035}/><text textAnchor="middle" dominantBaseline="central" fontSize={.26} fontWeight="700" fill={petStyle.color}>{petStyle.symbol}</text>
+            </g>}
+            <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?"na żywo":"zapis historyczny"} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}${c.live && c.pet_names?.length ? " · Pet: "+c.pet_names.join(", ") : ""}`}</title></g>;})}
         {showTrace && (routeSegments(plan?.original??points).filter((_,i)=>!hiddenSegments.includes(i)).flatMap(s=>plan?.recording_source?routeLines(s.points,center[2]):lines(s.points,center[2]))).map((line,i)=><polyline key={`o${i}`} points={line.map(xy).join(" ")} fill="none" stroke="#e8bc77" strokeWidth={.14} strokeDasharray=".3 .2"/>)}
         {onFloor.map(s=>{const lane=segmentLane(segments,s.index),color=routeColor(s.index),ends=[s.points[0],s.points.at(-1)!];
           const closed=ends[0].every((n,i)=>n===ends[1][i]);
@@ -350,6 +353,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
       {selected && <details open className="atlas-inspector"><summary>Pole {pointText(selected)}</summary>{selectedCell?<>
         <small>{selectedCell.live?"Odczyt na żywo":`Ostatnio widziane: ${selectedCell.seen_at?new Date(selectedCell.seen_at*1000).toLocaleString():"czas nieznany"}`}</small>
         <p>{tileStyles[selectedCell.kind]?.label} · ID {selectedCell.items.map(i=>i.id).join(", ")}</p>
+        {selectedCell.live && !!selectedCell.occupant_types?.pet && <p style={{color:petStyle.color}}>{petStyle.label} · {selectedCell.pet_names?.join(", ") ?? selectedCell.occupant_types.pet}</p>}
         <button onClick={e=>{const box=e.currentTarget.getBoundingClientRect();openTileMenu(selected,box.left,box.bottom);}}>Opcje pola</button>
         {!selectedCell.live && <small>Stan drzwi i przeszkód może już być inny.</small>}
         {selectedCell.navigation?.map((feature,i)=><NavigationDetails key={i} feature={feature} historical={!selectedCell.live}/>)}

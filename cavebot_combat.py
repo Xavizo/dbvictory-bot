@@ -69,11 +69,14 @@ def eligible_monsters(gs,sample,config,now=None):
     cells={(c['x'],c['y'],c['z']):c for c in sample.get('cells',[])}
     accessible=reachable_tiles(sample['cells'],gs.position)
     creatures=list(gs.creatures.items());result=[]
+    pets=getattr(gs,'pets',None)
     for cid,c in creatures:
+        if pets and pets.is_pet(cid):continue
         pos=(c.get('x'),c.get('y'),c.get('z'));tile=cells.get(pos,{})
         if cid==gs.player_id or type(cid)is not int or not 0<cid<2**32 or c.get('source')!='dll' or not 0<=now-c.get('t',0)<=.6 or not 0<c.get('health',0)<=100:continue
         if pos not in accessible:continue
         if pos[2]!=gs.position[2] or tile.get('occupants')!=1 or tile.get('occupant_types',{}).get('monster')!=1:continue
+        if pets and pets.confirmed_after_map(pos,sample.get('captured_at')):continue
         if sum((v.get('x'),v.get('y'),v.get('z'))==pos for _,v in creatures)!=1:continue
         distance=max(abs(pos[0]-gs.position[0]),abs(pos[1]-gs.position[1]))
         if config.get('engage','near')!='visible' and distance>config['radius']:continue
@@ -185,12 +188,15 @@ class CombatRuntime:
         """Occupancy also covers a transient DLL identity gap. Never authorizes an attack."""
         gs=self.owner.state.game_state;pos=gs.position
         accessible=reachable_tiles(sample['cells'],pos);result=[]
+        pets=getattr(gs,'pets',None)
         for tile in sample['cells']:
             point=(tile['x'],tile['y'],tile['z'])
-            if point not in accessible or not tile.get('occupant_types',{}).get('monster'):continue
+            monsters=tile.get('occupant_types',{}).get('monster',0)
+            if point not in accessible or not monsters:continue
+            if pets and pets.confirmed_after_map(point,sample.get('captured_at'))>=monsters:continue
             gap=max(abs(point[0]-pos[0]),abs(point[1]-pos[1]))
             if self.config['engage']!='visible' and gap>self.config['radius']:continue
-            rows=[(cid,c) for cid,c in gs.creatures.items() if (c.get('x'),c.get('y'),c.get('z'))==point]
+            rows=[(cid,c) for cid,c in gs.creatures.items() if (c.get('x'),c.get('y'),c.get('z'))==point and not (pets and pets.is_pet(cid))]
             # A fresh known ignored/dead monster is not a reason to keep waiting.
             ignored=False
             if len(rows)==1:
