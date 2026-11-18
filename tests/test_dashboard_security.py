@@ -110,6 +110,47 @@ def test_manual_pet_label_applies_only_to_the_current_map_reference(http_api, mo
     assert post() == 400
 
 
+def test_adaptive_record_start_stop_plan_and_raw_recovery(http_api, tmp_path, monkeypatch):
+    import time
+    from collections import deque
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import cavebot
+    from map_atlas import MapAtlas
+
+    atlas = MapAtlas(tmp_path / "atlas", "scope")
+    atlas.observe({"cells": [{"x": x, "y": 101, "z": 7, "items": [], "kind": "clear"}
+                             for x in range(70, 115)], "status": "ready", "captured_at": time.time()})
+    gs = SimpleNamespace(position=(70, 101, 7), experience=100000, level=20, server_events=deque())
+    st = SimpleNamespace(connected=True, recording_active=False, game_state=gs, game_proxy=Mock(),
+                         passive_map_monitor=SimpleNamespace(atlas=atlas, learner=None))
+    monkeypatch.setattr(api, "_state", st)
+    monkeypatch.setattr(api, "_main_loop", object())
+    monkeypatch.setattr(cavebot, "RECORDINGS_DIR", tmp_path / "recordings")
+    request, mutations = http_api
+    headers = {"Origin": DASHBOARD_ORIGIN, "Authorization": f"Bearer {SESSION_TOKEN}"}
+
+    def post(path, **body):
+        status, _, data = request("POST", path, body=json.dumps(body), **headers)
+        assert status == 200, data
+        return json.loads(data)
+
+    post("/api/cavebot/record/start", name="hunt", mode="adaptive")
+    for x in [*range(71, 112), *range(110, 89, -1)]:
+        gs.position = (x, 101, 7)
+        if x in (100, 110):
+            gs.experience += 250
+        cavebot._sample_recording_position(st)
+    post("/api/cavebot/record/stop", discard=False)
+    raw = cavebot.load_recording("hunt")
+    p = post("/api/map/plan", scope="scope", recording="hunt", loop=True)
+    assert p["complete"] and p["adaptive_evidence"]["areas"] == 2
+    assert all(100 <= x <= 111 for x, _, _ in p["path"])
+    full = post("/api/map/plan", scope="scope", recording="hunt", full_trace=True)
+    assert full["original"][0] == [70, 101, 7] and not full.get("adaptive_evidence")
+    assert cavebot.load_recording("hunt") == raw and not atlas.drafts() and not mutations
+
+
 def test_preflight_and_read_access(http_api):
     request, _ = http_api
     assert request("OPTIONS", Origin="https://evil.example")[0] == 403

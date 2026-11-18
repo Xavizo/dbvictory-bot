@@ -20,6 +20,11 @@ RECORDINGS_DIR = Path(__file__).parent / "recordings"
 GRID_SIZE = 3
 
 
+def experience_for_level(level):
+    """Cumulative XP at the start of a DBVictory level."""
+    return 50 * (level**3 - 6*level**2 + 17*level - 12) // 3
+
+
 class SpawnMap:
     """3x3 tile grid kill density tracker.
 

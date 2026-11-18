@@ -469,6 +469,36 @@ function elements(tree){
   walk(tree);return result;
 }
 
+test('adaptive recording starts from waypoint options and stopping produces an unsaved hunt sketch',async()=>{
+  const host=hookHost(), requests=[];
+  const points=[[100,101,7],[110,101,7],[100,101,7]];
+  const props={active:true,embedded:true,onRefresh:()=>{},state:{connected:true,
+    passive_map:{center:points[0],annotation_scope:'scope',cells:[]},
+    cavebot:{recording:{active:false},recordings:[]}}};
+  const Panel=component('../app/AtlasPanel.tsx',{
+    react:host.react,'@/lib/atlasModel':model.exports,'@/lib/atlasLoading':component('../lib/atlasLoading.ts'),
+    '@/lib/cavebotModel':component('../lib/cavebotModel.ts'),'@/lib/mapVisuals':{tileStyles:{},navigationStyles:{}},
+    './PassiveMapPanel':{},'./TransitionLearningPanel':{},'./AtlasRouteOverview':{default:()=>null},
+    './MapTools':component('../app/MapTools.tsx'),'next/dynamic':{default:()=>()=>null},
+    '@/lib/auth':{authenticatedFetch:async(url,options)=>{
+      const body=JSON.parse(options.body);requests.push({url,body});
+      const plan={scope:'scope',points,path:points,original:points,links:[],transitions:[],gaps:[],complete:true,
+        adaptive_evidence:{areas:2,samples:21,total_samples:66,xp:500}};
+      return {ok:true,json:async()=>url.endsWith('/plan')?plan:{ok:true}};
+    }},
+  }).default;
+  const nodes=()=>elements(host.render(Panel,props));
+  const start=nodes().find(n=>n.props.children==='Nagrywanie adaptacyjne');
+  assert.ok(!start.props.disabled);await start.props.onClick();
+  const {name,mode}=requests[0].body;assert.match(name,/^exp_/);assert.equal(mode,'adaptive');
+  props.state.cavebot.recording={active:true,name,mode,observed_path:[],position_count:21};
+  await nodes().find(n=>n.props.label==='Zakończ nagranie').props.onClick();
+  props.state.cavebot.recording={active:false};props.state.cavebot.recordings=[{name,mode}];
+  assert.deepEqual(requests.map(r=>new URL(r.url).pathname),['/api/cavebot/record/start','/api/cavebot/record/stop','/api/map/plan']);
+  assert.equal(requests[2].body.recording,name);
+  assert.ok(!nodes().find(n=>n.props.label==='Zapisz szkic').props.disabled);
+});
+
 test('combat profile selection and discard never mutate waypoint geometry',async()=>{
   const host=hookHost(),requests=[],Atlas=()=>null,cm=component('../lib/cavebotModel.ts');
   const route={id:'route',name:'Route',points:[[10,10,7],[11,10,7]],links:[],labels:[],loop:true,combat:cm.defaultCombat()};

@@ -129,6 +129,7 @@ export interface RecordingLastStats {
 
 export interface RecordingInfo {
   name: string;
+  mode?: "manual" | "adaptive";
   count: number;
   created_at: string;
   last_stats?: RecordingLastStats;
@@ -183,6 +184,7 @@ export interface ActionsMapResponse {
 export interface CavebotState {
   recording: {
     active: boolean;
+    mode?: "manual" | "adaptive";
     name: string;
     waypoint_count: number;
     waypoints: WaypointInfo[];

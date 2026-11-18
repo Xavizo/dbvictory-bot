@@ -501,6 +501,22 @@ description wasn't matched, right-click the pet's tile in the live map or
 atlas and choose **Oznacz jako peta…**. The manual label follows that one
 creature while it remains visible. **Usuń oznaczenie peta** clears it.
 
+## Adaptive hunt recording
+
+In **Waypointy → ⋯ → Nagrywanie adaptacyjne**, start observing before or on
+the hunting ground. Hunt normally and revisit the rooms in any order. Use
+the stop-recording icon to create a sketch preview. The recorder associates
+position with XP changes that fit the reported level, including fights where
+the player stands still. It compares separate visits on each floor, picks an
+observed return through multiple areas with XP, then checks the walk and its
+transitions against the atlas. The chosen pass may start on a different tile
+in the same area. One-way travel, long trips without XP and disconnected
+observations don't establish a circuit.
+
+Use **Szybka symulacja** to review, then **Zapisz szkic** to keep the result.
+The full recording is also available under **Wczytaj wcześniejsze nagranie →
+Wczytaj pełny ślad**, including when the evidence is insufficient for a sketch.
+
 ## Explicit route transitions and Barrier Band (2026-11-17)
 
 Ordinary waypoint legs and the approach to the route stay on one floor and

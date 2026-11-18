@@ -20,6 +20,7 @@ type Pos=[number,number,number];
 type Draft={navigation_revision?:string;id:string;name:string;points:Pos[];labels?:string[];tags?:DraftTag[];links?:RouteLink[];loop?:boolean;updated:number};
 type Atlas={route_transitions?:RouteTransition[];scope:string;center:Pos;radius:number;cells:PassiveMapCell[];floors:number[];total:number;limit:number|null;error?:string};
 type Plan={avoid_tiles?:Pos[];return_mode?:string;return_error?:string|null;loop_closed:boolean;links:RouteLink[];scope:string;path:Pos[];points:Pos[];original:Pos[];complete:boolean;preview_only:boolean;warning:string;requires_action_review?:boolean;requires_path_review?:boolean;ignored_recorded_actions?:boolean;unmatched_recorded_actions?:number;recording_source?:string;
+  adaptive_evidence?:{areas:number;samples:number;total_samples:number;xp:number};
   transitions:{origin:Pos;entry:Pos;exit:Pos;action:string;item_id?:number;tool_id?:number;prepared_item_id?:number}[];
   legs?:{from_index:number;to_index:number;start:number;end:number}[];
   recorded_actions?:{type:string;item_id?:number;player_pos?:Pos;x?:number;y?:number;z?:number;to_x?:number;to_y?:number;to_z?:number;matched_transition?:number|null}[];
@@ -68,6 +69,8 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
   const compatible=!liveScope || liveScope===scope;
   const cells=active&&mapOpen&&!objectView?visibleAtlasCells(compatible?atlas?.cells ?? []:[],state?.passive_map,scope,center,grid.visibleRadius):[];
   const recorder=state?.cavebot?.recording;
+  const canRecord=!!state?.connected && !["running","paused","ready"].includes(state?.adaptive_cavebot?.status??"");
+  const adaptiveSource=state?.cavebot?.recordings?.some(r=>r.name===recording && r.mode==="adaptive");
   const repairSource=state?.cavebot?.recordings.find(r=>r.name===(recording||draftName))?.name;
   const displayPath=!active||!mapOpen||objectView?[]:recorder?.active?recorder.observed_path?.map(p=>p.pos) ?? []:workingPlan?workingPlan.path:points;
   const segments=routeSegments(displayPath);
@@ -145,8 +148,8 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
   },[scope,initialDraftId,selectionVersion]);
   useEffect(()=>{onEditingChange?.(dirty||!!optimization||!!recorder?.active);},[dirty,optimization,recorder?.active,onEditingChange]);
   function loadDraft(id:string,rows=drafts){const changedRoute=id!==draftId;setHiddenSegments([]);setRecording("");setHistory([]);setTransitionSpot(null);clearPlan();setNewTags([]);setDraftId(id);const draft=rows.find(d=>d.id===id);setPoints(draft?.points ?? []);setLinks(draft?.links??[]);setLabels(draft?.labels??draft?.points.map(()=>"")??[]);setLastOptimization(null);setRename(false);setDraftName(draft?.name ?? "");setLoop(draft?.loop ?? true);if(draft){setSavedVersion(draftFingerprint(draft.name,draft.points,draft.labels??[],draft.links??[],draft.loop??true));if(changedRoute)frameRoute(draft.points);void propose(draft.points,undefined,draft.loop ?? true,draft.links??[]);}}
-  async function propose(next:Pos[],record?:string,repeat=loop,chosen=links){if(!scope || !compatible)return;const id=++generation.current;setBusy(true);setError("");setCopied(false);setSimPlaying(false);setSimIndex(null);
-    try {const result:Plan=await request("/api/map/plan",{scope,loop:repeat,...(record?{recording:record,optimize:false}:{points:next,links:chosen})});if(id!==generation.current)return;setPlan(result);setPoints(result.points);setLinks(result.links??[]);setSegmentIndex(0);if(record){setHiddenSegments([]);setLabels(result.points.map(()=>""));setLastOptimization(null);frameRoute(result.original);setNewTags([]);setDraftId("");setDraftName(record);}}
+  async function propose(next:Pos[],record?:string,repeat=loop,chosen=links,fullTrace=false){if(!scope || !compatible)return;const id=++generation.current;setBusy(true);setError("");setCopied(false);setSimPlaying(false);setSimIndex(null);
+    try {const result:Plan=await request("/api/map/plan",{scope,loop:repeat,...(record?{recording:record,optimize:false,...(fullTrace?{full_trace:true}:{})}:{points:next,links:chosen})});if(id!==generation.current)return;setPlan(result);setPoints(result.points);setLinks(result.links??[]);setSegmentIndex(0);if(record){setHiddenSegments([]);setLabels(result.points.map(()=>""));setLastOptimization(null);frameRoute(result.original);setNewTags([]);setDraftId("");setDraftName(record);}}
     catch(e){if(id===generation.current)setError(e instanceof Error?e.message:String(e));}finally{if(id===generation.current)setBusy(false);}
   }
   function locate(event:React.PointerEvent):Pos|null {const rect=svg.current?.getBoundingClientRect();if(!rect)return null;
@@ -206,13 +209,15 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
     else if(p && stroke.current.length<2048 && JSON.stringify(p)!==JSON.stringify(stroke.current.at(-1)))stroke.current.push(p);
     const next=[...stroke.current],before=editOrigin.current;editOrigin.current=null;stroke.current=[];updatePoints(next,before ?? undefined);
   }
-  async function recordToggle(){setBusy(true);setError("");try{
+  async function recordToggle(mode:"manual"|"adaptive"="manual"){setBusy(true);setError("");try{
     if(state?.cavebot?.recording.active){const name=state.cavebot.recording.name;await request("/api/cavebot/record/stop",{discard:false});await onRefresh();setRecording(name);await propose([],name);}
-    else {const name=`atlas_${new Date().toISOString().replace(/[^0-9]/g,"").slice(0,14)}`;await request("/api/cavebot/record/start",{name});clearPlan();setHistory([]);setTransitionSpot(null);setPoints([]);setLabels([]);setLinks([]);setLastOptimization(null);setNewTags([]);setDraftId("");setDraftName("");setRecording(name);setDraw(false);setFollow(true);await onRefresh();}
+    else {const stamp=new Date().toISOString().replace(/[^0-9]/g,"").slice(0,14);
+      const name=mode==="adaptive"?`exp_${stamp}_${crypto.randomUUID().slice(0,8)}`:`atlas_${stamp}`;
+      await request("/api/cavebot/record/start",{name,mode});clearPlan();setHistory([]);setTransitionSpot(null);setPoints([]);setLabels([]);setLinks([]);setLastOptimization(null);setNewTags([]);setDraftId("");setDraftName("");setRecording(name);setDraw(false);setFollow(true);await onRefresh();}
   }catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
   function editHere(){setObjectView(false);setMapOpen(true);setCenter(center);setDraw(true);setPanMode(false);}
   async function optimizeRoute(){if(!plan||!scope)return;const generationId=++generation.current;setBusy(true);setError("");setSimulation(null);setDraw(false);try{
-    const candidate:Plan=await request("/api/map/plan",{scope,points,labels,links,loop,optimize:true,...(recording?{recording}:{})});
+    const candidate:Plan=await request("/api/map/plan",{scope,points,labels,links,loop,optimize:true,...(recording&&!adaptiveSource?{recording}:{})});
     if(generationId===generation.current){setOptimization({before:plan,candidate});frameRoute(candidate.path);}
   }catch(e){if(generationId===generation.current)setError(String(e));}finally{if(generationId===generation.current)setBusy(false);}}
   function acceptOptimization(){if(!optimization?.candidate.complete)return;setLastOptimization({plan:optimization.before,labels:[...labels]});setLabels(remapLabels(points,optimization.candidate.points,labels));setHistory(h=>rememberEdit(h,points,center,labels,links));setPlan(optimization.candidate);setPoints(optimization.candidate.points);setLinks(optimization.candidate.links??[]);setRecording("");setOptimization(null);}
@@ -384,6 +389,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
       <details className="v2-options"><summary>Wczytaj wcześniejsze nagranie</summary>
       <select aria-label="Nagranie do planowania" value={recording} onChange={e=>setRecording(e.target.value)}><option value="">Wybierz zapisane nagranie</option>{state?.cavebot?.recordings.map(r=><option key={r.name} value={r.name}>{r.name}</option>)}</select>
       <button disabled={!recording || busy || recorder?.active} onClick={()=>propose([],recording)}>Wczytaj nagranie</button>
+      {adaptiveSource&&<button disabled={busy||recorder?.active} onClick={()=>propose([],recording,loop,[],true)}>Wczytaj pełny ślad</button>}
       </details>
       {busy && <p role="status">Przygotowuję podgląd…</p>}
       {mapWaiting&&<p role="status">Wczytywanie atlasu…</p>}{loadError && <p role="alert" className="text-amber-200">{loadError}</p>}{error && <p role="alert" className="text-red-300">{error}</p>}{atlas?.error && <p role="alert">{atlas.error}</p>}
@@ -407,15 +413,18 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
       routeLocked={busy||!!optimization||!!recorder?.active||simPlaying}/>}
     <div className="route-workflow route-icon-toolbar" role="group" aria-label="Narzędzia waypointów"><div className="route-toolbar-heading">{routeEnabledControl??<strong>Waypointy</strong>}{points.length>0&&<small>{points.length} pkt</small>}</div>
       {embedded&&<MapTool icon="map" label="Otwórz mapę" disabled={recorder?.active} onClick={editHere}/>}
-      <MapTool icon={recorder?.active?"stop":"record"} label={recorder?.active?"Zakończ nagranie":"Nagrywaj waypointy"} className={recorder?.active?"recording-button":"record-button"} disabled={busy||(!recorder?.active&&(!state?.connected||["running","paused","ready"].includes(state?.adaptive_cavebot?.status??"")))} onClick={recordToggle}/>
+      <MapTool icon={recorder?.active?"stop":"record"} label={recorder?.active?"Zakończ nagranie":"Nagrywaj waypointy"} className={recorder?.active?"recording-button":"record-button"} disabled={busy||(!recorder?.active&&!canRecord)} onClick={()=>recordToggle()}/>
       {saveButton}<MapTool icon="play" label="Szybka symulacja" disabled={busy||!plan?.path.length||recorder?.active||!!optimization} onClick={simulate}/>
       <MapTool icon="loop" label={loop?"Powtarzanie trasy włączone":"Powtarzanie trasy wyłączone"} aria-pressed={loop} disabled={busy||!!optimization||recorder?.active||!!state?.adaptive_cavebot?.preparing||(state?.adaptive_cavebot?.draft_id===draftId&&["running","paused","ready"].includes(state?.adaptive_cavebot?.status??""))} onClick={()=>void toggleLoop()}/>
-      <MapMore>{moreActions}<button onClick={()=>setRename(!rename)}>Zmień nazwę szkicu</button><button disabled={busy||!plan||recorder?.active||!!optimization} onClick={optimizeRoute}>Optymalizuj trasę</button>{lastOptimization&&<button disabled={busy||!!optimization} onClick={undoOptimization}>Cofnij optymalizację</button>}</MapMore>
+      <MapMore>{moreActions}
+        {!browseOnly&&<button disabled={busy||!scope||!canRecord||dirty||!!optimization||recorder?.active} title={dirty?"Najpierw zapisz lub odrzuć bieżące zmiany szkicu.":"Zaproponuj trasę na podstawie ruchu i przyrostów XP."} onClick={()=>recordToggle("adaptive")}>Nagrywanie adaptacyjne</button>}
+        <button onClick={()=>setRename(!rename)}>Zmień nazwę szkicu</button><button disabled={busy||!plan||recorder?.active||!!optimization} onClick={optimizeRoute}>Optymalizuj trasę</button>{lastOptimization&&<button disabled={busy||!!optimization} onClick={undoOptimization}>Cofnij optymalizację</button>}</MapMore>
     </div>
     {routePicker}
     {embedded && !mapOpen && tagEditor}
     {(rename||(!draftId&&(points.length>0||recorder?.active)))&&<div className="route-save-row"><input aria-label="Nazwa szkicu" maxLength={80} placeholder="Nazwa trasy" value={draftName} onChange={e=>{setDraftName(e.target.value);}}/></div>}
-    {recorder?.active&&<p role="status" className="recording-status">● Nagrywanie · {recorder.position_count??0} pozycji</p>}
+    {recorder?.active&&<p role="status" className="recording-status">● {recorder.mode==="adaptive"?"Nagrywanie adaptacyjne":"Nagrywanie"} · {recorder.position_count??0} pozycji</p>}
+    {plan?.adaptive_evidence&&<p className="v2-inline-note">Obszary z XP: {plan.adaptive_evidence.areas} · Do szkicu wybrano {plan.adaptive_evidence.samples} z {plan.adaptive_evidence.total_samples} pozycji.</p>}
     {embedded&&progress&&progress.current!==null&&<div className="waypoint-progress" role="status">{state?.adaptive_cavebot?.status==='running'?'Do waypointu':state?.adaptive_cavebot?.status==='complete'?'Zakończono na waypointcie':'Zapamiętany waypoint'} <strong>{progress.current+1}/{progress.total}</strong>{progress.last_reached!==null&&<small> · zaliczony {progress.last_reached+1}</small>}</div>}
     {embedded&&waypointList}
 

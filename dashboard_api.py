@@ -334,6 +334,7 @@ class _Handler(BaseHTTPRequestHandler):
             body=self._read_body()
             if body.get("scope")!=atlas.scope:raise ValueError("Profil atlasu się zmienił. Odśwież widok.")
             original=None;interactions=[];recording=None;links=body.get("links");adjusted=[]
+            hunt = None
             observations=list(monitor.learner.records.values()) if monitor.learner else []
             if "recording" in body:
                 import cavebot
@@ -342,11 +343,26 @@ class _Handler(BaseHTTPRequestHandler):
                 recording=cavebot.load_recording(name)
                 optimize=body.get('optimize',False)
                 if type(optimize) is not bool:raise ValueError('Nieprawidłowa opcja optymalizacji.')
+                if recording and recording.get("recording_mode") == "adaptive" and body.get("full_trace") is not True:
+                    from adaptive_recording import hunting_excerpt
+                    if recording.get("atlas_scope") != atlas.scope:
+                        raise ValueError("To nagranie pochodzi z innego atlasu.")
+                    observations = atlas.remember_recorded_ropes(recording, observations)
+                    recording, hunt = hunting_excerpt(recording, observations)
+                    optimize = True
                 points,original,links,adjusted=atlas.recording_route(recording,observations,optimize)
             else:points=body.get("points")
             loop=body.get("loop",False)
             if type(loop)is not bool:raise ValueError("Nieprawidłowa opcja pętli.")
             result=atlas.plan(points,observations,original,loop=loop,links=links)
+            if hunt is not None:
+                from adaptive_recording import stays_near_trace
+                if not result["complete"] or not stays_near_trace(result["path"], recording["observed_path"]):
+                    points, original, links, adjusted = atlas.recording_route(recording, observations, False)
+                    result = atlas.plan(points, observations, original, loop=loop, links=links)
+                    if not stays_near_trace(result["path"], recording["observed_path"]):
+                        raise ValueError("Droga przez atlas wychodzi poza zaobserwowany obszar expienia. Możesz wczytać pełny ślad.")
+                result["adaptive_evidence"] = hunt
             if recording is None and body.get('optimize') is True:
                 from map_atlas import recording_points
                 from map_atlas import validate_labels,remap_links
@@ -475,7 +491,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json_response({"error": "bot not started"}, 503)
             return
         import cavebot
-        err = cavebot.start_recording(_state, name)
+        err = cavebot.start_recording(_state, name, mode=body.get("mode", "manual"))
         if err:
             self._json_response({"error": err}, 400)
         else:
@@ -611,12 +627,11 @@ def _build_playback_stats(st, gs) -> dict:
     predicted_level = gs.level
     if xp_per_hour > 0 and gs.experience > 0:
         predicted_xp = gs.experience + xp_per_hour
-        # OT level formula: xp_for_level(n) = 50/3*(n^3 - 6*n^2 + 17*n - 12)
-        # Solve for level at predicted_xp
+        from farming_telemetry import experience_for_level
         lvl = gs.level
         while True:
             next_lvl = lvl + 1
-            xp_needed = int(50 / 3 * (next_lvl**3 - 6 * next_lvl**2 + 17 * next_lvl - 12))
+            xp_needed = experience_for_level(next_lvl)
             if xp_needed > predicted_xp:
                 break
             lvl = next_lvl
@@ -779,6 +794,7 @@ def _build_state_json() -> str:
         "recording": {
             "active": st.recording_active,
             "name": st.recording_name,
+            "mode": getattr(st, "recording_mode", "manual"),
             "waypoint_count": len(rec_waypoints),
             "waypoints": rec_waypoints[-20:],
             "position_count": len(getattr(st,"recording_observed_path",[])) if st.recording_active else 0,

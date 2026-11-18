@@ -10,6 +10,7 @@ import logging
 import struct
 import threading
 import time
+from farming_telemetry import experience_for_level
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -156,18 +157,35 @@ def _sample_recording_position(state):
     if getattr(gs,"client_state_required",False):
         elapsed -= now - snapshot["monotonic"]
     elapsed = max(0, round(elapsed, 3))
-    if trace and trace[-1]["pos"]==list(pos) and now-previous_sample<=1:
+    xp_gain = 0
+    new_segment = now-previous_sample > 1
+    if getattr(state, "recording_mode", "manual") == "adaptive":
+        level, xp = gs.level, gs.experience
+        if not (1 <= level <= 65535 and experience_for_level(level) <= xp < experience_for_level(level+1)):
+            xp = None
+        previous = getattr(state, "_recording_xp_sample", None)
+        new_segment = new_segment or bool(previous and previous[0] is not gs)
+        if (previous and trace and previous[1] is not None and xp is not None and not new_segment and xp > previous[1]
+                and trace[-1]["pos"][2] == pos[2]
+                and max(abs(trace[-1]["pos"][i]-pos[i]) for i in (0, 1)) <= 3):
+            xp_gain = xp - previous[1]
+        state._recording_xp_sample = (gs, xp)
+    if trace and trace[-1]["pos"]==list(pos) and not new_segment:
         trace[-1]["last_t"] = max(trace[-1].get("last_t",trace[-1]["t"]),elapsed)
+        if xp_gain:
+            trace[-1]["xp_gain"] = trace[-1].get("xp_gain", 0) + xp_gain
         return
     if len(trace)>=20000:
         state.recording_trace_limited=True
         return
     point={"pos":list(pos),"t":elapsed}
-    if trace and now-previous_sample>1:point["break_before"]=True
+    if xp_gain:
+        point["xp_gain"] = xp_gain
+    if trace and new_segment:point["break_before"]=True
     trace.append(point)
 
 
-def start_recording(state, name: str) -> str | None:
+def start_recording(state, name: str, *, mode: str = "manual") -> str | None:
     """Begin recording waypoints.  Returns error string or None on success."""
     task=getattr(state,"_action_tasks",{}).get("adaptive_cavebot")
     if task and not task.done():return "Zatrzymaj V2 przed nagrywaniem własnej drogi."
@@ -175,18 +193,26 @@ def start_recording(state, name: str) -> str | None:
         return f"Already recording '{state.recording_name}'. Stop it first."
     if not name or not all(c.isalnum() or c in "-_" for c in name):
         return "Invalid name. Use alphanumeric, hyphens, underscores only."
+    if mode not in ("manual", "adaptive"):
+        return "Nieznany tryb nagrywania."
+    if mode == "adaptive" and not getattr(state, "connected", False):
+        return "Nagrywanie adaptacyjne wymaga zalogowanej postaci."
+    atlas = getattr(getattr(state, "passive_map_monitor", None), "atlas", None)
+    if mode == "adaptive" and not getattr(atlas, "scope", None):
+        return "Poczekaj na pierwszy odczyt atlasu."
 
     gs = state.game_state
     pos = gs.position
     state.recording_active = True
     state.recording_name = name
+    state.recording_mode = mode
+    state._recording_xp_sample = None
     state.recording_waypoints = []
     state.recording_observed_path = []
     state.recording_trace_limited = False
     state._recording_sample_time = time.monotonic()
     state.recording_start_pos = pos
     state.recording_start_time = time.time()
-    atlas = getattr(getattr(state, "passive_map_monitor", None), "atlas", None)
     state._recording_atlas_scope = getattr(atlas, "scope", None)
     started_at = state.recording_start_time
     waypoints = state.recording_waypoints
@@ -372,6 +398,10 @@ def stop_recording(state, *, discard: bool = False) -> dict | None:
         "position_source": "client" if getattr(state.game_state,"client_state_required",False) else "server",
     }
 
+    if getattr(state, "recording_mode", "manual") == "adaptive":
+        recording["recording_mode"] = "adaptive"
+    state.recording_mode = "manual"
+    state._recording_xp_sample = None
     state.recording_active = False
     name = state.recording_name
     count = len(state.recording_waypoints)
@@ -432,6 +462,7 @@ def list_recordings() -> list[dict]:
             results.append({
                 "name": data.get("name", path.stem),
                 "count": len(data.get("waypoints", [])),
+                "mode": data.get("recording_mode", "manual"),
                 "created_at": data.get("created_at", ""),
                 "last_stats": data.get("last_stats"),
             })
