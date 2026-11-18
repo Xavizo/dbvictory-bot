@@ -14,7 +14,7 @@ from client_player_state import client_field
 from pet_tracking import PetTracker
 
 from constants import PACKET_FORMATS as PF
-from protocol import ServerOpcode
+from protocol import Direction, ServerOpcode
 
 log = logging.getLogger("game_state")
 
@@ -814,6 +814,9 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
         if pos + _pcw_size > len(data):
             return -1
         direction = data[pos]
+        if direction > Direction.NORTHWEST:
+            # A match inside another message must not undo an observed step.
+            return -1
         now = time.time()
         gs.cancel_walk_time = now
         # Revert the optimistic client-walk position update

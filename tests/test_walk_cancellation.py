@@ -14,6 +14,19 @@ def cancel_walk(gs, direction, received_at):
     scan_packet(bytes([ServerOpcode.PLAYER_CANCEL_WALK, direction]), gs, received_at=received_at)
 
 
+@pytest.mark.parametrize("invalid_direction", [8, 138, 255])
+def test_invalid_cancel_leaves_position_and_previous_event_intact(state, invalid_direction):
+    gs = state.game_state
+    gs.position = gs.packet_position = (673, 411, 9)
+    gs._last_walk_delta = (0, 1)
+    gs.last_walk_cancel = (10., (673, 410, 9))
+    cancel_walk(gs, invalid_direction, 20.)
+    assert gs.position == gs.packet_position == (673, 411, 9)
+    assert gs._last_walk_delta == (0, 1)
+    assert gs.last_walk_cancel == (10., (673, 410, 9))
+    assert gs.cancel_walk_time == 0 and not gs.server_events
+
+
 @pytest.mark.parametrize("origin,target,facing,during_wait", [
     ((697, 394, 9), (697, 395, 9), 3, False),
     ((671, 475, 7), (672, 476, 7), 2, True),
