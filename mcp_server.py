@@ -1411,6 +1411,9 @@ async def start_bot() -> str:
         if opcode in (ClientOpcode.MOVE_THING, ClientOpcode.REQUEST_TRADE, ClientOpcode.ACCEPT_TRADE,
                       ClientOpcode.BUY_ITEM, ClientOpcode.SELL_ITEM):
             state.potion_diagnostics.invalidate_inventory()
+            usage = getattr(state.game_state, 'senzu_usage', None)
+            if usage is not None:
+                usage.invalidate_inventory()
         # Track current attack target in game_state
         if opcode == ClientOpcode.ATTACK:
             try:
@@ -1479,9 +1482,16 @@ async def start_bot() -> str:
         # for healing (auto_senzu), combat (auto_combat), and targeting actions.
         loop = asyncio.get_event_loop()
         gs = state.game_state
+        usage = getattr(gs, 'senzu_usage', None)
+        received_at = _time.monotonic()
+        def observe_potion(msg_type, text, batch_id=None):
+            if gs is state.game_state:
+                state.potion_diagnostics.observe_message(msg_type, text, batch_id=batch_id)
+                if usage is not None:
+                    usage.observe_message(msg_type, text, batch_id, received_at)
         def scan_and_observe():
             gs.alert_chat_callback = lambda message, source: state.alert_center.observe_chat(message, state, source) if gs is state.game_state else None
-            gs.potion_message_callback = lambda *args, **kwargs: state.potion_diagnostics.observe_message(*args, **kwargs) if gs is state.game_state else None
+            gs.potion_message_callback = observe_potion
             if gs is not state.game_state:return
             scan_packet(data, gs)
             if gs is state.game_state:state.potion_diagnostics.observe_stats(gs)

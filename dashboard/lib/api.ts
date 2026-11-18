@@ -237,6 +237,7 @@ export const setAlertsPaused=(paused:boolean)=>control("/api/alerts",{command:"s
 
 export interface BotState {
   commands?: {session:number} | null;
+  senzu_usage?: {total:number; per_hour:number|null; window_seconds:number; ended:boolean}|null;
   session_statistics?: {
     source?: "panel";
     status:"waiting"|"active"|"stale"|"ended"|"error";

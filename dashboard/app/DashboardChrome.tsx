@@ -61,7 +61,7 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
       {w.id==="automation" && state?.actions.find(a=>a.name==="auto_potions")?.running && <i className="status-dot online"/>}
       {w.id==="cavebot" && state?.actions.some(a=>a.name==="adaptive_cavebot" && a.running) && <i className="status-dot online"/>}
     </button>)}<button className="atlas-launcher" aria-label="Otwórz atlas i mapę" aria-haspopup="dialog" onClick={()=>setAtlasOpen(true)}><Icon path="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2V5zm6-2v16m6-14v16"/><span>Atlas</span></button></nav>
-    <SessionStats stats={state?.session_statistics}/>
+    <SessionStats stats={state?.session_statistics} senzu={state?.senzu_usage}/>
     {atlasOpen&&<GlobalAtlas state={state} onRefresh={onRefresh} onClose={closeAtlas}/>}
     <CavebotRunBar state={state} connected={mcpConnected} onRefresh={onRefresh}/>
     <div className="workspace-scroll" ref={scrollRef}>

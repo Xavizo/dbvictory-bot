@@ -4,6 +4,13 @@ const code=ts.transpileModule(fs.readFileSync(require.resolve('../app/SessionSta
 const exported={};new Function('exports','require',code)(exported,require);
 const base={status:'active',elapsed_seconds:3661,start_level:389,level:391,levels_gained:2,xp_gained:60000,xp_per_hour:3600000,window_seconds:60,window_target_seconds:900,sample_age_seconds:0};
 const render=stats=>renderToStaticMarkup(React.createElement(exported.default,{stats}));
+test('Cavebot Senzu counters remain visible without an XP sample',()=>{
+  const senzu={total:7,per_hour:28,window_seconds:900,ended:true};
+  const html=renderToStaticMarkup(React.createElement(exported.default,{senzu}));
+  assert.match(html,/Senzu w sesji <strong>7/);
+  assert.match(html,/Senzu\/h <small>15 min<\/small> <strong>28/);
+  assert.match(html,/Sesja zakończona/);
+});
 const modelCode = ts.transpileModule(fs.readFileSync(require.resolve('../lib/panelSession.ts'),'utf8'),
   {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 const model = {};

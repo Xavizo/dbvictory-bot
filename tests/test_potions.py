@@ -45,6 +45,34 @@ def test_same_item_across_conditions_and_new_ids_cannot_bypass_cooldown():
     assert timer.next_rule(cfg, gs, 18, 100)["id"] == "new-id"
 
 
+def test_hunt_senzu_counts_only_consumption_and_freezes_last_window(monkeypatch):
+    from potions import SenzuUsage
+    clock = [10.0]
+    monkeypatch.setattr('potions.time.monotonic', lambda:clock[0])
+    usage = SenzuUsage()
+    def report(at, count):
+        clock[0] = at
+        usage.observe_message(25, f'Using one of {count} Senzu...', at, at)
+
+    report(12, 99)
+    usage.observe_message(26, '[Senzu] You are exhausted.', 12, 12)
+    report(13, 99)
+    report(15, 98)
+    report(16, 98)
+    assert usage.snapshot()['total'] == 1
+    usage.invalidate_inventory()
+    report(17, 97)
+    report(18, 96)
+    assert usage.snapshot()['per_hour'] == 900
+    report(915, 95)
+    assert usage.snapshot() == {'total':3,'per_hour':8,'window_seconds':900,'ended':False}
+    usage.finish()
+    report(920, 94)
+    assert usage.snapshot() == {'total':3,'per_hour':8,'window_seconds':900,'ended':True}
+    new = SenzuUsage()
+    assert new.snapshot()['total'] == 0
+
+
 def test_manual_senzu_use_and_lowered_settings_preserve_deadline():
     timer = PotionScheduler(); gs = stats()
     cfg = validate_config({"rules": [rule("hp", 8465, cooldown=10)]})

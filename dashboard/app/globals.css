@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+.draft-tags {flex:none;min-width:0;margin:4px 0;font-size:12px}
+.draft-tag-list,.draft-tag-editor,.draft-tag-colors {display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.draft-tags [data-color=mint] {--tag-color:#8ddcc1}
+.draft-tags [data-color=blue] {--tag-color:#9bc9ff}
+.draft-tags [data-color=amber] {--tag-color:#f0c77e}
+.draft-tags [data-color=rose] {--tag-color:#eda4b9}
+.draft-tags [data-color=violet] {--tag-color:#c3adff}
+.draft-tags .draft-tag {max-width:100%;overflow-wrap:anywhere;padding:2px 9px;border:1px solid color-mix(in srgb,var(--tag-color) 40%,transparent);border-radius:20px;color:var(--tag-color);background:color-mix(in srgb,var(--tag-color) 10%,transparent)}
+.draft-tags .draft-tag-add {padding:2px 6px;color:var(--muted);background:transparent;border:0}
+.draft-tag-editor {padding:6px 0}
+.draft-tag-editor input {min-width:8em;max-width:100%;padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--text)}
+.draft-tag-editor button {padding:2px 5px}
+.draft-tags .draft-tag-swatch {width:23px;height:23px;padding:0;border-radius:50%;background:var(--tag-color);color:#17131e;font-weight:700}
+.draft-tag-swatch[aria-pressed=true] {outline:1px solid currentColor;outline-offset:-3px}
+.draft-tag-remove,.draft-tags [role=alert] {color:#f2a2ad}
+
 @theme {
   --color-gray-950:#131318; --color-gray-900:#19191f; --color-gray-800:#222229;
   --color-gray-700:#36363f; --color-gray-600:#51515f; --color-gray-500:#868694;

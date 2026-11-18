@@ -32,6 +32,21 @@ def validate_labels(labels,count):
     return [v.strip() for v in labels]
 
 
+def validate_tags(tags):
+    colors = ('mint', 'blue', 'amber', 'rose', 'violet')
+    if not isinstance(tags, list) or len(tags) > 16:
+        raise ValueError("Szkic może mieć do 16 etykiet.")
+    result = []
+    for tag in tags:
+        if not isinstance(tag, dict) or tag.get('color') not in colors:
+            raise ValueError("Wybierz kolor etykiety.")
+        text = tag.get('text')
+        if not isinstance(text, str) or not 1 <= len(text.strip()) <= 80 or any(ord(c) < 32 for c in text):
+            raise ValueError("Treść etykiety musi mieć od 1 do 80 znaków.")
+        result.append({'text': text.strip(), 'color': tag['color']})
+    return result
+
+
 def validate_links(links,points):
     if links is None:return []
     if not isinstance(links,list) or len(links)>len(points):raise ValueError('Nieprawidłowa lista przejść.')
@@ -301,6 +316,7 @@ class MapAtlas:
                 if 'combat' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN combat TEXT NOT NULL DEFAULT '{}'")
                 if 'deleted' not in columns:db.execute('ALTER TABLE drafts ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0')
                 if 'labels' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN labels TEXT")
+                if 'tags' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
                 if 'links' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN links TEXT NOT NULL DEFAULT '[]'")
                 self.total=db.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
                 self.floors={r[0] for r in db.execute("SELECT DISTINCT z FROM tiles")}
@@ -356,11 +372,11 @@ class MapAtlas:
     def drafts(self,deleted=False):
         if self.error:raise ValueError(self.error)
         with self.lock,sqlite3.connect(self.path,timeout=.2) as db:
-            rows=[{"id":i,"name":name,"points":json.loads(points),"labels":validate_labels(json.loads(labels) if labels else None,len(json.loads(points))),"updated":updated,"loop":bool(loop),"links":validate_links(json.loads(links),json.loads(points)),"combat":validate_combat(json.loads(combat))}
-                    for i,name,points,updated,loop,combat,labels,links in db.execute("SELECT id,name,points,updated,loop,combat,labels,links FROM drafts WHERE deleted=? ORDER BY updated DESC LIMIT 100",(int(deleted),))]
+            rows=[{"id":i,"name":name,"points":json.loads(points),"tags":json.loads(tags),"labels":validate_labels(json.loads(labels) if labels else None,len(json.loads(points))),"updated":updated,"loop":bool(loop),"links":validate_links(json.loads(links),json.loads(points)),"combat":validate_combat(json.loads(combat))}
+                    for i,name,points,updated,loop,combat,labels,links,tags in db.execute("SELECT id,name,points,updated,loop,combat,labels,links,tags FROM drafts WHERE deleted=? ORDER BY updated DESC LIMIT 100",(int(deleted),))]
             return [{**row,'navigation_revision':navigation_revision(row)} for row in rows]
 
-    def save_draft(self,name,points,draft_id=None,loop=True,expected_updated=None,labels=None,links=None):
+    def save_draft(self,name,points,draft_id=None,loop=True,expected_updated=None,labels=None,links=None,tags=None):
         if self.error:raise ValueError(self.error)
         if type(loop)is not bool:raise ValueError("Nieprawidłowa opcja pętli.")
         if not isinstance(name,str) or not 1<=len(name.strip())<=80:raise ValueError("Nazwa szkicu: od 1 do 80 znaków.")
@@ -375,10 +391,25 @@ class MapAtlas:
                     raise ValueError('Szkic zmienił się w innym oknie. Wczytaj go ponownie przed zapisem; Twoje bieżące zmiany pozostają w edytorze.')
             if draft_id is None and db.execute("SELECT COUNT(*) FROM drafts").fetchone()[0]>=100:
                 raise ValueError("Osiągnięto limit 100 szkiców; zapisz zmiany w istniejącym szkicu.")
+            if tags is not None and draft_id is not None:
+                raise ValueError("Zapisz etykiety osobno od zmian waypointów.")
             draft_id=draft_id or uuid.uuid4().hex
             db.execute("INSERT INTO drafts (id,name,points,updated,loop) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,points=excluded.points,updated=excluded.updated,loop=excluded.loop",(draft_id,name.strip(),json.dumps(points),time.time(),int(loop)))
             db.execute('UPDATE drafts SET labels=?,links=? WHERE id=?',(json.dumps(labels),json.dumps(links),draft_id))
+            if tags is not None:
+                db.execute('UPDATE drafts SET tags=? WHERE id=?',(json.dumps(validate_tags(tags)),draft_id))
         return draft_id
+
+    def set_tags(self, draft_id, tags, previous):
+        if not isinstance(draft_id, str) or not 1 <= len(draft_id) <= 64:
+            raise ValueError("Wybierz zapisany szkic.")
+        updated = json.dumps(validate_tags(tags))
+        expected = json.dumps(validate_tags(previous))
+        with self.lock, sqlite3.connect(self.path, timeout=.2) as db:
+            changed = db.execute("UPDATE drafts SET tags=? WHERE id=? AND deleted=0 AND tags=?",
+                                 (updated, draft_id, expected))
+            if not changed.rowcount:
+                raise ValueError("Etykiety szkicu zmieniły się w innym oknie lub szkic został usunięty.")
 
     def change_draft(self,draft_id,operation,combat=None,loop=None):
         if not isinstance(draft_id,str) or not draft_id or len(draft_id)>64:raise ValueError("Nieprawidłowy identyfikator szkicu.")

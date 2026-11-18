@@ -105,6 +105,42 @@ def test_two_editor_windows_cannot_silently_overwrite_a_newer_sketch(tmp_path,mo
     assert atlas.drafts()[0]['name']=='newer'
 
 
+def test_can_edit_only_metadata_while_current_route_is_running(http_api, state, tmp_path, monkeypatch):
+    controller, _, draft = setup(state, tmp_path)
+    controller.status = 'running'
+    monkeypatch.setattr(api, '_state', state)
+    request, _ = http_api
+    headers = {'Origin':DASHBOARD_ORIGIN, 'Authorization':f'Bearer {SESSION_TOKEN}'}
+    def post(**data):
+        return request('POST','/api/map/drafts', json.dumps({'id':draft, 'scope':controller.scope, **data}), **headers)
+    tags = [{'text':'Waste 25k','color':'rose'}]
+    status, _, raw = post(operation='set_tags', tags=tags, previous=[])
+    assert status == 200 and json.loads(raw)['drafts'][0]['tags'] == tags
+    assert post(operation='delete')[0] == 400
+    assert post(operation='set_tags', tags=[{'text':'', 'color':'rose'}], previous=tags)[0] == 400
+    assert state.passive_map_monitor.atlas.drafts()[0]['tags'] == tags
+
+
+def test_draft_tags_survive_geometry_edits_and_conflicting_windows(tmp_path):
+    atlas = MapAtlas(tmp_path, 'e'*64)
+    points = [[10,10,7], [11,10,7]]
+    tags = [{'text': '12M XP/h', 'color': 'mint'}]
+    draft = atlas.save_draft('Tsuful', points, tags=tags)
+    before = atlas.drafts()[0]
+    updated = [*tags, {'text': 'Lv 390', 'color': 'blue'}]
+    atlas.set_tags(draft, updated, tags)
+    with pytest.raises(ValueError, match='innym oknie'):
+        atlas.set_tags(draft, [], tags)
+    assert atlas.drafts()[0] == {**before, 'tags': updated}
+    atlas.save_draft('Tsuful 10', points, draft, expected_updated=before['updated'])
+    atlas.change_draft(draft,'delete')
+    atlas.change_draft(draft,'restore')
+    reopened = MapAtlas(tmp_path, 'e'*64)
+    assert reopened.drafts()[0]['tags'] == updated
+    reopened.set_tags(draft, [], updated)
+    assert reopened.drafts()[0]['tags'] == []
+
+
 def test_labels_survive_reopen_combat_changes_and_delete_restore(tmp_path):
     atlas=MapAtlas(tmp_path,'e'*64);points=[[10,10,7],[11,10,7],[12,10,7]]
     draft=atlas.save_draft('Labels',points,labels=[' Start ','Brama 320','Powrót'])

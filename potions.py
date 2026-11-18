@@ -10,6 +10,8 @@ from collections import deque
 from protocol import build_use_item_packet, build_use_on_creature_packet
 
 ITEMS = {10161: "Special Health Potion", 10160: "Special Ki Potion", 8465: "Senzu"}
+STOCK_REPORT = re.compile(r"Using one of (\d{1,9}) (Special Health Potion|Special Ki Potion|Senzu)\.\.\.")
+USE_REFUSAL = re.compile(r"(?:\[(Senzu)\] )?(You are exhausted(?: \([0-9.]+\))?\.?|You cannot use this object\.|You can not use this object\.|You don't have this item\.)")
 POTIONS = {"health": (10161, "hp", "max_hp"), "ki": (10160, "mana", "max_mana")}
 LEGACY_HEALING_ACTIONS = frozenset({"auto_senzu", "mana_recovery_20", "mana_recovery_70"})
 DEFAULTS = {"shared_cooldown": 0.0}
@@ -185,6 +187,62 @@ async def run_potions(bot):
         await bot.sleep(0.05)
 
 
+class SenzuUsage:
+    """Confirmed stock decreases for one Cavebot run, timestamped at the prior use."""
+    window = 15 * 60
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.started = self.inventory_since = time.monotonic()
+        self.ended = None
+        self.previous = None
+        self.recent = deque()
+        self.total = 0
+
+    def invalidate_inventory(self):
+        with self._lock:
+            self.inventory_since = time.monotonic()
+            self.previous = None
+
+    def finish(self):
+        with self._lock:
+            if self.ended is None:
+                self.ended = time.monotonic()
+
+    def observe_message(self, msg_type, text, batch_id, at):
+        with self._lock:
+            if at < self.inventory_since or (self.ended is not None and at > self.ended):
+                return
+            if msg_type == 26 and self.previous:
+                refused = USE_REFUSAL.fullmatch(text)
+                if refused and (refused[1] or batch_id is not None and batch_id == self.previous[2]):
+                    self.previous = None
+                return
+            report = STOCK_REPORT.fullmatch(text) if msg_type == 25 else None
+            if not report or report[2] != "Senzu":
+                return
+            count = int(report[1])
+            if self.previous:
+                stock, used_at, _ = self.previous
+                if stock - count == 1:
+                    self.total += 1
+                    self.recent.append(used_at)
+            self.previous = (count, at, batch_id)
+            self._trim(at)
+
+    def _trim(self, now):
+        while self.recent and self.recent[0] <= now - self.window:
+            self.recent.popleft()
+
+    def snapshot(self):
+        with self._lock:
+            now = self.ended if self.ended is not None else time.monotonic()
+            self._trim(now)
+            duration = min(self.window, max(0, now - self.started))
+            return {"total": self.total, "per_hour": round(3600 * len(self.recent) / duration, 1) if duration >= 1 else None,
+                    "window_seconds": int(duration), "ended": self.ended is not None}
+
+
 class PotionDiagnostics:
     """No packets sent or payloads stored. Deltas are observations, not proof of use."""
     def __init__(self):
@@ -239,7 +297,7 @@ class PotionDiagnostics:
         now = time.monotonic() if now is None else now
         with self._lock:
             if now >= self.until or msg_type not in (25,26): return
-            match=re.fullmatch(r"Using one of (\d{1,9}) (Special Health Potion|Special Ki Potion|Senzu)\.\.\.",text)
+            match=STOCK_REPORT.fullmatch(text)
             if match and msg_type==25:
                 item=next(i for i,n in ITEMS.items() if n==match[2])
                 count=int(match[1])
@@ -260,7 +318,7 @@ class PotionDiagnostics:
                 self.last_reports[item]=(row,count,self.inventory_epoch)
                 self.last_response=(row,batch_id,now)
                 return
-            rejection = re.fullmatch(r"(?:\[(Senzu)\] )?(You are exhausted(?: \([0-9.]+\))?\.?|You cannot use this object\.|You can not use this object\.|You don't have this item\.)",text)
+            rejection = USE_REFUSAL.fullmatch(text)
             if not rejection or msg_type!=26:return
             row=None
             if self.last_response:

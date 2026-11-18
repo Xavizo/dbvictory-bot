@@ -102,6 +102,7 @@ test('overlapping return segments get separate lanes; editing a point preserves 
   assert.deepEqual(points[1],[10,10,6]);
 });
 function component(file,imports={}) {
+  if (file.endsWith('/AtlasPanel.tsx')) imports['./DraftTags'] = component('../app/DraftTags.tsx');
   const mod={exports:{}};
   new Function('exports','require',ts.transpileModule(fs.readFileSync(require.resolve(file),'utf8'),
     {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)
@@ -109,6 +110,15 @@ function component(file,imports={}) {
   return mod.exports;
 }
 const spellPicker=component('../app/SpellPicker.tsx',{'@/lib/spellCatalogue':component('../lib/spellCatalogue.ts')});
+
+test('saved sketch offers individual colored editable tags without loading the map',()=>{
+  const tags=[{text:'12M XP/h',color:'mint'},{text:'Lvl 390',color:'blue'}];
+  const Tags=component('../app/DraftTags.tsx').default;
+  const html=require('react-dom/server').renderToStaticMarkup(require('react').createElement(Tags,{tags,onSave:()=>{}}));
+  assert.match(html,/data-color="mint".*Edytuj etykietę 12M XP\/h/);
+  assert.match(html,/data-color="blue".*Edytuj etykietę Lvl 390/);
+  assert.match(html,/\+ Etykieta/);
+});
 
 test('global Atlas is available outside Cavebot and remains unloaded until opened',()=>{
   let mounts=0;

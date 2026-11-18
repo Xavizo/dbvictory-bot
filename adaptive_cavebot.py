@@ -767,6 +767,9 @@ class AdaptiveCavebot:
         from automation_domains import CavebotDomains
         self.session_lease=SessionLease(self.state)
         self.domains=CavebotDomains(self)
+        from potions import SenzuUsage
+        usage = SenzuUsage()
+        self.state.game_state.senzu_usage = usage
         try:
             await self.domains.run()
         except ValueError as exc:self.pause(str(exc))
@@ -777,6 +780,7 @@ class AdaptiveCavebot:
             self.pause('Błąd wykonania trasy; nawigacja wstrzymana.')
             raise
         finally:
+            usage.finish()
             proxy.unregister_client_packet_callback(manual)
             await self.combat.cancel_attack()
 

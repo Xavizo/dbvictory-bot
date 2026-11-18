@@ -298,12 +298,14 @@ class _Handler(BaseHTTPRequestHandler):
                 body=self._read_body()
                 if body.get("scope")!=atlas.scope:raise ValueError("Profil atlasu się zmienił. Odśwież widok.")
                 controller=getattr(_state,'adaptive_cavebot',None)
-                if controller and controller.status in {'running','paused','ready'} and getattr(controller,'draft_id',None)==body.get('id'):
+                if body.get('operation') != 'set_tags' and controller and controller.status in {'running','paused','ready'} and getattr(controller,'draft_id',None)==body.get('id'):
                     raise ValueError('Zatrzymaj V2 przed zmianą lub usunięciem wykonywanej trasy.')
-                if body.get('operation') in {'delete','restore','configure','set_loop'}:
+                if body.get('operation') == 'set_tags':
+                    atlas.set_tags(body.get('id'), body.get('tags'), body.get('previous'))
+                elif body.get('operation') in {'delete','restore','configure','set_loop'}:
                     atlas.change_draft(body.get('id'),body['operation'],body.get('combat'),body.get('loop'))
                 elif body.get('operation') is not None:raise ValueError('Nieznana operacja szkicu.')
-                else:draft_id=atlas.save_draft(body.get("name"),body.get("points"),body.get("id"),body.get("loop",True),body.get('expected_updated'),body.get('labels'),body.get('links'))
+                else:draft_id=atlas.save_draft(body.get("name"),body.get("points"),body.get("id"),body.get("loop",True),body.get('expected_updated'),body.get('labels'),body.get('links'),body.get('tags'))
             return self._json_response({"scope":atlas.scope,"drafts":atlas.drafts(),"trash":atlas.drafts(deleted=True),"saved_id":draft_id})
         except (ValueError,TypeError,KeyError) as exc:return self._json_response({"error":str(exc)},400)
         except Exception:return self._json_response({"error":"Nie udało się odczytać lub zapisać szkiców."},500)
@@ -792,6 +794,7 @@ def _build_state_json() -> str:
         "automation_paused": st.automation_paused,
         "automation_pause_kind": st.automation_pause_kind,
         "potion_diagnostics": st.potion_diagnostics.snapshot(),
+        "senzu_usage": gs.senzu_usage.snapshot() if getattr(gs, "senzu_usage", None) else None,
         "barrier_band": st.band_scheduler.snapshot(),
         "speed_up": st.speed_scheduler.snapshot() if getattr(st,"speed_scheduler",None) else None,
         "commands": st.game_proxy.command_snapshot() if st.game_proxy and hasattr(st.game_proxy,'command_snapshot') else None,

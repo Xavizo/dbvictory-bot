@@ -9,13 +9,15 @@ import {readAtlasWhenReady,createAtlasRegionReader} from "@/lib/atlasLoading";
 import type {BotState,PassiveMapCell} from "@/lib/api";
 import {atlasCenter,visibleAtlasCells,routeLines,simulationStep,simulationReport,fastSimulationNext,atlasViewport,panCenter,routeSegments,routeColor,directionMarkers,transitionChoices,transitionDestination,transitionStages,segmentLane,stepFloor,atlasWheel,moveAnchor,isRouteClosed,canCloseNearby,draftFingerprint,hasDraftChanges,closeRoute,finishAnchorEdit,insertAnchor,removeAnchor,appendTransition,rememberEdit,remapLabels,unresolvedLegs,undoShortcut,remapLinks,selectTransition,type RouteLink,type RouteTransition,type RouteEdit} from "@/lib/atlasModel";
 import AtlasRouteOverview from "./AtlasRouteOverview";
+import DraftTags from "./DraftTags";
+import type {DraftTag} from "@/lib/cavebotModel";
 import {tileStyles,navigationStyles,petStyle} from "@/lib/mapVisuals";
 import {NavigationDetails,TileContextMenu,copyCellText,type TileMenuPosition} from "./PassiveMapPanel";
 import {transitionActions} from "./TransitionLearningPanel";
 import {transitionMarkers,transitionApproaches,endpointMarkers,routeExecutionIssues,MAX_ATLAS_RADIUS} from "@/lib/atlasModel";
 import type {TransitionAction} from "@/lib/api";
 type Pos=[number,number,number];
-type Draft={navigation_revision?:string;id:string;name:string;points:Pos[];labels?:string[];links?:RouteLink[];loop?:boolean;updated:number};
+type Draft={navigation_revision?:string;id:string;name:string;points:Pos[];labels?:string[];tags?:DraftTag[];links?:RouteLink[];loop?:boolean;updated:number};
 type Atlas={route_transitions?:RouteTransition[];scope:string;center:Pos;radius:number;cells:PassiveMapCell[];floors:number[];total:number;limit:number|null;error?:string};
 type Plan={avoid_tiles?:Pos[];return_mode?:string;return_error?:string|null;loop_closed:boolean;links:RouteLink[];scope:string;path:Pos[];points:Pos[];original:Pos[];complete:boolean;preview_only:boolean;warning:string;requires_action_review?:boolean;requires_path_review?:boolean;ignored_recorded_actions?:boolean;unmatched_recorded_actions?:number;recording_source?:string;
   transitions:{origin:Pos;entry:Pos;exit:Pos;action:string;item_id?:number;tool_id?:number;prepared_item_id?:number}[];
@@ -35,6 +37,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
   const [tileMenu,setTileMenu]=useState<TileMenuPosition|null>(null);
   const [simIndex,setSimIndex]=useState<number|null>(null),[simPlaying,setSimPlaying]=useState(false);
   const [loop,setLoop]=useState(true);
+  const [newTags,setNewTags]=useState<DraftTag[]>([]);
   const [mapOpen,setMapOpen]=useState(!embedded),[optimization,setOptimization]=useState<{before:Plan;candidate:Plan}|null>(null),[simulation,setSimulation]=useState<ReturnType<typeof simulationReport>|null>(null);
 
   const [viewport,setViewport]=useState({width:700,height:450}),[segmentIndex,setSegmentIndex]=useState(0),[showTrace,setShowTrace]=useState(false),[sidebar,setSidebar]=useState(false);
@@ -105,7 +108,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
     async function refresh(){try{const data=await readAtlasWhenReady(()=>reader(center,grid.columns,grid.rows,scope,()=>cancelled),setMapWaiting,()=>cancelled);if(!cancelled&&data){setAtlas(data);setLoadError("");}}catch(e){if(!cancelled)setLoadError(e instanceof Error?e.message:String(e));}finally{if(!cancelled)timer=setTimeout(refresh,2000);}}
     refresh();return()=>{cancelled=true;clearTimeout(timer);};
   },[active,mapOpen,objectView,center[0],center[1],center[2],grid.columns,grid.rows,scope,liveScope]);
-  useEffect(()=>{setHistory([]);setTransitionSpot(null);clearPlan();setPoints([]);setLabels([]);setLinks([]);setLastOptimization(null);setBusy(false);setDraftId("");setDraftName("");setSelected(null);setDrafts([]);setError("");setDraftLoadError("");},[scope]);
+  useEffect(()=>{setHistory([]);setTransitionSpot(null);clearPlan();setPoints([]);setLabels([]);setLinks([]);setLastOptimization(null);setBusy(false);setNewTags([]);setDraftId("");setDraftName("");setSelected(null);setDrafts([]);setError("");setDraftLoadError("");},[scope]);
   useEffect(()=>{if(!active)setSimPlaying(false);},[active]);
   useEffect(()=>{if(!embedded||!mapOpen)return;const key=(e:KeyboardEvent)=>{if(e.key==="Escape"){setMapOpen(false);setSimPlaying(false);}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[embedded,mapOpen]);
   useEffect(()=>{if(recorder?.active && follow)setSegmentIndex(Math.max(0,segments.length-1));},[recorder?.active,follow,segments.length]);
@@ -127,7 +130,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
         if(current.scope!==scope||!row||draftFingerprint(row.name,row.points,row.labels??[],row.links??[],row.loop??true)!==savedVersion)throw Error("Szkic zmienił się w innym oknie. Twoje zmiany pozostają w edytorze — porównaj je przed zapisem.");
         expectedUpdated=row.updated;savedLoop=row.loop??true;
       }
-      const data=await request("/api/map/drafts",{scope,name:draftName.trim()||"Nowa trasa",points,labels,links,loop:savedLoop,...(draftId?{id:draftId,expected_updated:expectedUpdated}:{})});
+      const data=await request("/api/map/drafts",{scope,name:draftName.trim()||"Nowa trasa",points,labels,links,loop:savedLoop,...(draftId?{id:draftId,expected_updated:expectedUpdated}:{tags:newTags})});
       const row:Draft=data.drafts.find((d:Draft)=>d.id===data.saved_id);if(!row)throw Error("Brak potwierdzenia zapisu szkicu.");
       setDrafts(data.drafts);setDraftId(row.id);setDraftName(row.name);setPoints(row.points);setLabels(row.labels??[]);setLinks(row.links??[]);setLoop(row.loop??true);
       setOptimization(null);setSavedVersion(draftFingerprint(row.name,row.points,row.labels??[],row.links??[],row.loop??true));onEditingChange?.(false);onDraftSaved?.(row.id);
@@ -138,9 +141,9 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
     return()=>{cancelled=true;};
   },[scope,initialDraftId,selectionVersion]);
   useEffect(()=>{onEditingChange?.(dirty||!!optimization||!!recorder?.active);},[dirty,optimization,recorder?.active,onEditingChange]);
-  function loadDraft(id:string,rows=drafts){const changedRoute=id!==draftId;setHiddenSegments([]);setRecording("");setHistory([]);setTransitionSpot(null);clearPlan();setDraftId(id);const draft=rows.find(d=>d.id===id);setPoints(draft?.points ?? []);setLinks(draft?.links??[]);setLabels(draft?.labels??draft?.points.map(()=>"")??[]);setLastOptimization(null);setRename(false);setDraftName(draft?.name ?? "");setLoop(draft?.loop ?? true);if(draft){setSavedVersion(draftFingerprint(draft.name,draft.points,draft.labels??[],draft.links??[],draft.loop??true));if(changedRoute)frameRoute(draft.points);void propose(draft.points,undefined,draft.loop ?? true,draft.links??[]);}}
+  function loadDraft(id:string,rows=drafts){const changedRoute=id!==draftId;setHiddenSegments([]);setRecording("");setHistory([]);setTransitionSpot(null);clearPlan();setNewTags([]);setDraftId(id);const draft=rows.find(d=>d.id===id);setPoints(draft?.points ?? []);setLinks(draft?.links??[]);setLabels(draft?.labels??draft?.points.map(()=>"")??[]);setLastOptimization(null);setRename(false);setDraftName(draft?.name ?? "");setLoop(draft?.loop ?? true);if(draft){setSavedVersion(draftFingerprint(draft.name,draft.points,draft.labels??[],draft.links??[],draft.loop??true));if(changedRoute)frameRoute(draft.points);void propose(draft.points,undefined,draft.loop ?? true,draft.links??[]);}}
   async function propose(next:Pos[],record?:string,repeat=loop,chosen=links){if(!scope || !compatible)return;const id=++generation.current;setBusy(true);setError("");setCopied(false);setSimPlaying(false);setSimIndex(null);
-    try {const result:Plan=await request("/api/map/plan",{scope,loop:repeat,...(record?{recording:record,optimize:false}:{points:next,links:chosen})});if(id!==generation.current)return;setPlan(result);setPoints(result.points);setLinks(result.links??[]);setSegmentIndex(0);if(record){setHiddenSegments([]);setLabels(result.points.map(()=>""));setLastOptimization(null);frameRoute(result.original);setDraftId("");setDraftName(record);}}
+    try {const result:Plan=await request("/api/map/plan",{scope,loop:repeat,...(record?{recording:record,optimize:false}:{points:next,links:chosen})});if(id!==generation.current)return;setPlan(result);setPoints(result.points);setLinks(result.links??[]);setSegmentIndex(0);if(record){setHiddenSegments([]);setLabels(result.points.map(()=>""));setLastOptimization(null);frameRoute(result.original);setNewTags([]);setDraftId("");setDraftName(record);}}
     catch(e){if(id===generation.current)setError(e instanceof Error?e.message:String(e));}finally{if(id===generation.current)setBusy(false);}
   }
   function locate(event:React.PointerEvent):Pos|null {const rect=svg.current?.getBoundingClientRect();if(!rect)return null;
@@ -202,7 +205,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
   }
   async function recordToggle(){setBusy(true);setError("");try{
     if(state?.cavebot?.recording.active){const name=state.cavebot.recording.name;await request("/api/cavebot/record/stop",{discard:false});await onRefresh();setRecording(name);await propose([],name);}
-    else {const name=`atlas_${new Date().toISOString().replace(/[^0-9]/g,"").slice(0,14)}`;await request("/api/cavebot/record/start",{name});clearPlan();setHistory([]);setTransitionSpot(null);setPoints([]);setLabels([]);setLinks([]);setLastOptimization(null);setDraftId("");setDraftName("");setRecording(name);setDraw(false);setFollow(true);await onRefresh();}
+    else {const name=`atlas_${new Date().toISOString().replace(/[^0-9]/g,"").slice(0,14)}`;await request("/api/cavebot/record/start",{name});clearPlan();setHistory([]);setTransitionSpot(null);setPoints([]);setLabels([]);setLinks([]);setLastOptimization(null);setNewTags([]);setDraftId("");setDraftName("");setRecording(name);setDraw(false);setFollow(true);await onRefresh();}
   }catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
   function editHere(){setObjectView(false);setMapOpen(true);setCenter(center);setDraw(true);setPanMode(false);}
   async function optimizeRoute(){if(!plan||!scope)return;const generationId=++generation.current;setBusy(true);setError("");setSimulation(null);setDraw(false);try{
@@ -253,6 +256,19 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
     {plan?.loop_closed&&plan.return_mode&&plan.return_mode!=="closed"&&<small>Powrót: {plan.return_mode==="reverse"?"waypointami w odwrotnej kolejności":"znaną drogą do początku"}.</small>}
     {error&&<p role="alert" className="v2-error">{error}</p>}</>;
   const saveButton=<MapTool icon={saved?"check":"save"} label={optimization?"Zapisz oryginał bez optymalizacji":saved?"Zapisano szkic":"Zapisz szkic"} disabled={busy||!dirty||!compatible||points.length<2||recorder?.active} onClick={saveDraft}/>;
+  const tagEditor = !browseOnly && (draftId || points.length>0) && <DraftTags key={`${scope}/${draftId || recording}`}
+    tags={draftId ? drafts.find(d=>d.id===draftId)?.tags ?? [] : newTags}
+    onSave={async(tags,previous)=>{
+      if (!draftId) { setNewTags(tags); return; }
+      try {
+        const data=await request("/api/map/drafts",{scope,id:draftId,operation:"set_tags",tags,previous});
+        if(data.scope===scope)setDrafts(data.drafts);
+      } catch(e) {
+        const latest=await request("/api/map/drafts");
+        if(latest.scope===scope)setDrafts(latest.drafts);
+        throw e;
+      }
+    }}/>;
   const draftControls=!browseOnly&&<div className="map-draft-controls" role="group" aria-label="Zapis szkicu">
     <input aria-label="Nazwa edytowanego szkicu" maxLength={80} placeholder="Nowa trasa" value={draftName} disabled={busy||recorder?.active} onChange={e=>setDraftName(e.target.value)}/>
     <span role="status" className={dirty?"is-dirty":""}>{dirty?"Niezapisane zmiany":saved?"Zapisano":"Nowy szkic"}</span>
@@ -262,6 +278,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
   const mapBody=active&&mapOpen?(
     <div className="atlas-editing-surface">
     {draftControls}
+    {tagEditor}
     <div className={`atlas-map-workspace ${optimization?"atlas-review-lock":""}`}>
 
     <div className="atlas-toolbar map-integrated-toolbar" role="group" aria-label="Narzędzia mapy">
@@ -393,6 +410,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
       <MapMore>{moreActions}<button onClick={()=>setRename(!rename)}>Zmień nazwę szkicu</button><button disabled={busy||!plan||recorder?.active||!!optimization} onClick={optimizeRoute}>Optymalizuj trasę</button>{lastOptimization&&<button disabled={busy||!!optimization} onClick={undoOptimization}>Cofnij optymalizację</button>}</MapMore>
     </div>
     {routePicker}
+    {embedded && !mapOpen && tagEditor}
     {(rename||(!draftId&&(points.length>0||recorder?.active)))&&<div className="route-save-row"><input aria-label="Nazwa szkicu" maxLength={80} placeholder="Nazwa trasy" value={draftName} onChange={e=>{setDraftName(e.target.value);}}/></div>}
     {recorder?.active&&<p role="status" className="recording-status">● Nagrywanie · {recorder.position_count??0} pozycji</p>}
     {embedded&&progress&&progress.current!==null&&<div className="waypoint-progress" role="status">{state?.adaptive_cavebot?.status==='running'?'Do waypointu':state?.adaptive_cavebot?.status==='complete'?'Zakończono na waypointcie':'Zapamiętany waypoint'} <strong>{progress.current+1}/{progress.total}</strong>{progress.last_reached!==null&&<small> · zaliczony {progress.last_reached+1}</small>}</div>}

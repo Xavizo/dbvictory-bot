@@ -17,7 +17,8 @@ export function monsterRuleSummary(rule:MonsterRule):string {
   const spell=rule.spell_mode==='none'?'Bez czarów':rule.spell_mode==='custom'?(rule.spell?.words||'Wpisz czar'):'';
   return [movement,spell].filter(Boolean).join(' · ')||'Zaznacz i atakuj';
 }
-export type RouteDraft={navigation_revision?:string;id:string;name:string;points:Position[];labels:string[];links?:{from_index:number;id:string}[];loop:boolean;updated:number;combat:CombatConfig};
+export type DraftTag={text:string;color:"mint"|"blue"|"amber"|"rose"|"violet"};
+export type RouteDraft={navigation_revision?:string;id:string;name:string;tags?:DraftTag[];points:Position[];labels:string[];links?:{from_index:number;id:string}[];loop:boolean;updated:number;combat:CombatConfig};
 export const defaultCombat=():CombatConfig=>({enabled:false,mode:"stop",strategy:"nearest",engage:"near",radius:5,distance:1,lure_count:4,lure_seconds:8,lure_distance:3,rules:[],spells:[]});
 export type TargetPreview={message:string;targets:{id:number;name:string;health:number;priority:number;distance:number}[];selected:{id:number}|null;spells?:SpellCheck[]};
 export function parseTargetPreview(response:unknown):TargetPreview {
