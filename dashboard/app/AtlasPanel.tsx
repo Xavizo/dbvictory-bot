@@ -20,7 +20,7 @@ type Pos=[number,number,number];
 type Draft={navigation_revision?:string;id:string;name:string;points:Pos[];labels?:string[];tags?:DraftTag[];links?:RouteLink[];loop?:boolean;updated:number};
 type Atlas={route_transitions?:RouteTransition[];scope:string;center:Pos;radius:number;cells:PassiveMapCell[];floors:number[];total:number;limit:number|null;error?:string};
 type Plan={avoid_tiles?:Pos[];return_mode?:string;return_error?:string|null;loop_closed:boolean;links:RouteLink[];scope:string;path:Pos[];points:Pos[];original:Pos[];complete:boolean;preview_only:boolean;warning:string;requires_action_review?:boolean;requires_path_review?:boolean;ignored_recorded_actions?:boolean;unmatched_recorded_actions?:number;recording_source?:string;
-  adaptive_evidence?:{areas:number;samples:number;total_samples:number;xp:number};
+  adaptive_evidence?:{areas:number;total_areas?:number;samples:number;total_samples:number;xp:number};
   transitions:{origin:Pos;entry:Pos;exit:Pos;action:string;item_id?:number;tool_id?:number;prepared_item_id?:number}[];
   legs?:{from_index:number;to_index:number;start:number;end:number}[];
   recorded_actions?:{type:string;item_id?:number;player_pos?:Pos;x?:number;y?:number;z?:number;to_x?:number;to_y?:number;to_z?:number;matched_transition?:number|null}[];
@@ -30,6 +30,13 @@ async function request(path:string,body?:unknown) {
   const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error ?? `HTTP ${response.status}`),{status:response.status});return data;
 }
 const pointText=(p:Pos)=>`(${p.join(", ")})`;
+const huntMilestones = [
+  "Zdobądź XP w pierwszym miejscu.",
+  "Zdobądź XP w innej części expowiska.",
+  "Wróć przez odwiedzone obszary z XP, żeby domknąć obieg.",
+  "Jest szkic. Zakończ teraz lub odwiedź ponownie obszary z XP.",
+  "Obieg potwierdzony. Możesz zakończyć nagranie.",
+] as const;
 const ObjectMap=dynamic(()=>import("./PassiveMapPanel"),{ssr:false});
 function lines(points:Pos[],z:number) {const result:Pos[][]=[];let line:Pos[]=[];for(const p of points){if(p[2]===z)line.push(p);else if(line.length){result.push(line);line=[];}}if(line.length)result.push(line);return result;}
 export default function AtlasPanel({state,active,onRefresh,initialDraftId="",selectionVersion=0,embedded=false,browseOnly=false,profileScope,routePicker,routeEnabledControl,moreActions,onDraftSaved,onEditingChange,onLoopChange}:{state:BotState|null;active:boolean;onRefresh:()=>void;initialDraftId?:string;selectionVersion?:number;embedded?:boolean;browseOnly?:boolean;profileScope?:string;routePicker?:ReactNode;routeEnabledControl?:ReactNode;moreActions?:ReactNode;onDraftSaved?:(id:string)=>void;onEditingChange?:(dirty:boolean)=>void;onLoopChange?:(value:boolean)=>void}) {
@@ -69,6 +76,14 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
   const compatible=!liveScope || liveScope===scope;
   const cells=active&&mapOpen&&!objectView?visibleAtlasCells(compatible?atlas?.cells ?? []:[],state?.passive_map,scope,center,grid.visibleRadius):[];
   const recorder=state?.cavebot?.recording;
+  const huntStage=recorder?.hunt_progress?.stage;
+  const recordingStatus=recorder?.active && (recorder.mode==="adaptive" && huntStage!=null
+    ? <div className="recording-status hunt-readiness" data-ready={huntStage===4}>
+        <progress aria-label="Gotowość nagrania" value={huntStage} max={4}/>
+        <span role="status"><strong>{25*huntStage}%</strong> · {recorder.trace_limited?"Osiągnięto limit zapisu. Zakończ nagranie.":huntMilestones[huntStage]}</span>
+        {huntStage>=3&&<small>Obszary z XP w szkicu: {recorder.hunt_progress?.areas} z {recorder.hunt_progress?.total_areas}</small>}
+      </div>
+    : <p role="status" className="recording-status">● {recorder.mode==="adaptive"?"Nagrywanie adaptacyjne":"Nagrywanie"} · {recorder.position_count??0} pozycji{recorder.mode==="adaptive"&&huntStage===null?" · Ocena chwilowo niedostępna":""}</p>);
   const canRecord=!!state?.connected && !["running","paused","ready"].includes(state?.adaptive_cavebot?.status??"");
   const adaptiveSource=state?.cavebot?.recordings?.some(r=>r.name===recording && r.mode==="adaptive");
   const repairSource=state?.cavebot?.recordings.find(r=>r.name===(recording||draftName))?.name;
@@ -423,12 +438,12 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
     {routePicker}
     {embedded && !mapOpen && tagEditor}
     {(rename||(!draftId&&(points.length>0||recorder?.active)))&&<div className="route-save-row"><input aria-label="Nazwa szkicu" maxLength={80} placeholder="Nazwa trasy" value={draftName} onChange={e=>{setDraftName(e.target.value);}}/></div>}
-    {recorder?.active&&<p role="status" className="recording-status">● {recorder.mode==="adaptive"?"Nagrywanie adaptacyjne":"Nagrywanie"} · {recorder.position_count??0} pozycji</p>}
-    {plan?.adaptive_evidence&&<p className="v2-inline-note">Obszary z XP: {plan.adaptive_evidence.areas} · Do szkicu wybrano {plan.adaptive_evidence.samples} z {plan.adaptive_evidence.total_samples} pozycji.</p>}
+    {(!embedded||!mapOpen)&&recordingStatus}
+    {plan?.adaptive_evidence&&<p className="v2-inline-note">Szkic obejmuje {plan.adaptive_evidence.areas}{plan.adaptive_evidence.total_areas!=null?` z ${plan.adaptive_evidence.total_areas}`:""} obszarów z XP · {plan.adaptive_evidence.samples} z {plan.adaptive_evidence.total_samples} pozycji.</p>}
     {embedded&&progress&&progress.current!==null&&<div className="waypoint-progress" role="status">{state?.adaptive_cavebot?.status==='running'?'Do waypointu':state?.adaptive_cavebot?.status==='complete'?'Zakończono na waypointcie':'Zapamiętany waypoint'} <strong>{progress.current+1}/{progress.total}</strong>{progress.last_reached!==null&&<small> · zaliczony {progress.last_reached+1}</small>}</div>}
     {embedded&&waypointList}
 
     {review}
-    {embedded?mapBody&&createPortal(<div className="route-map-overlay" role="dialog" aria-modal="true" aria-label="Mapa i edycja trasy"><header><strong>{draftName||"Nowa trasa"}</strong><span>{pointText(center)}</span><MapTool icon="layers" label={objectView?"Pokaż trasę":"Obiekty na żywo"} aria-pressed={objectView} onClick={()=>setObjectView(!objectView)}/><MapTool icon="close" label="Zamknij mapę" autoFocus onClick={()=>{setMapOpen(false);setSimPlaying(false);}}/></header>{objectView?<div className="route-object-view"><ObjectMap map={state?.passive_map}/></div>:mapBody}<footer>{review}</footer></div>,document.body):mapBody}
+    {embedded?mapBody&&createPortal(<div className="route-map-overlay" role="dialog" aria-modal="true" aria-label="Mapa i edycja trasy"><header><strong>{draftName||"Nowa trasa"}</strong><span>{pointText(center)}</span><MapTool icon="layers" label={objectView?"Pokaż trasę":"Obiekty na żywo"} aria-pressed={objectView} onClick={()=>setObjectView(!objectView)}/><MapTool icon="close" label="Zamknij mapę" autoFocus onClick={()=>{setMapOpen(false);setSimPlaying(false);}}/></header>{objectView?<div className="route-object-view"><ObjectMap map={state?.passive_map}/></div>:mapBody}<footer>{recordingStatus}{review}</footer></div>,document.body):mapBody}
   </section>;
 }

@@ -432,9 +432,12 @@ class MapAtlas:
         with self.lock:
             return rows+[row for key,row in self.recorded_ropes.items() if key not in known]
 
-    def remember_recorded_ropes(self,recording,observations):
+    def infer_recorded_ropes(self,recording,observations):
         with self.lock:tiles=PagedTiles(self.path,self.tiles)
-        edges=recorded_rope_edges(recording,observations,self.scope,tiles)
+        return recorded_rope_edges(recording,observations,self.scope,tiles)
+
+    def remember_recorded_ropes(self,recording,observations):
+        edges=self.infer_recorded_ropes(recording,observations)
         with self.lock:
             fresh=[r for r in edges if r['id'] not in self.recorded_ropes]
             if fresh:

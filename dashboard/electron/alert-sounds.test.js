@@ -83,6 +83,20 @@ test('fixed authenticated state polling cancels on quit without changing actions
  assert.equal(calls[0].url,'http://127.0.0.1:8089/api/state');assert.equal(calls[0].opts.headers.Authorization,'Bearer synthetic');assert.equal(calls[0].opts.redirect,'error');
  p.stop();await timers.find(t=>t.ms===750).fn();assert.equal(calls.length,1);
 });
+test('adaptive hunt readiness notifies once per recording and respects mute',async()=>{
+  let rec={active:true,mode:'adaptive',name:'first',hunt_progress:{stage:3}},paused=false,count=0,poll;
+  const sounds=startAlertSounds({token:'test',beep:()=>{},onHuntReady:()=>{count++;},
+    fetchImpl:async()=>({ok:true,json:async()=>({alerts:snapshot([],{paused}),cavebot:{recording:rec}})}),
+    setTimer:(fn,ms)=>{if(ms===750)poll=fn;return 0;},clearTimer:()=>{}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(count,0);
+  rec.hunt_progress.stage=4;await poll();await poll();assert.equal(count,1);
+  rec.hunt_progress.stage=3;await poll();rec.hunt_progress.stage=4;await poll();assert.equal(count,1);
+  rec.active=false;await poll();rec.active=true;rec.name='second';paused=true;await poll();
+  paused=false;await poll();assert.equal(count,1);
+  rec.name='third';await poll();assert.equal(count,2);
+  sounds.stop();
+});
 test('audio uses only fixed local WAVs, hidden process, escaped path, and no overlapping children',()=>{
  const calls=[];let done,killed=0;
  const audio=createNotificationAudio({fallback:()=>{},platform:'win32',directory:"C:\\test's app",systemRoot:'C:\\Windows',run:(exe,args,opts,cb)=>{calls.push({exe,args,opts});done=cb;return {kill(){killed++;}};}});

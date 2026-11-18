@@ -40,8 +40,9 @@ function createSoundConsumer(playSound, now=Date.now) {
   };
 }
 
-function startAlertSounds({token,fetchImpl,beep,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now}) {
+function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now}) {
   const consumer=createSoundConsumer(beep,now);let stopped=false,timer,request;
+  let notifiedRecording=null;
   // Older engines have independent alert preferences but no session-wide mute.
   let panelPaused=false, legacySession=null, silencedThrough=0, lastId=0, resumedAt=null;
   function panelPause(value) {
@@ -64,6 +65,12 @@ function startAlertSounds({token,fetchImpl,beep,setTimer=setTimeout,clearTimer=c
           headers:{Authorization:`Bearer ${token}`,Origin:'http://127.0.0.1:4747'},cache:'no-store',redirect:'error',signal:request.signal});
         if(response.ok){
           const data=await response.json();
+          const recording=data.cavebot?.recording;
+          if(!recording?.active || recording.mode!=='adaptive')notifiedRecording=null;
+          else if(!stopped && recording.name && recording.hunt_progress?.stage===4 && notifiedRecording!==recording.name){
+            notifiedRecording=recording.name;
+            if(!panelPaused && !data.alerts?.paused)onHuntReady?.();
+          }
           if(!stopped && data.alerts){
             let alerts=data.alerts;
             if(typeof alerts.paused!=='boolean'){

@@ -795,6 +795,7 @@ def _build_state_json() -> str:
             "active": st.recording_active,
             "name": st.recording_name,
             "mode": getattr(st, "recording_mode", "manual"),
+            "hunt_progress": getattr(st, "recording_hunt_progress", None) if st.recording_active else None,
             "waypoint_count": len(rec_waypoints),
             "waypoints": rec_waypoints[-20:],
             "position_count": len(getattr(st,"recording_observed_path",[])) if st.recording_active else 0,

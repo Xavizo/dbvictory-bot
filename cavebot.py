@@ -206,6 +206,7 @@ def start_recording(state, name: str, *, mode: str = "manual") -> str | None:
     state.recording_active = True
     state.recording_name = name
     state.recording_mode = mode
+    state.recording_hunt_progress = {"stage": 0} if mode == "adaptive" else None
     state._recording_xp_sample = None
     state.recording_waypoints = []
     state.recording_observed_path = []
@@ -355,9 +356,32 @@ def start_recording(state, name: str, *, mode: str = "manual") -> str | None:
     state._recording_event_stop = stop_event
     state._recording_event_thread = threading.Thread(target=_drain_events, daemon=True)
     state._recording_event_thread.start()
+    if mode == "adaptive":
+        from adaptive_recording import watch_hunt_evidence
+        # Each worker owns its recording and progress. A late check from an
+        # older run cannot publish into the next run, even with the same name.
+        threading.Thread(target=watch_hunt_evidence, name="hunt-readiness", daemon=True,
+                         args=(_recording_data(state), state.passive_map_monitor,
+                               stop_event, state.recording_hunt_progress)).start()
 
     log.info(f"Recording started: '{name}' at {pos}")
     return None
+
+
+def _recording_data(state):
+    return {
+        "name": state.recording_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "version": 2,
+        "started_at": state.recording_start_time,
+        "atlas_scope": getattr(state, "_recording_atlas_scope", None),
+        "action_time_precision_ms": 1,
+        "start_position": list(state.recording_start_pos),
+        "waypoints": state.recording_waypoints,
+        "observed_path": state.recording_observed_path,
+        "trace_limited": state.recording_trace_limited,
+        "position_source": "client" if getattr(state.game_state,"client_state_required",False) else "server",
+    }
 
 
 def stop_recording(state, *, discard: bool = False) -> dict | None:
@@ -384,23 +408,12 @@ def stop_recording(state, *, discard: bool = False) -> dict | None:
         state.game_proxy.unregister_client_packet_callback(cb)
     state._recording_callback = None
 
-    recording = {
-        "name": state.recording_name,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "version": 2,
-        "started_at": state.recording_start_time,
-        "atlas_scope": getattr(state, "_recording_atlas_scope", None),
-        "action_time_precision_ms": 1,
-        "start_position": list(state.recording_start_pos),
-        "waypoints": state.recording_waypoints,
-        "observed_path": state.recording_observed_path,
-        "trace_limited": state.recording_trace_limited,
-        "position_source": "client" if getattr(state.game_state,"client_state_required",False) else "server",
-    }
+    recording = _recording_data(state)
 
     if getattr(state, "recording_mode", "manual") == "adaptive":
         recording["recording_mode"] = "adaptive"
     state.recording_mode = "manual"
+    state.recording_hunt_progress = None
     state._recording_xp_sample = None
     state.recording_active = False
     name = state.recording_name

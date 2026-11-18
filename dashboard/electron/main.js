@@ -72,7 +72,7 @@ function createWindow() {
   // Next sets the document title on navigation. Keep the parent engine's identity visible.
   win.on("page-title-updated", (event) => event.preventDefault());
   trustWindow(win);
-  installTray(electron, win, () => editorWindow, trayExitFile);
+  const tray = installTray(electron, win, () => editorWindow, trayExitFile);
   win.on("closed", () => { if (editorWindow && !editorWindow.isDestroyed()) editorWindow.close(); });
   ipcMain.handle("dbv:open-route-editor", (event, draftId) => {
     if (!trustedSender(event) || event.sender !== win.webContents) throw new Error("Only the main dashboard may open its editor.");
@@ -135,12 +135,14 @@ function createWindow() {
       .catch(() => setTimeout(tryLoad, 500));
   };
   tryLoad();
+  return tray;
 }
 
 app.whenReady().then(() => {
-  createWindow();
+  const tray = createWindow();
   const audio = createNotificationAudio({fallback:()=>electron.shell.beep()});
-  const sounds = startAlertSounds({token:sessionToken, fetchImpl:fetch, beep:kind=>audio.play(kind), setTimer:setTimeout});
+  const sounds = startAlertSounds({token:sessionToken, fetchImpl:fetch, beep:kind=>audio.play(kind), setTimer:setTimeout,
+    onHuntReady:()=>tray.displayBalloon?.({title:"Nagrywanie adaptacyjne",content:"Obieg potwierdzony. Możesz zakończyć nagranie.",noSound:true,respectQuietTime:true})});
   ipcMain.handle("dbv:panel-alert-pause", (event, value) => {
     if (!trustedSender(event)) throw new Error("Untrusted sender");
     return sounds.panelPause(value);

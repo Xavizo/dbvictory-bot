@@ -492,11 +492,19 @@ test('adaptive recording starts from waypoint options and stopping produces an u
   assert.ok(!start.props.disabled);await start.props.onClick();
   const {name,mode}=requests[0].body;assert.match(name,/^exp_/);assert.equal(mode,'adaptive');
   props.state.cavebot.recording={active:true,name,mode,observed_path:[],position_count:21};
+  for(const stage of [0,1,2,3,4]) {
+    props.state.cavebot.recording.hunt_progress={stage};
+    const view=nodes();
+    assert.equal(view.find(n=>n.type==='progress').props.value,stage);
+    assert.equal(view.some(n=>n.props['data-ready']===true),stage===4);
+    assert.ok(!view.find(n=>n.props.label==='Zakończ nagranie').props.disabled);
+  }
   await nodes().find(n=>n.props.label==='Zakończ nagranie').props.onClick();
   props.state.cavebot.recording={active:false};props.state.cavebot.recordings=[{name,mode}];
   assert.deepEqual(requests.map(r=>new URL(r.url).pathname),['/api/cavebot/record/start','/api/cavebot/record/stop','/api/map/plan']);
   assert.equal(requests[2].body.recording,name);
   assert.ok(!nodes().find(n=>n.props.label==='Zapisz szkic').props.disabled);
+  assert.ok(!nodes().some(n=>n.type==='progress'));
 });
 
 test('combat profile selection and discard never mutate waypoint geometry',async()=>{
