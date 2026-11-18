@@ -1,10 +1,22 @@
 """Windows launch/cleanup behavior with mocked OS processes, no game access."""
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import mcp_server as server
 from dashboard_security import SESSION_TOKEN
+
+
+def test_engine_label_includes_revision_and_timezone_and_survives_missing_git(monkeypatch, tmp_path):
+    (tmp_path / ".git").mkdir()
+    git = Mock(return_value="abc2345\n")
+    monkeypatch.setattr(server.subprocess, "check_output", git)
+    label, timestamp = server._engine_label(tmp_path).split(" · start ")
+    assert label == "Silnik abc2345" and datetime.fromisoformat(timestamp).utcoffset() is not None
+    assert git.call_args.kwargs["cwd"] == tmp_path
+    git.side_effect = FileNotFoundError()
+    assert "wersja nieznana · start " in server._engine_label(tmp_path)
 
 
 def test_cleanup_targets_only_live_owned_process_trees(monkeypatch):
@@ -34,6 +46,7 @@ def test_launch_refuses_unowned_port_and_passes_token_only_to_electron(monkeypat
     monkeypatch.setattr(server.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.setattr("shutil.which", lambda _: r"C:\Program Files\nodejs\npm.cmd")
     monkeypatch.setattr(server, "_dashboard_processes", {})
+    monkeypatch.setattr(server, "_engine_label", Mock(side_effect=AssertionError("must reuse startup identity")))
     popen = Mock(side_effect=[Mock(), Mock()])
     monkeypatch.setattr(server.subprocess, "Popen", popen)
     monkeypatch.setattr(server, "_check_port_listening", lambda _: True)
@@ -46,6 +59,7 @@ def test_launch_refuses_unowned_port_and_passes_token_only_to_electron(monkeypat
     assert next_call.args[0].endswith('run start')
     assert "DBV_DASHBOARD_TOKEN" not in next_call.kwargs["env"]
     assert electron_call.kwargs["env"]["DBV_DASHBOARD_TOKEN"] == SESSION_TOKEN
+    assert electron_call.kwargs["env"]["DBV_ENGINE_LABEL"] == server.ENGINE_LABEL
     assert next_call.kwargs['creationflags'] == 0x08000000
     assert electron_call.kwargs['creationflags'] == 0x08000000
     # Prevent atexit from touching mocked processes after monkeypatch teardown.

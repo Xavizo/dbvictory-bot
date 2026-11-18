@@ -10,6 +10,7 @@ Transport: stdio  (stdout = JSON-RPC, all logging → stderr)
 import asyncio
 import atexit
 import collections
+from datetime import datetime
 import importlib
 import importlib.util
 import json
@@ -28,6 +29,25 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 log = logging.getLogger("mcp_server")
+
+
+def _engine_label(root):
+    started = datetime.now().astimezone().isoformat(sep=" ", timespec="seconds")
+    revision = "wersja nieznana"
+    if (root / ".git").exists():
+        try:
+            revision = subprocess.check_output(
+                ["git", "rev-parse", "--short=7", "--verify", "HEAD"], cwd=root,
+                stderr=subprocess.DEVNULL, timeout=2, encoding="ascii",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return f"Silnik {revision} · start {started}"
+
+
+# Capture once, before loading the engine. Reopening the panel reuses this identity.
+ENGINE_LABEL = _engine_label(Path(__file__).resolve().parent)
 
 # ── Ensure project root is on sys.path ──────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -914,6 +934,7 @@ def _build_status_report() -> str:
 
     # MCP Server — always OK if we're here
     lines.append("[OK] MCP Server: running")
+    lines.append(ENGINE_LABEL)
 
     # Game client
     client_running = _check_process_running("dbvStart.exe")
@@ -994,6 +1015,7 @@ def _launch_dashboard() -> None:
             env.pop("DBV_DASHBOARD_TOKEN", None)
             if name == "electron":
                 env["DBV_DASHBOARD_TOKEN"] = SESSION_TOKEN
+                env["DBV_ENGINE_LABEL"] = ENGINE_LABEL
             _dashboard_processes[name] = subprocess.Popen(
                 f'"{npm}" run {script}', cwd=str(dashboard_dir), shell=True,
                 env=env, creationflags=subprocess.CREATE_NO_WINDOW,

@@ -56,7 +56,7 @@ function createWindow() {
     height: 740,
     minWidth: 720,
     minHeight: 540,
-    title: "DBVictory Bot",
+    title: `DBVictory Bot — ${process.env.DBV_ENGINE_LABEL || "wersja silnika niedostępna"}`,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
@@ -67,6 +67,8 @@ function createWindow() {
     },
   });
 
+  // Next sets the document title on navigation. Keep the parent engine's identity visible.
+  win.on("page-title-updated", (event) => event.preventDefault());
   trustWindow(win);
   installTray(electron, win, () => editorWindow);
   win.on("closed", () => { if (editorWindow && !editorWindow.isDestroyed()) editorWindow.close(); });

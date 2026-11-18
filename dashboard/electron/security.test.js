@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-function loadMain() {
+function loadMain(engineLabel) {
   const handlers = {};
   const navigation = {};
   let preferences;
@@ -17,7 +17,7 @@ function loadMain() {
     session: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} },
   };
   class BrowserWindow {
-    constructor(options) { preferences = options.webPreferences; this.webContents = windows.length ? {...contents,mainFrame:{url:"http://127.0.0.1:4747/route-editor"}} : contents; this.events={}; windows.push(this); }
+    constructor(options) { this.title = options.title; preferences = options.webPreferences; this.webContents = windows.length ? {...contents,mainFrame:{url:"http://127.0.0.1:4747/route-editor"}} : contents; this.events={}; windows.push(this); }
     on(name,fn) { (this.events[name]??=[]).push(fn); }
     restore() {}
     focus() {}
@@ -36,6 +36,7 @@ function loadMain() {
     clipboard: { writeText: (text) => copied.push(text) },
   };
   const process = { env: { DBV_DASHBOARD_TOKEN: "test-token-not-a-real-secret" } };
+  if (engineLabel) process.env.DBV_ENGINE_LABEL = engineLabel;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "main.js"), "utf8"), {
     require: (name) => name === "electron" ? electron : name === "./notification-audio" ? {createNotificationAudio:({fallback})=>({play:fallback,stop(){}})} : require(name),
     __dirname, process, URL,
@@ -43,6 +44,17 @@ function loadMain() {
   });
   return { testSound:handlers["dbv:test-alert-sound"],editor:handlers["dbv:open-route-editor"],windows,token: handlers["dbv:dashboard-token"], copy:handlers["dbv:copy-map-cell"], copyPlan:handlers["dbv:copy-map-plan"], copied, contents, preferences, navigation, windowHandler, process };
 }
+
+test("the window keeps the engine revision and its start time on page refresh", () => {
+  const label = "Silnik abc2345 · start 2026-11-18 09:31:47+01:00";
+  const win = loadMain(label).windows[0];
+  assert.equal(win.title, "DBVictory Bot — " + label);
+  let prevented = false;
+  for (const listener of win.events["page-title-updated"])
+    listener({preventDefault() { prevented = true; }}, "DBVictory Bot");
+  assert.equal(prevented, true);
+  assert.equal(loadMain().windows[0].title, "DBVictory Bot — wersja silnika niedostępna");
+});
 
 test("copy accepts bounded tile text only from the trusted main frame", () => {
   const app=loadMain();
