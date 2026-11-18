@@ -39,6 +39,49 @@ connections, and waits for in-flight command handlers to finish cancellation
 before releasing the worker. An incomplete request cannot start a new worker
 after its owner has exited.
 
+### Engine restart and movement checks (2026-11-18)
+
+The same offline fixture exercised master `d5593db` and transport branch
+`129962f` on Windows. It replaces the actual stdio MCP process, supplies a
+fresh simulated player observation, and records writes to a test sink. On the
+transport branch one loopback TCP stream also crosses the restart. The game
+client, production proxy and server are outside this measurement.
+
+Each revision ran three graceful restarts and three abrupt exits. After each
+restart the new engine accepted the updated HP (42 → 37) and position
+((11, 10, 7) → (12, 10, 7)). The replacement did not repeat the walk
+written without a position acknowledgement or send the pending queue entry.
+Both revisions lost the last confirmed waypoint and the next waypoint.
+Re-enabling healing caused a second potion request after 1.18–1.36 s across
+the two revisions despite a configured 60 s cooldown.
+
+| Measurement | Master | Transport branch |
+| --- | ---: | ---: |
+| Graceful restart to first supplied observation, median | 1.166 s | 1.243 s |
+| Abrupt exit to first supplied observation, median | 1.204 s | 1.258 s |
+| Step dispatch to observed position, p95 | 31.8 ms | 31.8 ms |
+| Additional wait for matching map, p95 | 16.1 ms | 16.1 ms |
+| Step dispatch to matching map, p95 | 47.8 ms | 47.5 ms |
+| HP drop to potion request during blockage, p95 | 47.5 ms | 47.4 ms |
+
+Restart timing includes controller initialization. The branch also reattaches
+and checks stream continuity. Movement measurements used four interleaved
+runs per revision, with the same four scheduled position and map delays.
+Each revision completed 128 steps and 64 healing decisions. With a wall
+across the test corridor, combat cast 56 times and all 64 HP drops produced
+a potion request. No step was sent across the wall. Each run resumed movement
+after the wall was removed. Timings include Windows event-loop scheduling.
+
+To repeat the movement workload, run `python tests/engine_timing_probe.py PATH_TO_WORKTREE`
+from this branch once per revision. For a pass/fail restart check, run
+`python -m pytest -q --runxfail tests/test_engine_restart_recovery.py`.
+It currently exposes four failing cases (waypoint and cooldown, each with two
+exit modes). The ordinary suite tracks both regressions as strict expected
+failures. Before enabling a live engine replacement, the surviving session
+must retain the confirmed route cursor bound to its route revision and the
+cooldown for any item command that may already have been written. A new
+login must start with its own session state.
+
 ## Staged session and command architecture (2026-11-17)
 
 Rollback baseline is private GitHub tag `v1.0.0`, commit

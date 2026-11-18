@@ -7,6 +7,7 @@ import pytest
 import mcp_server as server
 from command_delivery import CommandReceipt
 from potions import run_potions
+from engine_timing_probe import measure_blockage
 from test_adaptive_cavebot import setup,connect_fake_walk
 from test_automation_safety import state
 from test_v2_combat import configure_rules,monster
@@ -33,6 +34,11 @@ async def freshen(state,row):
     while True:
         row['t']=time.time();state.game_state.stats_updated_at=time.time()
         await asyncio.sleep(.03)
+
+
+def test_blocked_terrain_keeps_combat_and_healing_active_and_route_resumes(state, tmp_path):
+    stats = asyncio.run(measure_blockage(state, tmp_path, pulses=6))
+    assert stats["heals_while_blocked"] == 6 and stats["casts_while_blocked"] >= 2
 
 
 def test_healing_and_casting_continue_during_unacknowledged_walk(state,tmp_path):
