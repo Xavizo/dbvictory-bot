@@ -20,6 +20,21 @@ class MovementDeferred(ValueError):
 class InputsUnavailable(ValueError):
     """Temporary observer gap; wait without changing the user's enable flags."""
 
+
+def fresh_health(gs):
+    """A missing/stale observation has no HP value. Read both fields from the same sample."""
+    if getattr(gs, 'client_state_required', False):
+        from client_player_state import FRESH_SECONDS
+        sample = gs.client_snapshot
+        if not sample or not 0 <= time.monotonic() - sample['monotonic'] <= FRESH_SECONDS:
+            return None
+        hp, maximum = sample.get('hp'), sample.get('max_hp')
+    else:
+        if not 0 <= time.time() - getattr(gs, 'stats_updated_at', 0) <= 2:
+            return None
+        hp, maximum = gs.hp, gs.max_hp
+    return (hp, maximum) if hp is not None and maximum and 0 <= hp <= maximum else None
+
 log=logging.getLogger(__name__)
 NAME="adaptive_cavebot"
 LEGACY={"cavebot","cavebot2"}
@@ -303,12 +318,13 @@ class AdaptiveCavebot:
         if not st.game_proxy.logged_in or st.game_proxy.xtea_keys is None:raise ValueError("Połączenie proxy nie jest gotowe do ruchu.")
         if st.automation_paused:raise ValueError("Automatyka jest wstrzymana.")
         if not combat and getattr(st,"recording_active",False):raise ValueError("Zatrzymaj nagrywanie przed uruchomieniem trasy.")
-        snapshot=getattr(gs,"client_snapshot",None)
-        if getattr(gs,"client_state_required",False) and (not snapshot or not 0<=time.monotonic()-snapshot["monotonic"]<=.5):
-            raise InputsUnavailable("Brak świeżej pozycji i HP.")
-        if not getattr(gs,"client_state_required",False) and not 0<=time.time()-getattr(gs,'stats_updated_at',0)<=2:
+        health = fresh_health(gs)
+        if health is None:
+            if getattr(gs, 'client_state_required', False):
+                raise InputsUnavailable("Brak świeżej pozycji i HP.")
             raise InputsUnavailable("Brak świeżych statystyk.")
-        if gs.max_hp<=0 or gs.hp<=0 or not combat and 100*gs.hp/gs.max_hp<self.min_hp:raise ValueError("HP poniżej progu pauzy nawigacji.")
+        hp, maximum = health
+        if hp == 0 or not combat and 100*hp/maximum < self.min_hp:raise ValueError("HP poniżej progu pauzy nawigacji.")
         monitor=getattr(st,"passive_map_monitor",None)
         if not combat and (not monitor or not monitor.atlas or monitor.atlas.scope!=self.scope):raise ValueError("Zmienił się profil atlasu.")
         for name,task in st._action_tasks.items():
@@ -772,8 +788,14 @@ class AdaptiveCavebot:
     async def wait_position(self,expected,origin,timeout=2.5,intermediate=None,recover=False):
         deadline=time.monotonic()+timeout;motion=self.motion_generation;attempt=self._route_attempt if self._route_command else None
         while time.monotonic()<deadline:
-            self.guard()
             if self.status!='running':raise ValueError(self.reason)
+            try:
+                self.guard()
+            except InputsUnavailable:
+                # Delivery already happened. Keep this confirmation pending so a late
+                # position from the same step cannot trigger a second dispatch.
+                await asyncio.sleep(.05)
+                continue
             pos=list(self.state.game_state.position)
             if pos==expected:
                 from command_delivery import confirm
@@ -1209,7 +1231,8 @@ class AdaptiveCavebot:
                         if local:
                             self.replace_path(self.index+1,j,local[1:]);target=self.path[self.index+1];found=True;break
                     if not found:
-                        if not self.combat.config['enabled'] and not any(t.get('occupants',0) for t in sample['cells']):
+                        if (tuple(target) not in self.blocked and not self.combat.config['enabled']
+                                and not any(t.get('occupants',0) for t in sample['cells'])):
                             raise ValueError('Brak widocznego obejścia przeszkody; sprawdź trasę.')
                         self.describe_blockage(sample,target)
                         await asyncio.sleep(.1);continue
@@ -1220,7 +1243,8 @@ class AdaptiveCavebot:
                     self.reason=str(exc);await asyncio.sleep(.05);continue
                 finally:self._route_command=False;self._route_boundary=False
                 if not arrived:
-                    self.failures+=1;self.blocked[tuple(target)]=time.monotonic()+1
+                    self.failures+=1
+                    self.blocked[tuple(target)]=time.monotonic()+min(self.failures, 10)
                     cancelled = bool(self._route_attempt and self._route_attempt.get('cancelled'))
                     self.describe_blockage(await self.fresh_map(),target,cancelled=cancelled)
                     if self.failures>=3:self.reason='Brak potwierdzenia kroku — sprawdzam obejście; walka aktywna.'

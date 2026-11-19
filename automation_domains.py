@@ -106,6 +106,8 @@ class CavebotDomains:
                 o.reason=str(exc)
                 await asyncio.sleep(.05)
             except Exception as exc:
+                if o.status != 'running':
+                    return
                 if not isinstance(exc,ValueError):log.exception('Movement worker failed')
                 self.movement_state='held';self.movement_error=str(exc) if isinstance(exc,ValueError) else 'Błąd wykonania trasy.'
                 if not o.combat.config['enabled']:
@@ -119,6 +121,7 @@ class CavebotDomains:
                 self.movement_error=None
 
     async def run(self):
+        from adaptive_cavebot import fresh_health
         o=self.owner
         self.tasks=[asyncio.create_task(self.combat_loop(),name='cavebot-combat'),
                     asyncio.create_task(self.movement_loop(),name='cavebot-movement')]
@@ -129,7 +132,8 @@ class CavebotDomains:
                 if not o.session_lease.valid() or o.state.automation_paused:
                     o.pause('Sesja zakończona lub automatyka wstrzymana.')
                     break
-                if o.state.game_state.hp<=0:
+                health = fresh_health(o.state.game_state)
+                if health is not None and health[0] == 0:
                     o.pause('Brak żywej postaci — automatyka wstrzymana.')
                     break
                 await asyncio.sleep(.02)

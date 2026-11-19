@@ -122,12 +122,57 @@ def test_manual_control_pauses_route_and_removes_callback(state,tmp_path,opcode,
     assert c.status=='paused' and 'Ręczny' in c.reason and not state.game_proxy._client_packet_callbacks
 
 
-def test_missing_ack_blocks_target_and_stops_without_repeating_item_use(state,tmp_path):
+def test_missing_ack_on_ordinary_step_rechecks_terrain_and_retries(state,tmp_path):
     c,_,_=setup(state,tmp_path,cells=[cell(10,10),cell(11,10)],points=[[10,10,7],[11,10,7]])
-    async def no_ack(*a,**kw):return False
-    c.wait_position=no_ack
-    asyncio.run(c.run())
-    assert c.status=='paused' and state.game_proxy._inject_queue.qsize()==1
+    confirmations=[]
+    async def confirm(target,*a,**kw):
+        confirmations.append(time.monotonic())
+        if len(confirmations)==1:return False
+        state.game_state.position=tuple(target)
+        return True
+    c.wait_position=confirm
+    asyncio.run(asyncio.wait_for(c.run(),1.9))
+    assert c.status=='complete' and c.laps==1 and len(confirmations)==2
+    assert confirmations[1]-confirmations[0]>=1
+    assert state.game_proxy._inject_queue.qsize()==2
+
+
+@pytest.mark.parametrize('finish',['arrive','late_arrival','death','stop','disconnect'])
+def test_expired_hp_during_dispatched_step_waits_for_same_session(state,tmp_path,finish):
+    c,_,_=setup(state,tmp_path,points=[[10,10,7],[11,10,7]])
+    gs=state.game_state
+    gs.client_state_required=True
+    def publish(pos, hp=100, age=0):
+        gs.client_snapshot=dict(position=pos,hp=hp,max_hp=100,monotonic=time.monotonic()-age)
+    publish((10,10,7))
+    sent=[]
+    async def inject(payload,guard=None):
+        assert guard and guard()
+        sent.append(payload[0])
+        publish((10,10,7),age=1)
+    state.game_proxy.inject_to_server=inject
+    if finish=='late_arrival':
+        original=c.wait_position
+        async def short_deadline(target,origin,timeout,intermediate,recover):
+            return await original(target,origin,.05,intermediate,recover)
+        c.wait_position=short_deadline
+    async def simulate():
+        run=asyncio.create_task(c.run())
+        try:
+            async with asyncio.timeout(1):
+                while not sent:await asyncio.sleep(.01)
+            await asyncio.sleep(.12)
+            assert gs.hp==0 and c.status=='running' and sent==[0x66]
+            if finish=='stop':c.stop(preserve_progress=True)
+            if finish=='disconnect':state.ready=False
+            publish((11,10,7),0 if finish=='death' else 100)
+            await asyncio.wait_for(run,1)
+        finally:
+            run.cancel()
+            await asyncio.gather(run,return_exceptions=True)
+    asyncio.run(simulate())
+    expected={'arrive':'complete','late_arrival':'complete','stop':'idle','death':'paused','disconnect':'paused'}
+    assert sent==[0x66] and c.status==expected[finish] and c.laps==int(expected[finish]=='complete')
 
 
 def stair_edge(action='step'):

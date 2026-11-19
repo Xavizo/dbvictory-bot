@@ -1,5 +1,12 @@
 [
   {
+    "version": "v1.8.1",
+    "changes": [
+      {"title":"Trasa sama rusza po chwilowym braku odczytu HP","detail":"Cavebot zachowuje waypoint i czeka na świeży odczyt postaci. Potwierdzona śmierć, wylogowanie i ręczny Stop wciąż kończą ruch."},
+      {"title":"Ponowna próba przejścia po anulowanym kroku","detail":"Na zwykłym odcinku Cavebot sprawdza bieżącą pozycję i mapę. Jeśli nadal stoi przed wolnym polem, może ponowić krok po krótkiej przerwie."}
+    ]
+  },
+  {
     "version": "v1.8.0",
     "changes": [
       {"title":"Historia decyzji i postojów Cavebota","detail":"Przy decyzji zobaczysz czas, pole, waypoint i wielkość grupy. Przerwany krok zachowuje cel i dostępny powód."},
