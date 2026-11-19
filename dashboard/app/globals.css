@@ -1,5 +1,15 @@
 @import "tailwindcss";
 
+.lap-reports { margin-top: 10px; }
+.lap-reports summary { cursor: pointer; font-weight: 600; }
+.lap-reports p:empty { display: none; }
+.lap-scroll, .lap-timeline { overflow: auto; max-height: 22rem; }
+.lap-scroll table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.lap-scroll td, .lap-scroll th { padding: 4px 9px; text-align: left; white-space: nowrap; }
+.lap-entry { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.lap-entry time, .lap-entry small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.lap-entry small { margin-left: auto; }
+
 .draft-tags {flex:none;min-width:0;margin:4px 0;font-size:12px}
 .draft-tag-list,.draft-tag-editor,.draft-tag-colors {display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .draft-tags [data-color=mint] {--tag-color:#8ddcc1}

@@ -13,6 +13,10 @@ function capture(state:BotState|null, online:boolean, now:number) {
   const route=(online ? state?.adaptive_cavebot : null) as
     (NonNullable<BotState["adaptive_cavebot"]>&{blockage?:{target?:unknown}|null})|null|undefined;
   const group=inGame ? route?.combat?.lure : null;
+  const level=state?.player?.level, experience=state?.player?.experience;
+  const levelXp=(n:number)=>Math.floor(50*(n**3-6*n**2+17*n-12)/3);
+  const xp=inGame && typeof level==="number" && level>0 && typeof experience==="number" &&
+    (state?.player?.stats_age??-1)>=0 && experience>=levelXp(level) && experience<levelXp(level+1) ? experience:null;
   const map=state?.passive_map;
   const age=typeof map?.captured_at==="number" ? now-map.captured_at*1000 : null;
   const validMap=!!(position && point(map?.center) && map.center.every((v,i)=>v===position[i]) &&
@@ -36,6 +40,10 @@ function capture(state:BotState|null, online:boolean, now:number) {
   return {
     connection:!online?"panel_offline":inGame?"in_game":"logged_out", position,
     route:route?.name??null, status:route?.status??null, lap:route?.loops??null,
+    mode:route?.mode??null,
+    xp, senzu:inGame ? state?.senzu_usage?.total??null:null,
+    deaths:inGame ? state?.cavebot?.playback.stats?.kills??null:null,
+    profile:route ? state?.profile_selection?.combat??null:null,
     waypoint:waypointNumber(route?.waypoint?.current), reached:waypointNumber(route?.waypoint?.last_reached),
     index:route?.index??null,revision:route?.waypoint?.navigation_revision??null,
     blocked_target:point(route?.blockage?.target)?[...route.blockage.target]:null,

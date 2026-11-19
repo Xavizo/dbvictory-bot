@@ -8,6 +8,16 @@ const exportsForTest={};
 new Function('exports',js)(exportsForTest);
 const {RouteReplay}=exportsForTest;
 const start=1800000000000;
+test('lap counters preserve confirmed zero and leave unknown XP unavailable',()=>{
+  const s=sample(),run=new RouteReplay(start);
+  s.player.level=2;s.player.experience=112;s.player.stats_age=0;
+  s.senzu_usage={total:0};s.cavebot={playback:{stats:{kills:3}}};
+  run.observe(s,true,start);
+  assert.deepEqual([run.frames[0].xp,run.frames[0].senzu,run.frames[0].deaths],[112,0,3]);
+  s.player.experience=7;s.senzu_usage=undefined;s.cavebot=undefined;
+  run.observe(s,true,start+50);
+  assert.deepEqual([run.frames[1].xp,run.frames[1].senzu,run.frames[1].deaths],[null,null,null]);
+});
 test('recorded movement plan survives updates; the next recording starts empty',()=>{
   const state=sample(), run=new RouteReplay(start);
   state.adaptive_cavebot.map_preview={path:[[93,449,10],[93,450,10]],stop:[93,450,10]};

@@ -2,6 +2,7 @@
 
 import { useBot } from "@/lib/useBot";
 import RouteReplayPanel from "./RouteReplayPanel";
+import CavebotReports from "./CavebotReports";
 import SpeedUpPanel from "./SpeedUpPanel";
 import ProfilePicker from "./ProfilePicker";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -1112,7 +1113,7 @@ export default function Dashboard() {
 
   return <DashboardChrome view={view} onView={setView} state={state} mcpConnected={mcpConnected} busy={controlBusy}
     onStop={()=>setEmergency()} onUnlock={()=>setEmergency(true)} onResume={setPause} onRefresh={refresh} error={controlError || dashboardError || ""}>
-    <section hidden={view!=="cavebot"} aria-label="Konfiguracja Cavebota"><CavebotWorkspace state={state} active={view==="cavebot"} onRefresh={refresh}/></section>
+    <section hidden={view!=="cavebot"} aria-label="Konfiguracja Cavebota"><CavebotWorkspace state={state} active={view==="cavebot"} onRefresh={refresh}/><CavebotReports visible={view==="cavebot"}/></section>
     <section hidden={view!=="automation"} aria-label="Widok automatyki">
       <AutomationStrip state={state} connected={mcpConnected} onRefresh={refresh} onSettings={()=>setView("automation")} onPause={setPause} busy={controlBusy}/>
       {potion ? <PotionPanel action={potion} diagnostics={state?.potion_diagnostics} paused={state?.automation_paused ?? false} onRefresh={refresh}

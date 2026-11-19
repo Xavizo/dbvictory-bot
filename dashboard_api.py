@@ -116,6 +116,23 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json_response(center.snapshot())
         if self.path == "/api/state":
             return self._handle_get_state()
+        if urlsplit(self.path).path == "/api/cavebot/reports":
+            from cavebot_history import read_reports
+            import math
+            import sqlite3
+            values = parse_qs(urlsplit(self.path).query)
+            ident = values.get('id',[None])[0]
+            try:
+                before = float(values['before'][0]) if 'before' in values else None
+                if before is not None and not math.isfinite(before):
+                    raise ValueError()
+                result = read_reports(_state,ident,before)
+            except ValueError:
+                return self._json_response({'error':'Nieprawidłowy zakres raportów.'},400)
+            except (OSError,sqlite3.Error):
+                return self._json_response({'error':'Odczyt raportów chwilowo niedostępny.'},503)
+            return self._json_response(result if result is not None else {'error':'Nie znaleziono raportu.'},
+                                       200 if result is not None else 404)
         if self.path == "/api/recordings":
             return self._handle_list_recordings()
         if urlsplit(self.path).path == "/api/map/atlas":

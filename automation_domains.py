@@ -124,6 +124,8 @@ class CavebotDomains:
                     asyncio.create_task(self.movement_loop(),name='cavebot-movement')]
         try:
             while o.status=='running':
+                if getattr(o,'reporter',None) is not None:
+                    o._observe_report('sample')
                 if not o.session_lease.valid() or o.state.automation_paused:
                     o.pause('Sesja zakończona lub automatyka wstrzymana.')
                     break

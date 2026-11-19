@@ -71,6 +71,20 @@ def test_authentication_and_origin_enforced_before_mutation(http_api):
     assert mutations == ["power_up"]
 
 
+def test_lap_reports_endpoint_is_read_only_and_requires_session(http_api, monkeypatch):
+    from types import SimpleNamespace
+    request, mutations = http_api
+    monkeypatch.setattr(api, "_state", SimpleNamespace())
+    path = "/api/cavebot/reports"
+    headers = {"Origin": DASHBOARD_ORIGIN, "Authorization": f"Bearer {SESSION_TOKEN}"}
+    assert request("GET",path)[0] == 401
+    status, _, body = request("GET",path,**headers)
+    assert status == 200 and json.loads(body) == {"active":None,"reports":[],"more":False}
+    assert request("GET",path+"?id=missing",**headers)[0] == 404
+    assert request("GET",path+"?before=nan",**headers)[0] == 400
+    assert not mutations
+
+
 def test_annotation_endpoint_requires_origin_and_passes_only_valid_request(http_api,monkeypatch):
     from types import SimpleNamespace
     calls=[]

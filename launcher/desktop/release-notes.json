@@ -1,5 +1,12 @@
 [
   {
+    "version": "v1.8.0",
+    "changes": [
+      {"title":"Historia decyzji i postojów Cavebota","detail":"Przy decyzji zobaczysz czas, pole, waypoint i wielkość grupy. Przerwany krok zachowuje cel i dostępny powód."},
+      {"title":"Raport po każdym okrążeniu","detail":"Przy trasie możesz porównać czas, XP, Senzu, wielkość grup i czas blokad. Przerwane rundy są oznaczone osobno."}
+    ]
+  },
+  {
     "version": "v1.7.1",
     "changes": [
       {"title":"Cavebot dobija grupę po otwartej stronie przejścia","detail":"Podczas lurowania porównuje liczbę miejsc, do których moby mogą dojść teraz i w przewężeniu na trasie. Pokazuje obie liczby w czasie walki i wznawia marsz po potwierdzeniu, że grupa zniknęła."}

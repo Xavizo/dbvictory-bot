@@ -312,6 +312,12 @@ export async function fetchState(): Promise<BotState> {
   return res.json();
 }
 
+export async function fetchCavebotReports<T>(query:string,signal:AbortSignal):Promise<T>{
+  const response=await authenticatedFetch(API_BASE+"/api/cavebot/reports"+query,{signal});
+  if(!response.ok)throw Error(String(response.status));
+  return response.json();
+}
+
 export async function toggleAction(
   name: string,
   enabled: boolean

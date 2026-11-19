@@ -159,6 +159,17 @@ class AdaptiveCavebot:
         self._map_after_walk = None
         self._uncertain_walk_origin = None
         self.combat_only=False;self.draft_id=None;self.combat=CombatRuntime(self,validate_combat())
+        self.reporter = None
+        self._resuming_report = False
+
+    def _observe_report(self, method, *args):
+        if self.reporter is None:
+            return
+        try:
+            getattr(self.reporter, method)(*args)
+        except Exception:
+            log.exception('Cavebot report unavailable')
+            self.reporter = None
 
     def waypoint_progress(self):
         upcoming=next((c for c in self.checkpoints if c['index']>self.index),None)
@@ -254,10 +265,14 @@ class AdaptiveCavebot:
                 "mode":"combat" if self.combat_only else "route","scope":self.scope,"waypoint":self.waypoint_progress(),"resumable":bool(self.path and self.status in {"idle","paused","ready"}),"loops":self.laps,"loop":self.loop,"draft_id":self.draft_id,"combat":self.combat.snapshot(),"approach_remaining":max(0,self.loop_start-self.index) if self.path else 0,"position":self.path[self.index] if self.path else None,"logs":list(self.logs),"recovery_count":self.recovery_count,"blockage":self.blockage}
 
     def pause(self,reason):
+        if self.status == 'running':
+            self._observe_report('lifecycle','pause',reason)
         self.generation+=1;self.status="paused";self.reason=reason;self.logs.append(reason)
         self.combat.reset_lure();self.combat.battle_started=None;self.combat.last_health=None
 
     def stop(self,reason="Zatrzymano trasę.",*,preserve_progress=False):
+        if self.status == 'running':
+            self._observe_report('lifecycle','stop',reason)
         self.generation+=1;self.status="idle";self.reason=reason;self.navigation_hold=None
         if not preserve_progress:
             self.path=[];self.edges=[];self.index=0;self.checkpoints=[];self.last_waypoint=None;self.route_draft=None
@@ -405,6 +420,8 @@ class AdaptiveCavebot:
         if not same_route(draft,self.route_draft):
             raise ValueError('Zmieniono waypointy, przejścia lub pętlę. Odrzuć postęp i uruchom zmienioną trasę od nowa.')
         c=copy(self)
+        c.reporter = None
+        c._resuming_report = True
         c._unresolved_destination = None
         # Apply saved combat changes only on explicit resume. Keep spell/global
         # cooldown deadlines; new target/lure state must use the new rules.
@@ -808,13 +825,18 @@ class AdaptiveCavebot:
         # wait, including an already available position, on Windows QPC.
         started = perf_counter()
         outcome = "position_interrupted"
+        interruption = None
         try:
             arrived = await self.wait_position(target, origin, timeout, intermediate, recover)
             outcome = "position_confirmed" if arrived else "position_unconfirmed"
             if not arrived and self._route_command and self._route_attempt and self._route_attempt.get('cancelled'):
                 outcome = "position_cancelled"
             return arrived
+        except (ValueError, asyncio.CancelledError) as exc:
+            interruption = str(exc) or 'Anulowano zadanie ruchu.'
+            raise
         finally:
+            self._observe_report('interrupted', target, outcome, interruption)
             if recover:
                 self._uncertain_walk_origin = tuple(origin) if outcome in {"position_unconfirmed", "position_interrupted"} else None
             timing.position_ms = (perf_counter() - started) * 1000
@@ -1042,6 +1064,13 @@ class AdaptiveCavebot:
         from potions import SenzuUsage
         usage = SenzuUsage()
         self.state.game_state.senzu_usage = usage
+        if not self.combat_only:
+            from cavebot_history import RunHistory
+            try:
+                self.reporter = RunHistory(self, self._resuming_report or self.index > self.loop_start)
+                self._observe_report('sample', True)
+            except Exception:
+                log.exception('Could not start Cavebot history')
         try:
             await self.domains.run()
         except ValueError as exc:self.pause(str(exc))
@@ -1052,6 +1081,7 @@ class AdaptiveCavebot:
             self.pause('Błąd wykonania trasy; nawigacja wstrzymana.')
             raise
         finally:
+            self._observe_report('finish', False, self.reason)
             self._finish_walk_timing("session_ended")
             usage.finish()
             proxy.unregister_client_packet_callback(manual)
@@ -1116,6 +1146,7 @@ class AdaptiveCavebot:
                     self.reason = f'Brak potwierdzonego domknięcia do {tuple(anchor)}.'
                     await asyncio.sleep(1)
                     continue
+                self._observe_report('finish', True, 'okrążenie' if self.loop else 'koniec trasy')
                 self.laps+=1
                 if not self.loop:
                     journal = getattr(self.state.game_state, "engine_journal", None)
@@ -1124,7 +1155,9 @@ class AdaptiveCavebot:
                     self.domains.movement_state='complete';self.reason='Trasa zakończona. Powtarzanie wyłączone.'
                     if not self.combat.config['enabled']:self.status='complete';break
                     await asyncio.sleep(.05);continue
-                self.index=self.loop_start;self.variation_until=self.index;self.mark_waypoint();continue
+                self.index=self.loop_start;self.variation_until=self.index;self.mark_waypoint()
+                self._observe_report('sample', True)
+                continue
             # Combat may have awaited attack/spell pacing; use current terrain.
             sample=await self.fresh_map()
             if not self.combat.placement:self.vary_leg(sample)
