@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const {randomUUID} = require("node:crypto");
 const {pathToFileURL} = require("node:url");
+const {setTimeout:delay} = require("node:timers/promises");
 const host = require("./host");
 
 // The EXE selects the installation as cwd for both the bootstrap and installed UI.
@@ -19,7 +20,7 @@ let view = {phase:"checking", text:"Sprawdzanie lokalnej kolejki wydań…",vers
   folder:"",installed:false,clientOpen:false,canDefer:false,readOnly};
 
 function set(phase, text, extra={}) {
-  view = {...view,phase,text,canDefer:false,canOpenClient:false,failedStep:null,...extra};
+  view = {...view,phase,text,canDefer:false,failedStep:null,...extra};
   if (win && !win.isDestroyed()) win.webContents.send("launcher:changed",view);
 }
 function reveal() {
@@ -136,6 +137,29 @@ async function preparePrompt() {
   },30000);
 }
 
+async function findOrLaunchClient(proc) {
+  const folder = view.folder;
+  const current = () => !quitting && proc === child && awaitingStart;
+  set("detecting","Wykrywanie klienta DBVictory…");
+  const existing = await host.openWindowPid(folder);
+  if (!current() || existing) return existing;
+
+  set("detecting","Uruchamianie klienta DBVictory…");
+  await host.openClient(folder);
+  if (!current()) return null;
+
+  set("detecting","Oczekiwanie na okno klienta DBVictory…");
+  const until = performance.now() + 60000;
+  while (current()) {
+    const pid = await host.openWindowPid(folder);
+    if (pid) return pid;
+    const remaining = until - performance.now();
+    if (remaining <= 0) throw new Error("Okno DBVictory nie pojawiło się w ciągu minuty. Po aktualizacji klienta możesz ponowić próbę.");
+    await delay(Math.min(750, remaining));
+  }
+  return null;
+}
+
 async function action(name) {
   if (locked) return;
   locked=true;
@@ -144,28 +168,18 @@ async function action(name) {
     else if (name==="defer" && !child && !readOnly && view.canDefer) await check(oldPending);
     else if (name==="start" && awaitingStart && ["ready","clientError"].includes(view.phase) && !readOnly) {
       const proc=child;
-      set("detecting","Wykrywanie klienta DBVictory…");
       try {
-        clientPid=await host.openWindowPid(view.folder);
-        if (!clientPid) {
-          if (proc===child) set("clientError","Nie wykryto klienta DBVictory.",{failedStep:"client",clientOpen:false,canOpenClient:view.installed});
-          return;
-        }
+        const pid=await findOrLaunchClient(proc);
+        if (!pid || quitting || proc!==child || !awaitingStart) return;
+        clientPid=pid;
       } catch(error) {
-        if (proc===child) {
-          const ambiguous=error.code==="MULTIPLE_CLIENTS";
-          set("clientError",ambiguous?error.message:"Nie udało się sprawdzić okna klienta w Windows.",{failedStep:"client",clientOpen:ambiguous,canOpenClient:false});
-        }
+        if (!quitting && proc===child) set("clientError",error.message,{failedStep:"client"});
         return;
       }
-      if (child!==proc || !awaitingStart) return;
       awaitingStart=false;
       set("starting","Uruchamianie silnika…",{clientOpen:true});
       watchSession(proc);
       proc.stdin.write("\n"); // Forward only this user's Start gesture to the waiting console.
-    } else if (name==="openClient" && awaitingStart && view.phase==="clientError" && view.canOpenClient && !readOnly) {
-      await host.openClient(view.folder);
-      set("ready","Poczekaj na okno klienta. Kliknij Start, gdy postać jest wylogowana.");
     } else if (name==="cancel" && child && view.phase==="waiting") {
       set("closing","Zamykanie uruchamianej sesji…");child.stdin.end();
     } else if (name==="folder" && awaitingStart && ["ready","clientError"].includes(view.phase) && !readOnly) {
@@ -200,7 +214,7 @@ else {
     ipcMain.handle("launcher:act",(e,name)=>{if(!trusted(e))throw Error("Nieznane okno.");return action(name);});
     win.on("close",e=>{
       if (quitting) return;
-      if (locked || ["checking","applying"].includes(view.phase)) {e.preventDefault();return;}
+      if (locked && view.phase!=="detecting" || ["checking","applying"].includes(view.phase)) {e.preventDefault();return;}
       if (child && ["running","starting","panel","waiting"].includes(view.phase)) {e.preventDefault();win.hide();return;}
       if(child){e.preventDefault();quitting=true;child.stdin.end();}
     });

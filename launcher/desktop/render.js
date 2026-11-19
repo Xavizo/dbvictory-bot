@@ -58,7 +58,7 @@ function drawSteps(s) {
     let label=item.pending;
     if(i<position) {li.className="done";icon.textContent="✓";label=item.done;}
     else if(i===failed) {li.className="failed";icon.textContent="×";label=s.text;}
-    else if(i===position) {li.className="active";label=item.active;}
+    else if(i===position) {li.className="active";label=item.key==="client"?s.text:item.active;}
     li.append(icon,document.createTextNode(label));steps.append(li);
   }
 }
@@ -83,13 +83,12 @@ function update(s) {
   $(".fill").style.width=stage==="starting"?"33%":stage==="panel"?"67%":"";
   $(".portrait").classList.toggle("charging",stage==="starting");
   const detail=$("#detail");
-  detail.textContent=stage==="clientError"?(s.canOpenClient?"Uruchom klienta i ponów próbę.":"Sprawdź wybrany folder i ponów próbę."):s.text;
-  detail.hidden=(stage!=="clientError" && (s.failedStep!=null || ["starting","panel","detecting"].includes(stage)));
+  detail.textContent=s.text;
+  detail.hidden=s.failedStep!=null || ["starting","panel","detecting"].includes(stage);
   detail.classList.toggle("problem",["busy","problem","recovery"].includes(stage));
   button("#primary",null);button("#secondary",null);
   if (idle&&!s.readOnly) {
     button("#primary","Start","start");
-    if (stage==="clientError" && s.canOpenClient) button("#secondary","Otwórz klienta","openClient");
   } else if (["detecting","starting","panel"].includes(stage)) button("#primary","Start",null,true);
   else if (["closed","busy","problem","available","recovery"].includes(stage)||s.readOnly&&idle) button("#primary","Sprawdź ponownie","retry");
   if(stage==="waiting")button("#secondary","Anuluj","cancel");

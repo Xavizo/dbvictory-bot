@@ -7,9 +7,10 @@ launcher sprawdza lokalną kolejkę, instaluje wydanie i pokazuje wersję na dys
 Przy aktywnej sesji pakiet czeka. Po jej zakończeniu użyj **Sprawdź ponownie**.
 Gdy postać jest wylogowana, kliknij **Start**. Krok **Wykrywanie klienta DBVictory…**
 sprawdza, czy klient z wybranego folderu ma otwarte okno. Stan zalogowania
-potwierdzasz samym kliknięciem **Start**. Jeśli brakuje okna, launcher pokaże
-na czerwono **Nie wykryto klienta DBVictory.** Możesz wtedy użyć **Otwórz klienta**
-i ponowić próbę. Kolejne kroki pokazują gotowość silnika i głównego panelu.
+potwierdzasz samym kliknięciem **Start**. Jeśli klient jest zamknięty, launcher
+uruchomi go i poczeka do minuty na jego okno. Jeśli proces klienta już się
+uruchamia, launcher poczeka na ten proces. Kolejne kroki pokazują gotowość
+silnika i głównego panelu. Błąd przy danym kroku pozwala ponowić próbę przez **Start**.
 Gdy panel się otworzy, launcher się schowa. Zamknięcie klienta kończy sesję uruchomioną z tego okna.
 Folder z plikami klienta można wskazać przez **Zmień**.
 Argument `--check` otwiera okno wyłącznie do sprawdzenia wersji.

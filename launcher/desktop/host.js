@@ -61,7 +61,11 @@ async function clientExe(folder) {
 async function clients() {
   const ps = path.join(process.env.SystemRoot, "System32","WindowsPowerShell","v1.0","powershell.exe");
   const query = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ConvertTo-Json -Compress -InputObject @(Get-Process -Name dbvStart,dbvStart_gl -ErrorAction SilentlyContinue | Select-Object Id,Path,@{Name='HasWindow';Expression={$_.MainWindowHandle -ne [IntPtr]::Zero}})";
-  return JSON.parse((await exec(ps, ["-NoProfile","-NonInteractive","-Command",query],{...options,timeout:12000})).stdout);
+  try {
+    return JSON.parse((await exec(ps, ["-NoProfile","-NonInteractive","-Command",query],{...options,timeout:12000})).stdout);
+  } catch {
+    throw new Error("Nie udało się sprawdzić okna klienta w Windows.");
+  }
 }
 
 function windowPid(list, folder) {
@@ -87,7 +91,10 @@ async function openClient(folder) {
   if (same) return same.Id;
   if (found.length) throw new Error("Klient działa z innej lokalizacji. Wybierz jego folder.");
   const child = spawn(exe, [], {cwd:folder,detached:true,stdio:"ignore",windowsHide:false});
-  await new Promise((ok, fail) => { child.once("spawn",ok); child.once("error",fail); });
+  await new Promise((ok, fail) => {
+    child.once("spawn",ok);
+    child.once("error",()=>fail(new Error("Windows nie uruchomił klienta DBVictory. Sprawdź wybrany folder.")));
+  });
   child.unref();
   return child.pid;
 }

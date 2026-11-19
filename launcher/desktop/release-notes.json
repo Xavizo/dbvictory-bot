@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.3.1",
+    "changes": [
+      {"title": "Start otwiera również klienta DBVictory", "detail": "Jeśli klient jest zamknięty, launcher uruchomi go z wybranego folderu i poczeka na jego okno. Jeśli już działa, Start użyje otwartego klienta."}
+    ]
+  },
+  {
     "version": "v1.3.0",
     "changes": [
       {"title": "Postęp po kliknięciu Start", "detail": "Launcher pokazuje osobno wykrycie klienta, uruchamianie silnika i otwarcie głównego panelu."},
