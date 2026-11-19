@@ -109,22 +109,30 @@ async def run_console(args, env, lines, *, on_confirm=None):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     print('DBVictory Bot — uruchamianie bez Codexa\n', flush=True)
+    prepare_panel = False
     if not args.start:
         print('Pozostaw klienta na LIŚCIE POSTACI lub ekranie logowania.\n'
               'Start z zalogowanej gry zerwałby połączenie.\n'
               'Naciśnij Enter, gdy postać jest wylogowana; wpisz q, aby zrezygnować.', flush=True)
         answer = await anext(lines, '')
-        if not answer or answer.strip().lower() != '':
+        prepare_panel = getattr(args, 'desktop', False) and answer.strip() == 'prepare'
+        if not answer or (answer.strip() and not prepare_panel):
             return
     if on_confirm is not None:
         on_confirm()
-    settings = json.loads((ROOT/'bot_settings.json').read_text(encoding='utf-8')) if (ROOT/'bot_settings.json').exists() else {}
     params = StdioServerParameters(command=sys.executable,args=[str(ROOT/'run_mcp.py')],cwd=str(ROOT),env=env)
     log_path = ROOT/'.codex/standalone-stderr.log'
     with log_path.open('a',encoding='utf-8') as log:
         async with stdio_client(params,errlog=log) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
+                if prepare_panel:
+                    await call(session, 'open_dashboard', {'standalone': True})
+                    print('PANEL GOTOWY — silnik działa bez połączenia z grą.', flush=True)
+                    if (await anext(lines, '')).strip() != 'connect':
+                        return
+                settings_file = ROOT / 'bot_settings.json'
+                settings = json.loads(settings_file.read_text(encoding='utf-8')) if settings_file.exists() else {}
                 await start_checked(session,settings)
                 print('\nGOTOWE — możesz zalogować postać. Walka i caveboty są OFF.\n'
                       'Zapisane pozostałe akcje (np. mikstury) ruszą po logowaniu.\n'

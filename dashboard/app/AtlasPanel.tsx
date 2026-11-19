@@ -447,6 +447,6 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
     {embedded&&waypointList}
 
     {review}
-    {embedded?mapBody&&createPortal(<div className="route-map-overlay" role="dialog" aria-modal="true" aria-label="Mapa i edycja trasy"><header><strong>{draftName||"Nowa trasa"}</strong><span>{pointText(center)}</span><MapTool icon="layers" label={objectView?"Pokaż trasę":"Obiekty na żywo"} aria-pressed={objectView} onClick={()=>setObjectView(!objectView)}/><MapTool icon="close" label="Zamknij mapę" autoFocus onClick={()=>{setMapOpen(false);setSimPlaying(false);}}/></header>{objectView?<div className="route-object-view"><ObjectMap map={state?.passive_map}/></div>:mapBody}<footer>{recordingStatus}{review}</footer></div>,document.body):mapBody}
+    {embedded?mapBody&&createPortal(<div className="route-map-overlay" role="dialog" aria-modal="true" aria-label="Mapa i edycja trasy"><header><strong>{draftName||"Nowa trasa"}</strong><span>{pointText(center)}</span><MapTool icon="layers" label={objectView?"Pokaż trasę":"Obiekty na żywo"} aria-pressed={objectView} onClick={()=>setObjectView(!objectView)}/><MapTool icon="close" label="Zamknij mapę" autoFocus onClick={()=>{setMapOpen(false);setSimPlaying(false);}}/></header>{objectView?<div className="route-object-view"><ObjectMap map={state?.passive_map} preview={state?.adaptive_cavebot?.map_preview}/></div>:mapBody}<footer>{recordingStatus}{review}</footer></div>,document.body):mapBody}
   </section>;
 }

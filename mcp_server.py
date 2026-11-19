@@ -2023,10 +2023,14 @@ async def session_recovery_preview() -> dict:
 
 
 @mcp.tool()
-async def open_dashboard() -> str:
-    """Reopen this session's panel without touching game sockets or actions."""
+async def open_dashboard(standalone: bool = False) -> str:
+    """Open the local panel. Standalone mode also works before game login."""
     if state.game_proxy is None:
-        return "ERROR: Bot session is not started. Start from the character list first."
+        if not standalone:
+            return "ERROR: Bot session is not started. Start from the character list first."
+        import dashboard_api
+        if not dashboard_api.start_api(asyncio.get_running_loop(), state, panel_only=True):
+            return "ERROR: Could not open the local dashboard API."
     _launch_dashboard()
     if _dashboard_running('electron'):
         return "Panel opened. Game connection and actions unchanged."

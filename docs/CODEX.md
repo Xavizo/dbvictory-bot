@@ -5,14 +5,14 @@
 Skrót **Uruchom bota** otwiera **DBVictory Launcher.exe**. W tym samym oknie
 launcher sprawdza lokalną kolejkę, instaluje wydanie i pokazuje wersję na dysku.
 Przy aktywnej sesji pakiet czeka. Po jej zakończeniu użyj **Sprawdź ponownie**.
-Jeśli klient jest zamknięty, kliknij **Start**, aby go otworzyć. Zaloguj się na
-konto i zatrzymaj na liście postaci. W launcherze kliknij ponownie **Start**.
-Jeśli lista postaci była już otwarta przy uruchomieniu launchera, wystarczy
-jeden klik. Wejdź na postać po otwarciu głównego panelu bota.
+Jeśli klient jest zamknięty, kliknij **Start**. Launcher otworzy klienta,
+zainicjalizuje silnik i otworzy panel. Zaloguj się na konto. Na liście
+postaci kliknij **Połącz z grą** w launcherze i poczekaj na zakończenie łączenia.
+Jeśli lista postaci jest już otwarta przy uruchamianiu launchera, **Start**
+od razu wykonuje dotychczasowy start sesji. Po jego zakończeniu wejdź na postać.
 Krok **Wykrywanie klienta DBVictory…** sprawdza okno z wybranego folderu.
-Po wymianie procesu przez aktualizator klienta launcher ponownie czeka na klik
-na liście postaci. Kolejne kroki pokazują gotowość silnika i głównego panelu.
-Gdy panel się otworzy, launcher się schowa. Zamknięcie klienta kończy sesję uruchomioną z tego okna.
+Kolejne kroki pokazują gotowość silnika i głównego panelu. Po połączeniu
+launcher się schowa. Zamknięcie klienta kończy sesję uruchomioną z tego okna.
 Folder z plikami klienta można wskazać przez **Zmień**.
 Argument `--check` otwiera okno wyłącznie do sprawdzenia wersji.
 

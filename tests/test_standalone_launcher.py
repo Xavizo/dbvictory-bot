@@ -23,6 +23,23 @@ def test_reopen_without_session_cannot_start_or_attach(monkeypatch):
     assert asyncio.run(server.open_dashboard()).startswith('ERROR:')
 
 
+@pytest.mark.parametrize('available',[True,False])
+def test_standalone_panel_before_login_only_needs_local_api(monkeypatch,available):
+    import dashboard_api
+    st=SimpleNamespace(game_proxy=None)
+    monkeypatch.setattr(server,'state',st)
+    calls=[]
+    def start_api(loop,state,*,panel_only):
+        assert state is st and panel_only
+        return available
+    monkeypatch.setattr(dashboard_api,'start_api',start_api)
+    monkeypatch.setattr(server,'_launch_dashboard',lambda:calls.append('panel'))
+    monkeypatch.setattr(server,'_dashboard_running',lambda name:True)
+    result=asyncio.run(server.open_dashboard(standalone=True))
+    assert result.startswith('ERROR:') is not available
+    assert calls==(['panel'] if available else [])
+
+
 def test_start_reviews_actions_disables_combat_and_preserves_potions(monkeypatch):
     calls=[]
     async def fake_call(session,name,args=None):calls.append((name,args));return 'OK'

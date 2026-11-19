@@ -16,6 +16,7 @@ app.setPath("userData",path.join(app.getPath("appData"),"DBVictory Launcher"));
 const settings = path.join(app.getPath("userData"),"client.json");
 let win, child, oldPending, marker, clientPid, poll, deadline;
 let locked = false, checkingPanel = false, quitting = false, sessionError = "", awaitingStart = false;
+let awaitingConnection = false;
 let view = {phase:"checking", text:"Sprawdzanie lokalnej kolejki wydań…",version:"",changes:[],
   folder:"",installed:false,clientOpen:false,canDefer:false,readOnly};
 
@@ -45,7 +46,7 @@ async function clientInfo(folder) {
 function showStart(info={}) {
   const text = (info.clientOpen ?? view.clientOpen)
     ? "Na liście postaci kliknij Start. Wejdź na postać po otwarciu panelu bota."
-    : "Kliknij Start, aby otworzyć klienta DBVictory.";
+    : "Start otworzy klienta DBVictory, uruchomi silnik i wyświetli panel.";
   set("ready",text,info);
 }
 async function check(defer) {
@@ -75,11 +76,19 @@ async function check(defer) {
   }
 }
 
-function watchSession(proc) {
+function startDeadline(proc) {
+  clearTimeout(deadline);
   deadline=setTimeout(()=>{
+    if (child===proc && view.phase==="connecting") {
+      set("waiting","Silnik nie potwierdził połączenia z klientem.");
+      return;
+    }
     if (child===proc && ["starting","panel"].includes(view.phase))
       set("waiting",checkingPanel?"Główne okno nie potwierdziło gotowości.":"Silnik nie potwierdził gotowości.",{failedStep:checkingPanel?"panel":"engine"});
   },75000);
+}
+function watchSession(proc) {
+  startDeadline(proc);
   let probing = false;
   poll=setInterval(async()=>{
     if (probing || child!==proc) return;
@@ -102,7 +111,11 @@ function watchSession(proc) {
         try {await fs.access(marker);} catch {return;}
         if (child!==proc) return;
         checkingPanel=false;clearTimeout(deadline);
-        set("running","Główne okno bota jest gotowe.");win.hide();
+        if (awaitingConnection) {
+          set("prepared","Silnik i panel działają. Na liście postaci wybierz „Połącz z grą”, a potem wejdź na postać.");
+        } else {
+          set("running","Główne okno bota jest gotowe.");win.hide();
+        }
       }
     } catch { /* A temporarily unavailable process listing does not end the session. */ }
     finally {probing=false;}
@@ -120,7 +133,7 @@ async function preparePrompt() {
     if (line.includes("Naciśnij Enter, gdy postać jest wylogowana")) {
       awaitingStart=true;clearTimeout(deadline);
       showStart();
-    } else if (line.startsWith("GOTOWE")) {
+    } else if (line.startsWith("GOTOWE") || line.startsWith("PANEL GOTOWY")) {
       checkingPanel=true;set("panel","Silnik gotowy. Oczekiwanie na główne okno…");
     } else if (line.startsWith("BŁĄD:")||line.startsWith("Błąd launchera:")) {
       sessionError=line.slice(0,440);
@@ -130,9 +143,9 @@ async function preparePrompt() {
   proc.once("error",()=>{sessionError="Nie udało się otworzyć procesu sesji.";});
   proc.once("close",(code)=>{
     if (child!==proc) return;
-    const wasRunning=view.phase==="running";
+    const wasRunning=["running","prepared"].includes(view.phase);
     const failedStep=checkingPanel?"panel":clientPid?"engine":null;
-    stopMonitor();child=null;clientPid=null;awaitingStart=false;
+    stopMonitor();child=null;clientPid=null;awaitingStart=false;awaitingConnection=false;
     if (quitting || wasRunning && code===0) {app.quit();return;}
     reveal();
     if (code===75) set("problem","Pojawiło się nowsze wydanie. Sprawdź aktualizację ponownie.");
@@ -150,11 +163,7 @@ async function findOrLaunchClient(proc) {
   set("detecting","Wykrywanie klienta DBVictory…");
   const existing = await host.openWindowPid(folder);
   if (!current()) return null;
-  if (existing && existing === view.windowPid) return existing;
-  if (existing) {
-    showStart({clientOpen:true,windowPid:existing});
-    return null;
-  }
+  if (existing) return {pid:existing, prepare:existing !== view.windowPid};
 
   set("detecting","Uruchamianie klienta DBVictory…",{clientOpen:false,windowPid:null});
   await host.openClient(folder);
@@ -165,10 +174,7 @@ async function findOrLaunchClient(proc) {
   while (current()) {
     const pid = await host.openWindowPid(folder);
     if (!current()) return null;
-    if (pid) {
-      showStart({clientOpen:true,windowPid:pid});
-      return null;
-    }
+    if (pid) return {pid, prepare:true};
     const remaining = until - performance.now();
     if (remaining <= 0) throw new Error("Okno DBVictory nie pojawiło się w ciągu minuty. Po aktualizacji klienta możesz ponowić próbę.");
     await delay(Math.min(750, remaining));
@@ -185,17 +191,33 @@ async function action(name) {
     else if (name==="start" && awaitingStart && ["ready","clientError"].includes(view.phase) && !readOnly) {
       const proc=child;
       try {
-        const pid=await findOrLaunchClient(proc);
-        if (!pid || quitting || proc!==child || !awaitingStart) return;
-        clientPid=pid;
+        const found=await findOrLaunchClient(proc);
+        if (!found || quitting || proc!==child || !awaitingStart) return;
+        clientPid=found.pid;
+        awaitingConnection=found.prepare;
       } catch(error) {
         if (!quitting && proc===child) set("clientError",error.message,{failedStep:"client"});
         return;
       }
       awaitingStart=false;
-      set("starting","Uruchamianie silnika…",{clientOpen:true});
+      set("starting","Uruchamianie silnika…",{clientOpen:true,windowPid:clientPid});
       watchSession(proc);
-      proc.stdin.write("\n"); // Forward only this user's Start gesture to the waiting console.
+      proc.stdin.write(awaitingConnection ? "prepare\n" : "\n");
+    } else if (name==="connect" && awaitingConnection && view.phase==="prepared" && !readOnly) {
+      const proc=child;
+      let pid;
+      try {pid=await host.openWindowPid(view.folder);}
+      catch(error){if(proc===child)set("prepared",error.message);return;}
+      if (quitting || proc!==child) return;
+      if (!pid || pid!==view.windowPid) {
+        set("prepared","Sprawdź, czy lista postaci jest otwarta w wybranym kliencie.",{windowPid:pid});
+        return;
+      }
+      clientPid=pid;
+      awaitingConnection=false;
+      set("connecting","Łączenie z klientem DBVictory…");
+      startDeadline(proc);
+      proc.stdin.write("connect\n");
     } else if (name==="cancel" && child && view.phase==="waiting") {
       set("closing","Zamykanie uruchamianej sesji…");child.stdin.end();
     } else if (name==="folder" && awaitingStart && ["ready","clientError"].includes(view.phase) && !readOnly) {
@@ -231,7 +253,7 @@ else {
     win.on("close",e=>{
       if (quitting) return;
       if (locked && view.phase!=="detecting" || ["checking","applying"].includes(view.phase)) {e.preventDefault();return;}
-      if (child && ["running","starting","panel","waiting"].includes(view.phase)) {e.preventDefault();win.hide();return;}
+      if (child && ["running","prepared","connecting","starting","panel","waiting"].includes(view.phase)) {e.preventDefault();win.hide();return;}
       if(child){e.preventDefault();quitting=true;child.stdin.end();}
     });
     await win.loadFile(path.join(__dirname,"index.html"));win.show();

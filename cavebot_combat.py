@@ -4,7 +4,7 @@ import re
 import time
 from cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker, better_pack_tile, gap, group_needs_time, melee_capacity, open_sides,
                           lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches,
-                          walking_distances)
+                          room_before_choke, walking_distances)
 from combat_reachability import reachable_tiles
 from combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
 from combat_wave import facing
@@ -343,12 +343,24 @@ class CombatRuntime:
             return 'group'
         if boundary and targets:
             return 'transition'
-        if len(engaged) < max(2, (goal+1)//2):
+        half_group = len(engaged) >= max(2, (goal+1)//2)
+        check_choke = goal == 8 and bool(engaged) and len(targets) >= 4
+        if not half_group and not check_choke:
             return None
-
         o = self.owner
         pos = tuple(o.state.game_state.position)
-        route = o.path[o.index:o.index+5]
+        route = o.path[o.index:o.index+9]
+        if check_choke and route and tuple(route[0]) == pos:
+            # Nearby eligible recruits matter for room choice before their
+            # pursuit is confirmed. They do not change the displayed group count.
+            local = {tuple(c['position']) for c in targets
+                     if c['distance'] <= 3 and target_policy(self.config,c)['mode']=='lure'}
+            if len(local) >= 4 and room_before_choke(sample['cells'],route,o.edges,local):
+                return 'corridor'
+        if not half_group:
+            return None
+
+        route = route[:5]
         members = {tuple(c['position']) for c in targets if c['id'] in engaged}
         if not route or tuple(route[0]) != pos or not room_before_corridor(sample['cells'], route, o.edges, members):
             return None
@@ -548,7 +560,8 @@ class CombatRuntime:
                 # Seeing an uncollected monster ahead is an approach, not a
                 # gathering interval. Start the limit when a real group forms.
                 if self.lure_started is None and self.confirmed_count:self.lure_started=now
-                self.lure_stop_reason = self.gather_stop_reason(sample, candidates, engaged, at_transition)
+                if not self.lure_stop_reason:
+                    self.lure_stop_reason = self.gather_stop_reason(sample, candidates, engaged, at_transition)
                 if (not self.lure_stop_reason and self.lure_started is not None
                         and (self.blocker_since or now)-self.lure_started>=cfg['lure_seconds']):
                     self.lure_stop_reason='timeout'

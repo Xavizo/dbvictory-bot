@@ -42,7 +42,7 @@ export default function RouteReplayPanel({state,online}:{state:BotState|null;onl
     {mode==="recording"&&<button className="secondary-button" onClick={finish}>Zakończ nagranie</button>}
     {mode==="finished"&&<div className="action-toolbar">
       <button className="secondary-button" onClick={save}>Zapisz JSON</button>
-      <button className="secondary-button" onClick={()=>{replay.current=null;setMode("idle");}}>Odrzuć nagranie</button>
+      <button className="secondary-button" onClick={start} title="Rozpocznij nowy obieg. Poprzedni zapis w pamięci zostanie zastąpiony.">Nagraj obieg</button>
     </div>}
   </div>;
 }

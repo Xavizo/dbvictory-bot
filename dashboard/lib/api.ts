@@ -240,6 +240,8 @@ export const configureAlerts=(config:AlertConfig)=>control("/api/alerts",{comman
 export const acknowledgeAlerts=(through:number)=>control("/api/alerts",{command:"acknowledge",through});
 export const setAlertsPaused=(paused:boolean)=>control("/api/alerts",{command:"set_paused",paused});
 
+export type LiveMovementPreview = {path:[number,number,number][];stop:[number,number,number]|null};
+
 export interface BotState {
   commands?: {session:number} | null;
   senzu_usage?: {total:number; per_hour:number|null; window_seconds:number; ended:boolean}|null;
@@ -256,7 +258,7 @@ export interface BotState {
   profile_selection?:{combat:string|null;bot:string|null;routes:Record<string,string>};
   speed_up?:{status:string;remaining:number|null;offset:number|null;effect_active:boolean|null;confirmed:boolean;attempts:number};
   combat_profile?: import("./cavebotModel").CombatConfig;
-  adaptive_cavebot?: {domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
+  adaptive_cavebot?: {map_preview?: LiveMovementPreview | null;domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
   passive_map?: PassiveMapState;
   connected: boolean;
   automation_paused?: boolean;

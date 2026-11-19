@@ -42,6 +42,10 @@ function capture(state:BotState|null, online:boolean, now:number) {
     movement:route?.domains?.movement.status??null, combat:route?.combat?.phase??null,
     lure:group?{goal:group.goal,following:group.following,engaged:group.engaged??null,
                 nearby:group.nearby??null,waiting:group.waiting,reason:group.stop_reason}:null,
+    plan:inGame && route?.status==="running" && route.map_preview ? {
+      path:route.map_preview.path.slice(0,9).map(p=>[...p]),
+      stop:route.map_preview.stop ? [...route.map_preview.stop] : null,
+    }:null,
     monsters,unclassified_occupants:unclassified,
   };
 }

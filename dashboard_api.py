@@ -928,12 +928,7 @@ async def _start_ws_server():
         log.error(f"WebSocket server failed: {e}")
 
 
-def start_api(loop: asyncio.AbstractEventLoop, bot_state) -> None:
-    """Start the HTTP API in a daemon thread + WebSocket in asyncio loop."""
-    global _main_loop, _state, _started
-    _main_loop = loop
-    _state = bot_state
-
+def _start_game_monitors(loop, bot_state):
     if getattr(bot_state, "passive_map_monitor", None) is None:
         from passive_map import PassiveMapMonitor
         bot_state.passive_map_monitor = PassiveMapMonitor(bot_state)
@@ -948,8 +943,16 @@ def start_api(loop: asyncio.AbstractEventLoop, bot_state) -> None:
         from game_alerts import monitor_alerts
         bot_state._alert_monitor_future = asyncio.run_coroutine_threadsafe(monitor_alerts(bot_state), loop)
 
+
+def start_api(loop: asyncio.AbstractEventLoop, bot_state, *, panel_only=False) -> bool:
+    """Serve the local panel. Game monitors belong to the connected session."""
+    global _main_loop, _state, _started
+    _main_loop = loop
+    _state = bot_state
+    if not panel_only:
+        _start_game_monitors(loop, bot_state)
     if _started:
-        return
+        return True
     _started = True
 
     # HTTP API (daemon thread)
@@ -958,10 +961,11 @@ def start_api(loop: asyncio.AbstractEventLoop, bot_state) -> None:
     except OSError as e:
         log.error(f"Failed to start HTTP server on port {API_PORT}: {e}")
         _started = False
-        return
+        return False
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     log.info(f"Dashboard API listening on http://127.0.0.1:{API_PORT}")
 
     # WebSocket push server (asyncio)
     asyncio.run_coroutine_threadsafe(_start_ws_server(), loop)
+    return True

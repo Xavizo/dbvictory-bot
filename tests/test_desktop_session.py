@@ -47,3 +47,39 @@ def test_console_aborted_before_start_never_claims_session(input_lines):
         pytest.fail("the session was confirmed without a Start gesture")
 
     asyncio.run(run_console(SimpleNamespace(start=False), {}, lines(), on_confirm=unexpected_confirmation))
+
+
+@pytest.mark.parametrize('last_line',[None,'quit\n','connect\n'])
+def test_cold_start_initializes_the_engine_once_before_manual_connection(tmp_path,monkeypatch,last_line):
+    from contextlib import asynccontextmanager
+    import mcp
+    import mcp.client.stdio
+    import run_bot as launcher
+
+    calls=[]
+    @asynccontextmanager
+    async def transport(*args,**kwargs):
+        yield (None,None)
+    class Session:
+        def __init__(self,*args): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self,*args): pass
+        async def initialize(self): calls.append('initialized')
+    async def panel(session,name,args):
+        assert (name,args)==('open_dashboard',{'standalone':True})
+        calls.append('panel')
+    async def connect(*args):
+        calls.append('connected')
+    async def lines():
+        yield 'prepare\n'
+        assert calls==['locked','initialized','panel']
+        if last_line:
+            yield last_line
+    (tmp_path/'.codex').mkdir()
+    monkeypatch.setattr(launcher,'ROOT',tmp_path)
+    monkeypatch.setattr(mcp.client.stdio,'stdio_client',transport)
+    monkeypatch.setattr(mcp,'ClientSession',Session)
+    monkeypatch.setattr(launcher,'call',panel)
+    monkeypatch.setattr(launcher,'start_checked',connect)
+    asyncio.run(launcher.run_console(SimpleNamespace(start=False,desktop=True),{},lines(),on_confirm=lambda:calls.append('locked')))
+    assert calls==['locked','initialized','panel']+(['connected'] if last_line=='connect\n' else [])

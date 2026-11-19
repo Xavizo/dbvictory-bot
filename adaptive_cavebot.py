@@ -218,8 +218,39 @@ class AdaptiveCavebot:
         controller.reason = "Odzyskano postęp po restarcie. Możesz wznowić trasę."
         return controller
 
+    def map_preview(self):
+        """A bounded view of decisions already made, in world coordinates."""
+        if self.status != "running" or self.combat_only or not self.path:
+            return None
+        origin = tuple(self.state.game_state.position or ())
+        if len(origin) != 3:
+            return None
+        combat = self.combat
+        points = [origin]
+        stop = None
+        if combat.phase == 'positioning' and combat.placement:
+            start, placement_path, expires = combat.placement
+            offset = self.index - start
+            if (time.monotonic() < expires and 0 <= offset < len(placement_path)
+                    and tuple(placement_path[offset]) == origin):
+                points = list(placement_path[offset:offset + 9])
+                stop = combat.pack_destination or points[-1]
+        elif combat.phase == 'fight' and combat.lure_stop_reason:
+            stop = origin
+        elif (combat.phase in {'route', 'lure'} and not combat.lure_waiting
+              and not self.navigation_hold and not self.blockage
+              and tuple(self.path[self.index]) == origin):
+            for target in self.path[self.index + 1:self.index + 9]:
+                point = tuple(target)
+                if point[2] != origin[2] or max(abs(a-b) for a,b in zip(point, points[-1])) != 1:
+                    break
+                points.append(point)
+        if len(points) == 1 and stop is None:
+            return None
+        return {"path": points, "stop": stop}
+
     def snapshot(self):
-        return {"status":self.status,"reason":self.reason,"domains":self.domains.snapshot() if self.domains else None,"navigation_hold":self.navigation_hold,"name":self.name,"index":self.index,"total":len(self.path),
+        return {"status":self.status,"reason":self.reason,"map_preview":self.map_preview(),"domains":self.domains.snapshot() if self.domains else None,"navigation_hold":self.navigation_hold,"name":self.name,"index":self.index,"total":len(self.path),
                 "mode":"combat" if self.combat_only else "route","scope":self.scope,"waypoint":self.waypoint_progress(),"resumable":bool(self.path and self.status in {"idle","paused","ready"}),"loops":self.laps,"loop":self.loop,"draft_id":self.draft_id,"combat":self.combat.snapshot(),"approach_remaining":max(0,self.loop_start-self.index) if self.path else 0,"position":self.path[self.index] if self.path else None,"logs":list(self.logs),"recovery_count":self.recovery_count,"blockage":self.blockage}
 
     def pause(self,reason):

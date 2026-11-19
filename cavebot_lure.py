@@ -269,6 +269,43 @@ def passage_width(tiles, point, axis):
     return width if walls == 2 else None
 
 
+def room_before_choke(cells, route, edges, members):
+    """Prefer an open fighting tile before a sustained loss of surrounding space."""
+    if not members or len(route) < 3:
+        return False
+    here = tuple(route[0])
+    tiles = {(c['x'], c['y'], c['z']): c for c in cells if c['z'] == here[2]}
+    def sides(point):
+        x,y,z = point
+        count = 0
+        for dx,dy in NEIGHBORS:
+            tile = tiles.get((x+dx,y+dy,z))
+            if ordinary_terrain(tile):
+                count += 1
+            elif not tile or tile.get('kind') not in {'blocked','no_ground'} or tile.get('navigation'):
+                return None
+            elif tile.get('occupants') and not any('not_walkable' in i.get('flags',()) for i in tile.get('items',())):
+                return None
+        return count
+    if not ordinary_terrain(tiles.get(here)) or sides(here) != 8:
+        return False
+    protected = {tuple(edge[key]) for edge in edges for key in ('entry','origin','exit')}
+    previous = here
+    narrower = 0
+    for point in map(tuple,route[1:9]):
+        if point[2]!=here[2] or gap(previous,point)!=1 or point in protected or not ordinary_terrain(tiles.get(point)):
+            break
+        free = sides(point)
+        if free is None:
+            break
+        narrower = narrower + 1 if free <= 6 else 0
+        if narrower >= 2 and free <= 4:
+            terrain,_ = placement_terrain(cells,here,edges,members)
+            return here in terrain and members <= terrain and melee_capacity(terrain,here,members) >= min(8,len(members))
+        previous = point
+    return False
+
+
 def room_before_corridor(cells, route, edges, members):
     """Stop on the room side of two consecutive narrow cross-sections on this route."""
     if len(route) < 3:

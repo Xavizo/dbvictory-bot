@@ -92,28 +92,32 @@ async function launcherWithClient(initialPid) {
   }
   const substitutes = {
     electron:{app,BrowserWindow:TestWindow,ipcMain:{handle:(name,callback)=>handlers.set(name,callback)}},
-    "./host":host, "node:fs/promises":{readFile:async()=>JSON.stringify({folder}),mkdir:async()=>{}}
+    "./host":host, "node:fs/promises":{readFile:async()=>JSON.stringify({folder}),mkdir:async()=>{},access:async()=>{}}
   };
-  const context = {require:name=>substitutes[name] ?? require(name), __dirname:desktop, process, performance,
-    setInterval:()=>0, setTimeout:()=>0, clearInterval(){}, clearTimeout(){}};
+  const context = {require:name=>substitutes[name] ?? require(name), __dirname:desktop,
+    process:{cwd:process.cwd,argv:[],kill(){}}, performance,
+    setInterval:callback=>{stub.poll=callback;return 1;}, setTimeout:()=>0, clearInterval(){}, clearTimeout(){}};
   vm.runInNewContext(await fs.readFile(path.join(desktop,"main.js"),"utf8"),context);
   await ready;
   stub.onLine("Naciśnij Enter, gdy postać jest wylogowana");
   stub.start=()=>handlers.get("launcher:act")({sender:webContents,senderFrame:webContents.mainFrame},"start");
+  stub.connect=()=>handlers.get("launcher:act")({sender:webContents,senderFrame:webContents.mainFrame},"connect");
   stub.host=host;
   return stub;
 }
 
-test("opening the game waits at Start until the user confirms the character list", async () => {
+test("one Start opens the client and initializes the standalone panel once", async () => {
   const client=await launcherWithClient(null);
-  await client.start();
-  assert.equal(client.opens,1);
-  assert.equal(client.view.phase,"ready");
-  assert.match(client.view.text,/liście postaci/);
-  assert.deepEqual(client.writes,[]);
   await Promise.all([client.start(),client.start()]);
+  assert.equal(client.opens,1);
   assert.equal(client.view.phase,"starting");
-  assert.deepEqual(client.writes,["\n"]);
+  assert.deepEqual(client.writes,["prepare\n"]);
+  client.onLine("PANEL GOTOWY");
+  await client.poll();
+  assert.equal(client.view.phase,"prepared");
+  assert.deepEqual(client.writes,["prepare\n"]);
+  await Promise.all([client.connect(),client.connect()]);
+  assert.deepEqual(client.writes,["prepare\n","connect\n"]);
 });
 
 test("Start accepts an already-open client in one click", async () => {
@@ -127,13 +131,15 @@ test("Start accepts an already-open client in one click", async () => {
 test("a replacement client must be confirmed again on the character list", async () => {
   const client=await launcherWithClient(null);
   await client.start();
+  client.onLine("PANEL GOTOWY");
+  await client.poll();
   client.pid=42;
-  await client.start();
-  assert.equal(client.view.phase,"ready");
-  assert.deepEqual(client.writes,[]);
-  await client.start();
+  await client.connect();
+  assert.equal(client.view.phase,"prepared");
+  assert.deepEqual(client.writes,["prepare\n"]);
+  await client.connect();
   assert.equal(client.opens,1);
-  assert.deepEqual(client.writes,["\n"]);
+  assert.deepEqual(client.writes,["prepare\n","connect\n"]);
 });
 
 test("closing the launcher while the game is opening cannot advance startup", async () => {

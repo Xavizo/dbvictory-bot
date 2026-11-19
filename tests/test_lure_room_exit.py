@@ -116,3 +116,31 @@ def test_fourth_member_arriving_during_attack_stops_the_pending_route_step(state
     assert asyncio.run(c.combat.tick(c.map_now()))
     assert c.combat.lure_stop_reason=='corridor' and c.combat.sent_target
     assert not c.combat.route_step_allowed()
+
+
+def test_open_bank_before_a_pinch_counts_nearby_recruits_only_for_position(state,tmp_path):
+    c,cells=armed(state,tmp_path,mode='lure',lure_count=8)
+    c.path=ROUTE
+    cells[:]=[cell(x,y,kind='blocked' if x>=13 and y!=10 else 'clear')
+              for x in range(4,20) for y in range(5,16)]
+    c.status='running'
+    for i,(x,y) in enumerate([(9,10),(8,9),(8,10),(8,11)]):
+        monster(state,cells,x=x,y=y,cid=0x40000001+i)
+    assert not c.combat.route_step_allowed()
+    assert c.combat.confirmed_count==1 and c.combat.lure_stop_reason=='corridor'
+    # Changing selected target cannot release the stop while the group is present.
+    c.combat.accept_manual_target(0x40000002)
+    assert asyncio.run(c.combat.tick(c.map_now()))
+    assert c.combat.lure_stop_reason=='corridor'
+
+
+def test_preview_shows_only_contiguous_planned_steps_or_real_lure_stop(state,tmp_path):
+    c,_=armed(state,tmp_path,mode='lure',lure_count=8)
+    c.status='running'
+    c.path=[*ROUTE,[17,10,8]]
+    assert c.map_preview()=={'path':list(map(tuple,ROUTE)), 'stop':None}
+    c.combat.phase='fight'
+    c.combat.lure_stop_reason='corridor'
+    assert c.map_preview()=={'path':[(10,10,7)],'stop':(10,10,7)}
+    c.status='paused'
+    assert c.map_preview() is None

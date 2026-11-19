@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { PassiveMapState, PassiveMapCell, MapNavigationFeature } from "@/lib/api";
+import type { LiveMovementPreview, PassiveMapState, PassiveMapCell, MapNavigationFeature } from "@/lib/api";
 import { labelVisiblePet, saveMapAnnotation } from "@/lib/api";
 import {activationLabels,activations,defaultActivation} from "@/lib/mapInteractions";
 import { transitionActions } from "./TransitionLearningPanel";
@@ -217,12 +217,13 @@ export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,way
   </div>,document.body);
 }
 
-export default function PassiveMapPanel({ map, focusPosition }: { map?: PassiveMapState; focusPosition?:[number,number,number]|null }) {
+export default function PassiveMapPanel({ map, preview, focusPosition }: { map?: PassiveMapState; preview?:LiveMovementPreview|null; focusPosition?:[number,number,number]|null }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [frozen, setFrozen] = useState<PassiveMapState | null>(null);
   const [copyResult, setCopyResult] = useState<{key:string; message:string} | null>(null);
   const [legendOpen,setLegendOpen]=useState(false);
+  const [showPlan,setShowPlan]=useState(true);
   const [menu,setMenu]=useState<TileMenuPosition|null>(null);
   const sectionRef=useRef<HTMLElement>(null);
   useEffect(()=>{
@@ -250,6 +251,9 @@ export default function PassiveMapPanel({ map, focusPosition }: { map?: PassiveM
     } catch {setCopyResult({key,message:"Nie udało się skopiować. Zaznacz tekst i użyj Ctrl+C."});}
   }
   const ready = !!shown?.cells.length && shown.center && shown.origin;
+  const plan = showPlan && !frozen && !shown?.stale && shown?.status === "ready" &&
+    preview?.path[0]?.every((v,i)=>v===shown.center?.[i]) ? preview : null;
+  const axis = (value:number, i:number) => (value - shown!.origin![i]) * 22 + 11;
   return <section ref={sectionRef} aria-label="Pasywna mapa" className="map-panel">
     <div className="map-panel-header">
       <div>
@@ -257,6 +261,7 @@ export default function PassiveMapPanel({ map, focusPosition }: { map?: PassiveM
         <p>Kliknięcie wybiera pole. Postać pozostaje pod Twoją kontrolą.</p>
       </div>
       <div className="flex items-center gap-2">
+      <button className="secondary-button" aria-pressed={showPlan} onClick={()=>setShowPlan(!showPlan)}>Plan ruchu {showPlan?"✓":""}</button>
       <button className="secondary-button" aria-expanded={legendOpen} onClick={()=>setLegendOpen(!legendOpen)}>Legenda</button>
       <button disabled={!ready} onClick={() => { setFrozen(frozen ? null : structuredClone(map!)); setSelected(null); }}
         className="secondary-button">
@@ -325,8 +330,17 @@ export default function PassiveMapPanel({ map, focusPosition }: { map?: PassiveM
             {player && <><circle cx={px + (nav ? 18 : 11)} cy={py + (nav ? 18 : 11)} r={nav ? 3 : 6} fill="#fff" stroke="#111827" strokeWidth={1.5} />{!nav && <circle cx={px + 11} cy={py + 11} r={2} fill="#111827" />}</>}
           </g>;
         })}
+        {plan && <g pointerEvents="none" aria-label="Plan Cavebota">
+          {plan.path.length>1 && <polyline points={plan.path.map(([x,y])=>[axis(x,0),axis(y,1)].join(",")).join(" ")}
+            fill="none" stroke="#78ecd3" strokeWidth="1.4" strokeDasharray="3 2" strokeLinecap="round"/>}
+          {plan.stop && plan.stop[2]===shown.center![2] && <rect x={axis(plan.stop[0],0)-8} y={axis(plan.stop[1],1)-8}
+            width="16" height="16" rx="4" fill="none" stroke="#ffd375" strokeWidth="1.6"/>}
+        </g>}
       </svg></div>
-      <div className="map-quick-legend"><span>◎ Twoja postać</span>{creatureKinds.map(k=><span key={k} style={{color:creatureStyles[k].color}}><b>{creatureStyles[k].symbol}</b> {creatureStyles[k].label}</span>)}</div>
+      <div className="map-quick-legend"><span>◎ Twoja postać</span>{creatureKinds.map(k=><span key={k} style={{color:creatureStyles[k].color}}><b>{creatureStyles[k].symbol}</b> {creatureStyles[k].label}</span>)}
+        {showPlan && <><span style={{color:"#78ecd3"}}>┄ Plan ruchu</span>
+          <span style={{color:"#ffd375"}}>{plan?.stop ? "▢ Postój "+plan.stop.join(", ") : "▢ Postój —"}</span></>}
+      </div>
       <p className="map-caption">Kolor pola: blokada. Symbol: typ obiektu. Zielone pole nie gwarantuje przejścia.</p>
       </div><aside className="map-inspector" aria-label="Szczegóły wybranego pola">
         <div className="inspector-heading">INSPEKTOR POLA {selected && <span>PRZYPIĘTE</span>}</div>

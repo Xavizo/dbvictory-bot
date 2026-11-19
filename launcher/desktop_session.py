@@ -27,7 +27,7 @@ def main(root):
 
         # The interactive prompt may wait for an arbitrary time. Only the user's
         # Start click claims the installation, and it must still be the same release.
-        args = SimpleNamespace(game_port=7475, start=False)
+        args = SimpleNamespace(game_port=7475, start=False, desktop=True)
         try:
             asyncio.run(run(args, prepare_environment(args.game_port), on_confirm=lock_reviewed_release))
         except ReleaseChanged:

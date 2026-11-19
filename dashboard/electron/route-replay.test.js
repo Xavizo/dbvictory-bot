@@ -8,6 +8,18 @@ const exportsForTest={};
 new Function('exports',js)(exportsForTest);
 const {RouteReplay}=exportsForTest;
 const start=1800000000000;
+test('recorded movement plan survives updates; the next recording starts empty',()=>{
+  const state=sample(), run=new RouteReplay(start);
+  state.adaptive_cavebot.map_preview={path:[[93,449,10],[93,450,10]],stop:[93,450,10]};
+  run.observe(state,true,start);
+  run.finish(start+1);
+  const saved=run.serialize();
+  state.adaptive_cavebot.map_preview.stop[0]=90;
+  const next=new RouteReplay(start+2);
+  assert.equal(next.frames.length,0);
+  assert.deepEqual(JSON.parse(saved).frames[0].plan.stop,[93,450,10]);
+  assert.equal(run.serialize(),saved);
+});
 function sample(cells=[{x:93,y:449,z:10,occupants:0}]){
   return {connected:true,player:{position:[93,449,10],name:'PRIVATE PLAYER'},
     adaptive_cavebot:{name:'Tsuful Podziemia 10',status:'running',loops:1,waypoint:{current:19,last_reached:18},
