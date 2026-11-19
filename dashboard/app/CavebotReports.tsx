@@ -13,7 +13,7 @@ const labels:Record<string,string> = {travel:"Marsz",waypoint:"Następny waypoin
   timeout:"Koniec czasu lurowania",lure:"Lurowanie",fight:"Walka",positioning:"Wybór pola walki",return:"Powrót na trasę",
   chase:"Pościg",distance:"Dystans",stationary:"Postój ≥ 4 s",moved:"Ruch po postoju",complete:"Trasa zakończona",
   end:"Koniec zapisu",pause:"Pauza",stop:"Zatrzymanie trasy",death:"Zaobserwowana śmierć celu",contact_lost:"Utrata kontaktu",unreachable:"Cel poza dostępnym obszarem",
-  left_group:"Cel opuścił grupę",position_cancelled:"Serwer anulował krok",position_interrupted:"Przerwano oczekiwanie na pozycję",
+  first_contact:"Pierwszy kontakt z potworem",left_group:"Cel opuścił grupę",position_cancelled:"Serwer anulował krok",position_interrupted:"Przerwano oczekiwanie na pozycję",
   position_unconfirmed:"Brak potwierdzenia pozycji"};
 const number=(v:number|null)=>v==null?"—":v.toLocaleString("pl-PL",{maximumFractionDigits:2});
 const clock=(ms:number)=>Math.floor(ms/60000)+":"+String(Math.floor(ms/1000)%60).padStart(2,"0");

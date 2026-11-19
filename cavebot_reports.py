@@ -3,6 +3,7 @@ from collections import deque
 from datetime import datetime
 from statistics import median
 from uuid import uuid4
+from hunt_areas import observed_position, sector
 
 
 def decision(frame):
@@ -41,18 +42,21 @@ class Lap:
         self.unobserved_ms = 0
         self.events = deque(maxlen=2500)
         self.event_count = 0
+        self.visited_sectors = set()
         self.still_since = frame['ms']
         self.still = False
         self.last_key = None
         self.observe(frame)
 
-    def event(self, frame, kind, detail=None):
+    def event(self, frame, kind, detail=None, monster_position=None):
         group = frame.get('lure') or {}
         self.event_count += 1
         self.events.append(dict(ms=frame['ms'] - self.first['ms'], kind=kind,
                                 position=frame.get('position'), waypoint=frame.get('waypoint'),
                                 engaged=group.get('engaged'), goal=group.get('goal'),
                                 target=frame.get('step_target'), detail=detail))
+        if monster_position is not None:
+            self.events[-1]['monster_position'] = list(monster_position)
 
     def interval(self, frame):
         elapsed = max(0, frame['ms'] - self.prev['ms'])
@@ -62,6 +66,8 @@ class Lap:
             self.blocked_ms += elapsed
 
     def observe(self, frame):
+        if observed_position(frame.get('position')):
+            self.visited_sectors.add(sector(frame['position']))
         self.interval(frame)
         code = decision(frame)
         detail = frame.get('block_cause') or frame.get('hold_reason')
@@ -93,6 +99,7 @@ class Lap:
         xp = difference(self.first.get('xp'), end.get('xp'))
         senzu = difference(self.first.get('senzu'), end.get('senzu'))
         return dict(id=self.id, route=self.first['route'], revision=self.first.get('revision'),
+                    draft_id=self.first.get('draft_id'), visited_sectors=sorted(self.visited_sectors),
                     profile=self.profile, lap=self.first['lap'] + 1, started_at=self.started_at,
                     complete=bool(self.start_known and complete and not self.unobserved_ms),
                     end_reason=end_reason, duration_ms=duration, blocked_ms=self.blocked_ms,

@@ -137,6 +137,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_list_recordings()
         if urlsplit(self.path).path == "/api/map/atlas":
             return self._handle_atlas()
+        if self.path == "/api/map/grounds":
+            return self._hunt_areas()
         if urlsplit(self.path).path == "/api/map/world":
             import sqlite3
             import zlib
@@ -171,6 +173,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._authorize():
             return
+        if self.path == "/api/map/grounds":
+            return self._hunt_areas(save=True)
         if self.path == "/api/profiles":
             try:
                 if not 0<int(self.headers.get("Content-Length",0))<=65536:raise ValueError("Profil jest zbyt duży.")
@@ -320,6 +324,23 @@ class _Handler(BaseHTTPRequestHandler):
         self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _hunt_areas(self, save=False):
+        import sqlite3
+        from hunt_areas import catalogue, save_area
+        atlas = getattr(getattr(_state, 'passive_map_monitor', None), 'atlas', None)
+        if atlas is None:
+            return self._json_response({'error':'Atlas czeka na pierwszy odczyt.'},503)
+        try:
+            if save:
+                if not 0 < int(self.headers.get('Content-Length',0)) <= 2*1024*1024:
+                    raise ValueError('Nieprawidłowy rozmiar danych obszaru.')
+                return self._json_response({'id':save_area(atlas,self._read_body())})
+            return self._json_response(catalogue(atlas))
+        except (ValueError, TypeError) as exc:
+            return self._json_response({'error':str(exc)},400)
+        except (OSError, sqlite3.Error):
+            return self._json_response({'error':'Atlas jest chwilowo niedostępny.'},503)
 
     def _handle_atlas(self):
         monitor=getattr(_state,"passive_map_monitor",None)

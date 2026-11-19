@@ -48,6 +48,7 @@ def http_api(monkeypatch):
     ("POST", "/api/potions/diagnostics"),
     ("POST", "/api/map/annotation"), ("POST", "/api/map/pet"),
     ("POST", "/api/map/drafts"), ("POST", "/api/adaptive/preview"),
+    ("GET", "/api/map/grounds"), ("POST", "/api/map/grounds"),
 ])
 def test_unauthenticated_requests_are_rejected(http_api, method, path):
     request, mutations = http_api
@@ -82,6 +83,25 @@ def test_lap_reports_endpoint_is_read_only_and_requires_session(http_api, monkey
     assert status == 200 and json.loads(body) == {"active":None,"reports":[],"more":False}
     assert request("GET",path+"?id=missing",**headers)[0] == 404
     assert request("GET",path+"?before=nan",**headers)[0] == 400
+    assert not mutations
+
+
+def test_hunt_area_http_save_and_read(http_api, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from map_atlas import MapAtlas
+    atlas=MapAtlas(tmp_path,'a'*64)
+    draft=atlas.save_draft('Saiyan',[[664,400,7],[665,400,7]])
+    monkeypatch.setattr(api,'_state',SimpleNamespace(passive_map_monitor=SimpleNamespace(atlas=atlas)))
+    request, mutations = http_api
+    headers={'Origin':DASHBOARD_ORIGIN,'Authorization':f'Bearer {SESSION_TOKEN}'}
+    path='/api/map/grounds'
+    body=dict(scope=atlas.scope,name='Saiyan',cells=[[664,400,7]],drafts=[draft])
+    assert request('POST',path,body=json.dumps(dict(body,scope='old')),**headers)[0]==400
+    status,_,raw=request('POST',path,body=json.dumps(body),**headers)
+    assert status==200
+    ident=json.loads(raw)['id']
+    status,_,raw=request('GET',path,**headers)
+    assert status==200 and json.loads(raw)['areas']==[dict(id=ident,version=1,name='Saiyan',cells=body['cells'],drafts=[draft])]
     assert not mutations
 
 

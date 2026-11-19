@@ -11,6 +11,7 @@ import time
 from cavebot_reports import Lap
 from farming_telemetry import experience_for_level
 from route_identity import navigation_revision
+from hunt_areas import observed_position
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def archive_path(state):
 
 
 def summary(report):
-    return {k:v for k,v in report.items() if k != 'events'}
+    return {k:v for k,v in report.items() if k not in ('events', 'visited_sectors')}
 
 
 def save_report(path, report):
@@ -31,6 +32,10 @@ def save_report(path, report):
         db.execute('CREATE INDEX IF NOT EXISTS by_start ON laps(started)')
         db.execute('INSERT OR IGNORE INTO laps VALUES (?,?,?,?)',
                    (report['id'], report['started_at'], json.dumps(summary(report)), json.dumps(report['events'])))
+        if report.get('visited_sectors'):
+            db.execute('CREATE TABLE IF NOT EXISTS lap_footprints(id TEXT PRIMARY KEY,cells TEXT)')
+            db.execute('INSERT OR IGNORE INTO lap_footprints VALUES (?,?)',
+                       (report['id'], json.dumps(report['visited_sectors'])))
 
 
 def read_reports(state, ident=None, before=None):
@@ -78,6 +83,7 @@ class RunHistory:
         self.next_sample = 0.
         self.last_target = None
         self.tracked = {}
+        self.seen_contacts = set()
         self.last_kills = getattr(self.gs, 'session_kills', 0)
         self.writes = set()
 
@@ -99,7 +105,7 @@ class RunHistory:
         cause = block.get('cause')
         blocked_now = cause and (cause in o.reason or o.reason.startswith('Brak potwierdzenia kroku'))
         target = block.get('target') if blocked_now else self.last_target
-        return dict(ms=round(now*1000),route=o.name,revision=self.revision,lap=o.laps,
+        return dict(ms=round(now*1000),route=o.name,revision=self.revision,draft_id=getattr(o,'draft_id',None),lap=o.laps,
                     position=list(gs.position),waypoint=None if current is None else current+1,
                     reason=o.reason, step_target=target, movement=o.domains.movement_state,combat=combat.phase,
                     lure=group,manual=now<o.manual_until,block_cause=cause if blocked_now else None,
@@ -123,15 +129,25 @@ class RunHistory:
         members = set(combat.pursuit.following) | combat.bank_members
         if combat.target and combat.target.get('id'):
             members.add(combat.target['id'])
+        wall_time = time.time()
         for cid in members:
             self.tracked[cid] = now
+            if cid not in self.seen_contacts:
+                creature = self.gs.creatures.get(cid,{})
+                pos = [creature.get(k) for k in ('x','y','z')]
+                if (creature.get('source') == 'dll' and 0 <= wall_time-creature.get('t',0) <= .6
+                        and creature.get('name') and observed_position(pos) and pos[2] == frame['position'][2]):
+                    self.seen_contacts.add(cid)
+                    self.lap.event(frame,'first_contact',creature['name'],pos)
         kills = frame['deaths'] or 0
         if kills > self.last_kills:
             log_rows = getattr(self.gs,'kill_log',())
             for i in range(min(kills-self.last_kills,len(log_rows)),0,-1):
                 row = log_rows[-i]
                 if row.get('cid') in self.tracked:
-                    self.lap.event(frame,'death',row.get('name') or None)
+                    pos = [row.get(k) for k in ('x','y','z')]
+                    known = observed_position(pos) and pos[2] == frame['position'][2]
+                    self.lap.event(frame,'death',row.get('name') or None,pos if known else None)
                     self.tracked.pop(row['cid'])
         self.last_kills = kills
         self._lost_contacts(frame, now)
@@ -188,6 +204,7 @@ class RunHistory:
         report = self.lap.report(end,boundary,reason)
         self.lap = None
         self.tracked.clear()
+        self.seen_contacts.clear()
         self.start_known = True
         state = self.owner.state
         if not hasattr(state,'cavebot_reports'):

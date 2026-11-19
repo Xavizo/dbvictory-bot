@@ -1,5 +1,12 @@
 [
   {
+    "version": "v1.10.0",
+    "changes": [
+      {"title":"Expowiska na mapie świata","detail":"Zapisz granice z pełnego obiegu, popraw je na każdym piętrze i przypisz kilka szkiców do jednego expowiska."},
+      {"title":"Wyniki tras i pokonane potwory w atlasie","detail":"Porównaj czas obiegu, XP/h, Senzu/h i blokady. Znaczniki pokazują miejsca obserwacji z ostatniego pełnego obiegu szkicu."}
+    ]
+  },
+  {
     "version": "v1.9.0",
     "changes": [
       {"title":"Mapa świata w atlasie","detail":"W zakładce Świat zobaczysz zapisaną minimapę klienta. Możesz zmienić piętro, włączyć pola zbadane przez atlas lub siatkę sektorów 64 × 64 i otworzyć szczegóły wybranego pola."}

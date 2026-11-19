@@ -1,9 +1,11 @@
 "use client";
 import {memo, useEffect, useMemo, useRef, useState} from "react";
-import type {PointerEvent as ReactPointerEvent} from "react";
+import type {PointerEvent as ReactPointerEvent, ReactNode} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 
-type Position = [number, number, number];
+export type Position = [number, number, number];
+export type GroundLayer = {cells:Position[]; marks:{cell:Position;title:string}[]; side:number;
+  editing:boolean; toggle:(p:Position)=>void; focus:{floor:number;cells:Position[]}|null};
 type Sector = {x:number; y:number; terrain?:string; atlas?:string};
 type Floor = {floor:number; sectors:Sector[]};
 type Camera = {x:number; y:number; width:number; height:number};
@@ -15,7 +17,7 @@ const Sectors = memo(function Sectors({sectors, overlay}:{sectors:Sector[]; over
   </g>)}</>;
 });
 
-export default memo(function WorldMap({initialFloor,onOpen}:{initialFloor:number;onOpen:(p:Position)=>void}) {
+export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar}:{initialFloor:number;onOpen:(p:Position)=>void;ground?:GroundLayer;toolbar?:ReactNode}) {
   const [floor,setFloor]=useState(initialFloor), [retry,setRetry]=useState(0);
   const [result,setResult]=useState<Floor|null>(null), [error,setError]=useState("");
   const [overlay,setOverlay]=useState(true), [grid,setGrid]=useState(false);
@@ -24,7 +26,7 @@ export default memo(function WorldMap({initialFloor,onOpen}:{initialFloor:number
   const drag=useRef<{camera:Camera; matrix:DOMMatrix; x:number; y:number; moved:boolean}|null>(null);
   useEffect(()=>{
     const controller=new AbortController();
-    setResult(null);setError("");setCamera(null);select(null);
+    setResult(null);setError("");select(null);
     async function load() {
       const r=await authenticatedFetch("http://127.0.0.1:8089/api/map/world?z="+floor,{signal:controller.signal});
       const data=await r.json();
@@ -34,6 +36,16 @@ export default memo(function WorldMap({initialFloor,onOpen}:{initialFloor:number
     void load().catch(e=>{if(!controller.signal.aborted)setError(e.message);});
     return ()=>controller.abort();
   },[floor,retry]);
+  const focus=ground?.focus,side=ground?.side??8;
+  useEffect(()=>{
+    if(!focus)return;
+    const points=focus.cells.filter(p=>p[2]===focus.floor);
+    setFloor(focus.floor);
+    if(!points.length){setCamera(null);return;}
+    let left=Infinity,right=-Infinity,top=Infinity,bottom=-Infinity;
+    for(const [x,y] of points){left=Math.min(left,x);right=Math.max(right,x+side);top=Math.min(top,y);bottom=Math.max(bottom,y+side);}
+    setCamera({x:left-side,y:top-side,width:right-left+2*side,height:bottom-top+2*side});
+  },[focus,side]);
   const bounds=useMemo(()=>{
     if(!result?.sectors.length)return null;
     let x=Infinity,y=Infinity,right=-Infinity,bottom=-Infinity;
@@ -55,18 +67,22 @@ export default memo(function WorldMap({initialFloor,onOpen}:{initialFloor:number
   function release(e:ReactPointerEvent<SVGSVGElement>){
     if(!drag.current)return;
     const p=point(e.clientX,e.clientY);
-    if(p&&!drag.current.moved&&p.x>=0&&p.x<65536&&p.y>=0&&p.y<65536)select([Math.floor(p.x),Math.floor(p.y),floor]);
+    if(p&&!drag.current.moved&&p.x>=0&&p.x<65535&&p.y>=0&&p.y<65535){
+      const pos:Position=[Math.floor(p.x),Math.floor(p.y),floor];
+      if(ground?.editing)ground.toggle(pos);else select(pos);
+    }
     drag.current=null;
   }
   return <section className="world-atlas">
     <div className="world-atlas-tools">
-      <label>Piętro <select value={floor} onChange={e=>setFloor(Number(e.target.value))}>{Array.from({length:16},(_,z)=><option key={z}>{z}</option>)}</select></label>
+      {toolbar}
+      <label>Piętro <select value={floor} onChange={e=>{setFloor(Number(e.target.value));if(!ground)setCamera(null);}}>{Array.from({length:16},(_,z)=><option key={z}>{z}</option>)}</select></label>
       <label><input type="checkbox" checked={overlay} onChange={e=>setOverlay(e.target.checked)}/> Pola zbadane przez atlas</label>
       <label><input type="checkbox" checked={grid} onChange={e=>setGrid(e.target.checked)}/> Siatka 64 × 64</label>
       <button disabled={!view} aria-label="Przybliż mapę świata" onClick={()=>zoom(.5)}>+</button>
       <button disabled={!view} aria-label="Oddal mapę świata" onClick={()=>zoom(2)}>−</button>
       <button disabled={!camera} onClick={()=>setCamera(null)}>Całe piętro</button>
-      {selection&&<button onClick={()=>onOpen(selection)}>Otwórz pole ({selection.join(", ")})</button>}
+      {selection&&!ground?.editing&&<button onClick={()=>onOpen(selection)}>Otwórz pole ({selection.join(", ")})</button>}
     </div>
     {error?<div role="status">{error} <button onClick={()=>setRetry(v=>v+1)}>Ponów</button></div>
       :!result?<p role="status">Wczytywanie minimapy…</p>:!view?<p>Brak zapisanych pól na tym piętrze.</p>:
@@ -82,6 +98,10 @@ export default memo(function WorldMap({initialFloor,onOpen}:{initialFloor:number
       <defs><pattern id="world-sector-grid" x={0} y={0} width={64} height={64} patternUnits="userSpaceOnUse">
         <path d="M64 0H0V64" fill="none" stroke="white" strokeOpacity={.55} vectorEffect="non-scaling-stroke"/></pattern></defs>
       <Sectors sectors={result.sectors} overlay={overlay}/>
+      {ground&&<g fill="#ffbc61" fillOpacity=".31" stroke="#ffd497" strokeWidth=".2">{ground.cells.filter(p=>p[2]===floor).map(([x,y])=>
+        <rect key={x+','+y} x={x} y={y} width={side} height={side}/>)}</g>}
+      {ground&&<g>{ground.marks.filter(m=>m.cell[2]===floor).map(m=>
+        <circle key={m.cell.join(',')} cx={m.cell[0]+side/2} cy={m.cell[1]+side/2} r={side/4} fill="#eee6ff" stroke="#4f2872" strokeWidth=".6"><title>{m.title}</title></circle>)}</g>}
       {grid&&<rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#world-sector-grid)"/>}
       {selection&&<circle cx={selection[0]+.5} cy={selection[1]+.5} r={Math.max(.8,view.width/190)} fill="none" stroke="white" strokeWidth={2} vectorEffect="non-scaling-stroke"/>}
     </svg>}
