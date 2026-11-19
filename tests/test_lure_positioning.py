@@ -63,7 +63,8 @@ def test_side_step_rechecks_live_tile_and_returns_to_route_after_fight(state, tm
         assert await c.combat.tick(c.map_now()) and c.combat.phase == 'return'
         assert await c.step(c.combat.movement_intent['target'])
         assert not await c.combat.tick(c.map_now())
-        assert state.game_state.position == tuple(ROUTE[0]) and c.path == ROUTE and len(moves) == 2
+        assert state.game_state.position == tuple(ROUTE[1]) and c.path == ROUTE and len(moves) == 2
+        assert c.recover_local(c.map_now()) and c.index == 1
     asyncio.run(scenario())
 
 

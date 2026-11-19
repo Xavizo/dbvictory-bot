@@ -26,7 +26,7 @@ function drawHistory(releases) {
   lastNotes=key;
   const list=$("#changes"), history=$("#releases");
   list.replaceChildren();history.replaceChildren();
-  for (const item of releases.flatMap(release=>release.changes).slice(0,3)) {
+  for (const item of releases.flatMap(release=>release.changes).slice(0,7)) {
     const li=document.createElement("li"), orb=document.createElement("span"), summary=document.createElement("span");
     orb.className="orb";orb.setAttribute("aria-hidden","true");
     for (const [x,y] of layouts[list.childElementCount]) {

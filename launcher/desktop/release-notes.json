@@ -1,20 +1,29 @@
 [
   {
+    "version": "v1.6.1",
+    "changes": [
+      {"title":"Cavebot wraca na trasę po odblokowaniu pola","detail":"Gdy mob blokuje drogę, Cavebot skupia na nim walkę. Obsługuje też obejścia wracające na tę samą kratkę i spóźnione potwierdzenia przejścia. Po walce może dołączyć do następnego zwykłego pola bez cofania do miejsca postoju."},
+      {"title":"Więcej miejsca dla mobów przy postoju","detail":"Przy celu ośmiu mobów Cavebot porównuje dostęp grupy i wolne pola wokół postaci. Przy wyborze miejsca uwzględnia też moby stojące dwa kroki dalej za pierwszym przeciwnikiem. Licznik grupy nadal pokazuje potwierdzone kontakty."},
+      {"title":"Więcej miejsca na trasie między waypointami","detail":"Wśród lokalnych wariantów krótkiego odcinka Cavebot preferuje pola oddalone od przeszkód. Zachowuje waypointy i jawne przejścia."},
+      {"title":"Siedem ostatnich zmian w launcherze","detail":"Na ekranie startowym mieści się siedem krótkich wpisów. Pełne opisy nadal znajdziesz pod przyciskiem Więcej."}
+    ]
+  },
+  {
     "version": "v1.6.0",
     "changes": [
-      {"title":"Walka w sali przed wąskim korytarzem","detail":"Gdy grupa osiągnie połowę celu (minimum dwa moby), Cavebot może zatrzymać się jeszcze w sali. Sprawdza szerokość drogi, dojście dla grupy i widoczne cele przed postacią."}
+      {"title":"Cavebot dobija grupę przed wąskim korytarzem","detail":"Gdy grupa osiągnie połowę celu (minimum dwa moby), Cavebot może zatrzymać się jeszcze w sali. Sprawdza szerokość drogi, dojście dla grupy i widoczne cele przed postacią."}
     ]
   },
   {
     "version": "v1.5.3",
     "changes": [
-      {"title":"Pajęczyna 182 w atlasie i na trasie","detail":"Oba potwierdzone warianty, 182 i 183, można przeciąć AiO. Atlas rozpoznaje również wcześniej zapisane pola z tymi przedmiotami."}
+      {"title":"AiO przecina oba rodzaje pajęczyn","detail":"Oba potwierdzone warianty, 182 i 183, można przeciąć AiO. Atlas rozpoznaje również wcześniej zapisane pola z tymi przedmiotami."}
     ]
   },
   {
     "version": "v1.5.2",
     "changes": [
-      {"title":"Start czeka na wybór postaci","detail":"Pierwszy klik otwiera zamkniętego klienta. Gdy zobaczysz listę postaci, kliknij Start ponownie. Jeśli lista była już otwarta przy uruchomieniu launchera, wystarczy jeden klik."}
+      {"title":"Start działa przy otwartej liście postaci","detail":"Pierwszy klik otwiera zamkniętego klienta. Gdy zobaczysz listę postaci, kliknij Start ponownie. Jeśli lista była już otwarta przy uruchomieniu launchera, wystarczy jeden klik."}
     ]
   },
   {

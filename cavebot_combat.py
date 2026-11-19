@@ -2,8 +2,9 @@
 import math
 import re
 import time
-from cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker, gap, group_needs_time, melee_capacity,
-                          lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches)
+from cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker, better_pack_tile, gap, group_needs_time, melee_capacity, open_sides,
+                          lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches,
+                          walking_distances)
 from combat_reachability import reachable_tiles
 from combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
 from combat_wave import facing
@@ -119,7 +120,7 @@ class CombatRuntime:
         self.phase='route';self.lure_started=None;self.battle_started=None;self.progress_at=0;self.last_health=None
         self.pursuit=PursuitTracker();self.lure_waiting=False;self.lure_stop_reason=None
         self.placement_checked=False;self.placement=None;self.placement_group=set()
-        self.pack_positions=[];self.pack_review_at=0;self.pack_members={};self.pack_queue_step=None;self.pack_destination=None
+        self.pack_positions=[];self.pack_review_at=0;self.pack_members={};self.pack_prospects=set();self.pack_queue_step=None;self.pack_destination=None
         self.anchor=None;self.deadlines={};self.cast_after=0;self.manual_override=False;self.policy_mode=None
         self.spell_checks=[];self.last_spell_attempt=None
         self.wave_turn=None;self.manual_target=0;self.manual_target_at=0
@@ -141,7 +142,7 @@ class CombatRuntime:
         self.blocker_id=0;self.blocker_since=None;self.group_clear_since=None
         self.confirmed_count=0
         self.placement_checked=False;self.placement=None;self.placement_group.clear()
-        self.pack_positions.clear();self.pack_review_at=0;self.pack_members.clear();self.pack_queue_step=None;self.pack_destination=None
+        self.pack_positions.clear();self.pack_review_at=0;self.pack_members.clear();self.pack_prospects.clear();self.pack_queue_step=None;self.pack_destination=None
 
     def positioning_step(self,origin,target):
         if not self.placement:return False
@@ -156,7 +157,7 @@ class CombatRuntime:
         return limit if self.config['engage']=='visible' else min(limit, self.config['radius'])
 
     def placement_target(self, sample, targets, physical, boundary):
-        if not self.placement or boundary or self.manual_target:
+        if not self.placement or boundary or self.manual_target or self.blocking_target(targets,sample):
             return None
         start, path, expires = self.placement
         index = self.owner.index - start
@@ -180,10 +181,15 @@ class CombatRuntime:
         dest = self.pack_destination
         if dest is None:
             return None if waiting else target
-        terrain,vacant = placement_terrain(sample['cells'], origin, self.owner.edges, members)
-        terrain.difference_update(tuple(c['position']) for c in targets if c['id'] not in self.placement_group)
-        if (dest not in vacant or dest not in terrain or not members <= terrain or
-                melee_capacity(terrain,dest,members) <= melee_capacity(terrain,origin,members)):
+        other = {point for point,_ in physical if point not in members}
+        other.update(tuple(c['position']) for c in targets if c['id'] not in self.placement_group)
+        space,vacant = placement_terrain(sample['cells'], origin, self.owner.edges, members|other)
+        terrain = space - other
+        if dest not in vacant or dest not in terrain or not members <= terrain:
+            return None
+        if not better_pack_tile(melee_capacity(terrain,origin,members), open_sides(space,origin),
+                                melee_capacity(terrain,dest,members), open_sides(space,dest),
+                                1 if dest == target else 2):
             return None
         if waiting and (self.pack_queue_step != (origin,target)
                         or not queued_pack_step(terrain,origin,target,members,self.pacing_limit)):
@@ -221,7 +227,7 @@ class CombatRuntime:
             return
         self.pack_review_at = now + .4
         members = {c['id']:tuple(c['position']) for c in candidates if c['id'] in engaged}
-        missing = self.placement_group - members.keys()
+        missing = self.placement_group - self.pack_prospects - members.keys()
         if missing:
             gs=o.state.game_state
             missing={cid for cid in missing if gs.creatures.get(cid,{}).get('health') != 0}
@@ -233,9 +239,22 @@ class CombatRuntime:
             if missing:
                 # A missing follower may still be catching up behind the group.
                 return
+        # The front monster can hide the rest of a queue from the pursuit
+        # counter. Reserve fighting space for eligible monsters two steps
+        # away without counting them as followers or exceeding the group limit.
+        nearby = {c['id']:tuple(c['position']) for c in candidates if c['id'] not in engaged
+                  and c['distance']==2 and target_policy(self.config,c)['mode']=='lure'}
+        self.pack_prospects.clear()
+        if members and nearby and len(members)<self.config['lure_count']:
+            terrain,_ = placement_terrain(sample['cells'],here,o.edges,set(members.values())|set(nearby.values()))
+            distances = walking_distances(terrain,here)
+            nearby = {cid:p for cid,p in nearby.items() if distances.get(p)==2}
+            if len(members)+len(nearby)<=self.config['lure_count']:
+                self.pack_prospects.update(nearby)
+                members.update(nearby)
         self.placement_group=set(members)
         positions = set(members.values())
-        other = {tuple(c['position']) for c in candidates if c['id'] not in engaged}
+        other = {tuple(c['position']) for c in candidates if c['id'] not in members}
         other.update(point for point,_ in physical if point not in positions)
         route = [pos, *o.path[o.index+1:o.index+4]]
         path = lure_stopping_path(sample['cells'],route,o.edges,positions,other,self.pacing_limit,
@@ -312,6 +331,7 @@ class CombatRuntime:
         if mode!='lure':return not targets
         physical=self.visible_group(sample,targets)
         following=self.refresh_lure_limit(targets,physical,boundary,sample)
+        if self.blocking_target(targets,sample):return False
         if self.lure_stop_reason or self.battle_started:
             return self.allow_positioning(sample,targets,physical,boundary)
         if self.engaged_count>=self.config['lure_count'] or (boundary and physical):return False
@@ -479,6 +499,13 @@ class CombatRuntime:
                     o.reason='Potwierdzam koniec walki przed dalszą trasą.'
                     await asyncio.sleep(.05);return True
         if current is None:
+            # A single sidestep during a lure need not be undone when we can
+            # safely join the very next ordinary route tile from here.
+            if (not o.combat_only and self.policy_mode == 'lure' and o.path
+                    and self.anchor == o.path[o.index] and pos != self.anchor):
+                next_tile = o.next_ordinary_tile(sample)
+                if next_tile and distance(pos,next_tile) <= 1 and tuple(next_tile) not in o.blocked:
+                    self.anchor = next_tile
             self.spell_checks=evaluate_spells(cfg['spells'],o.state.game_state,candidates,None,now,self.deadlines,self.cast_after,sample)
             await self.cancel_attack();self.target=None;self.phase='route';self.reset_lure();self.battle_started=None;self.last_health=None;self.policy_mode=None
             # Local recovery/route progression already placed us on the current
@@ -527,9 +554,9 @@ class CombatRuntime:
                     self.lure_stop_reason='timeout'
                 luring=self.lure_stop_reason is None and allow_movement
             if self.lure_stop_reason and cfg['lure_count']>=8:
-                can_move = (allow_movement and self.lure_stop_reason in {'group','timeout'} and not at_transition
+                can_move = (allow_movement and self.lure_stop_reason in {'group','timeout','corridor'} and not at_transition
                             and not self.manual_target and self.engaged_count==len(engaged)<=cfg['lure_count']
-                            and (not blocker or blocker['id'] in engaged))
+                            and not blocker)
                 self.review_pack_position(sample,candidates,physical,engaged,pos,now,can_move)
             elif self.lure_stop_reason and not self.placement_checked:
                 self.placement_checked=True
@@ -543,8 +570,6 @@ class CombatRuntime:
                     if route:
                         self.placement=(o.index,route,now+2)
                         self.placement_group=set(engaged)
-        if blocker and self.lure_stop_reason:
-            blocker=None;self.blocker_id=0;self.blocker_since=None
         self.lure_waiting=False
         if not luring and not blocker and self.battle_started is None and (mode!='lure' or self.lure_stop_reason):
             self.battle_started=now;self.progress_at=now

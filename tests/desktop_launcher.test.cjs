@@ -32,6 +32,36 @@ test("client detection requires a window in the selected installation", () => {
   assert.throws(() => windowPid([proc, {...proc, Id:8}], folder), {code:"MULTIPLE_CLIENTS"});
 });
 
+test("history preview shows seven titles across releases and keeps all details", async () => {
+  const desktop = path.resolve(__dirname,"../launcher/desktop");
+  class Element {
+    children = [];
+    style = {setProperty(){}};
+    append(...items){this.children.push(...items);}
+    replaceChildren(){this.children=[];}
+    get childElementCount(){return this.children.length;}
+    setAttribute(){}
+    addEventListener(){}
+  }
+  const nodes = new Map();
+  const document = {createElement:()=>new Element(),querySelector(selector){
+    if(!nodes.has(selector))nodes.set(selector,new Element());
+    return nodes.get(selector);
+  }};
+  const env = vm.createContext({document,window:{desktop:{onState(){},state:()=>({then(){}})}}});
+  for(const file of ["effects.js","render.js"])
+    vm.runInContext(await fs.readFile(path.join(desktop,file),"utf8"),env);
+  const releases = JSON.parse(await fs.readFile(path.join(desktop,"release-notes.json"),"utf8"));
+  env.drawHistory(releases);
+  const list=nodes.get("#changes");
+  assert.deepEqual(list.children.map(li=>li.children[1].textContent),
+    releases.flatMap(r=>r.changes).slice(0,7).map(c=>c.title));
+  assert.deepEqual(list.children.map(li=>li.children[0].childElementCount),[1,2,3,4,5,6,7]);
+  assert.equal(nodes.get("#releases").childElementCount,releases.length);
+  env.drawHistory([]);
+  assert.equal(list.childElementCount,0);
+});
+
 // Exercise the same Electron IPC handlers as the Start button, with no real
 // client, processes, user settings or timers.
 async function launcherWithClient(initialPid) {

@@ -95,7 +95,18 @@ def varied_detour(cells,start,end,reference,blocked=(),rng=None):
         dirs=[(q[0]-p[0],q[1]-p[1]) for p,q in zip(path,path[1:])]
         if sum(a!=b for a,b in zip(dirs,dirs[1:]))>3:continue
         if path not in options:options.append(path)
-    return rng.choice(options)
+    # Compare alternatives against the whole visible room, including the
+    # free space just outside the permitted band around the route.
+    terrain = {(c['x'],c['y'],c['z']) for c in cells if walkable(c)} - set(blocked)
+    def clearance_cost(path):
+        cost = len(path) - len(shortest)
+        for x,y,z in path[1:-1]:
+            free = sum((x+dx,y+dy,z) in terrain for dx,dy in OFFSETS)
+            cost += 8 - free
+        return cost
+    costs = [clearance_cost(path) for path in options]
+    best = min(costs)
+    return rng.choice([path for path,cost in zip(options,costs) if cost == best])
 
 
 def tool_location(snapshot,tool_ids):
@@ -563,12 +574,29 @@ class AdaptiveCavebot:
             return True
         return False
 
+    def next_ordinary_tile(self, sample):
+        if self.index+1 >= len(self.path):
+            return None
+        origin, target = self.path[self.index:self.index+2]
+        if distance(origin,target) != 1 or any(e[key] in (origin,target)
+                for e in self.edges for key in ('origin','entry','exit')):
+            return None
+        tile = next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
+        if not walkable(tile) or tile.get('navigation') or tile.get('stairs'):
+            return None
+        return target
+
     def recover_local(self,sample):
         """Rejoin the current ordinary leg; local contention waits without stopping combat."""
         if self.combat_only or self.status!='running':return False
         self.guard();pos=list(self.state.game_state.position);now=time.monotonic()
         expected=self.path[self.index]
         if distance(pos,expected)>6:raise ValueError('Recovery: poza lokalnym zasięgiem lub inne piętro — sprawdź drogę powrotną.')
+        if pos == self.next_ordinary_tile(sample):
+            self.index += 1
+            self.mark_waypoint()
+            self.save_session_cursor()
+            return True
         if now<self.recovery_next_at:return False
         self.recovery_next_at=now+.25
         if pos != expected and self.tolerate_waypoint(sample, recovering=True):
@@ -1006,6 +1034,15 @@ class AdaptiveCavebot:
             self.reason='Dojście do najbliższego osiągalnego waypointu.' if self.index<self.loop_start else 'Nawigacja po trasie.'
             sample=await self.fresh_map();pos=list(self.state.game_state.position)
             if self.navigation_hold:
+                if (self.index+1 < len(self.path) and self.path[self.index] != pos
+                        and self.path[self.index+1] == pos and sample.get('center') == pos
+                        and any(edge['origin'] == self.path[self.index] and edge['exit'] == pos
+                                for edge in self.edges)):
+                    # A late arrival is positive evidence. Accept the completed
+                    # transition without using the tool again or retracing it.
+                    self.retry_navigation()
+                    self.save_session_cursor()
+                    continue
                 self.domains.movement_state="held"
                 if self.status!='running' or not self.navigation_hold:continue
                 self.reason='Ruch wstrzymany: '+self.navigation_hold+' Walka aktywna.'
@@ -1099,7 +1136,9 @@ class AdaptiveCavebot:
                     for j in range(self.index+1,limit):
                         p=self.path[j]
                         if p[2]!=pos[2] or any(e['origin']==self.path[j-1] and e['exit']==p for e in self.edges):break
-                        if walkable(tiles.get(tuple(p))):candidates.append(j)
+                        # A route can revisit our current tile. It provides no next
+                        # step and cannot serve as a detour around the blocked tile.
+                        if p != pos and walkable(tiles.get(tuple(p))):candidates.append(j)
                     found=False
                     for j in reversed(candidates):
                         local=detour(sample['cells'],pos,self.path[j],self.blocked)

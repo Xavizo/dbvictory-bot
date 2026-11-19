@@ -82,7 +82,9 @@ body{padding:0;display:block;background:#0b1222}
 .cards{flex:0 0 auto}.glass{min-height:264px}.word{white-space:nowrap}
 .portrait{width:min(75%,880px)}#folderPath{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:13px Consolas,monospace}
 .actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}.actions .edit{flex:0 0 auto}.actions .primary{flex:1}
-.primary:disabled{opacity:.48;cursor:default}.hint{overflow-wrap:anywhere}.change-list li{padding:5px 0;min-height:37px}
+.primary:disabled{opacity:.48;cursor:default}.hint{overflow-wrap:anywhere}
+.change-list li{padding:3px 0;min-height:25px;gap:9px;font-size:12px;line-height:1.35}
+.change-list .orb{flex-basis:17px;height:17px}.change-list .star{width:4px;height:4px}
 .change-list .summary{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .bar.indeterminate .fill{width:37%;animation:progress-slide 1.6s ease-in-out infinite alternate}
 @keyframes progress-slide{from{transform:translateX(0)}to{transform:translateX(165%)}}
@@ -102,3 +104,4 @@ body{padding:0;display:block;background:#0b1222}
 #releases ul{list-style:none;margin:0;padding:0}#releases li+li{margin-top:10px}
 #releases strong{font-size:14px}#releases p{margin:3px 0 0;font-size:13px;line-height:1.5;color:#b8c7d9}
 @media(max-width:720px){.cards{grid-template-columns:1fr 1fr}.hero{padding-left:24px}.glass{min-height:245px}}
+@media(max-height:550px){.hero{min-height:80px;height:18vh;flex:1 1 auto}.glass{padding:12px 14px}}

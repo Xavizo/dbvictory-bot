@@ -34,6 +34,14 @@ def test_variation_preserves_next_waypoint_and_does_not_skip_transition(state,tm
     assert [20,10,7] in c.path and [23,10,7]==c.path[-1]
     path=[v[:] for v in c.path];assert not c.vary_leg(c.map_now());assert c.path==path
 
+def test_clearance_favors_room_over_the_edge_of_a_wall():
+    cells=[cell(x,y) for x in range(10,21) for y in range(10,16)]
+    ref=[[x,10,7] for x in range(11,20)]
+    for seed in range(10):
+        route=varied_detour(cells,ref[0],ref[-1],ref,rng=random.Random(seed))
+        assert any(p[1]>10 for p in route[1:-1])
+        assert len(route)<=len(ref)+2
+
 def test_blockage_distinguishes_unacknowledged_clear_cell_and_occupant(state,tmp_path):
     c,cells,_=setup(state,tmp_path);target=[11,10,7];c.status='running'
     c.blocked[tuple(target)]=time.monotonic()+1;c.describe_blockage(c.map_now(),target)

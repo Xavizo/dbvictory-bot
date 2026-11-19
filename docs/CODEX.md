@@ -18,7 +18,9 @@ Argument `--check` otwiera okno wyłącznie do sprawdzenia wersji.
 
 Przy wydaniu dopisz na początku `launcher/desktop/release-notes.json` numer
 wersji i zmiany widoczne dla użytkownika. Każda zmiana ma krótki tytuł
-(`title`) i opis (`detail`). Launcher wyświetla trzy najnowsze tytuły dla
+(`title`) i opis (`detail`). W tytule nazwij działanie i jego widoczny efekt,
+np. „Cavebot dobija grupę przed korytarzem”. Szczegóły techniczne podaj w opisie.
+Launcher wyświetla siedem najnowszych tytułów dla
 zainstalowanej wersji i wcześniejszych wydań. **Więcej** otwiera pełne opisy
 w tym samym oknie. Historia jest częścią lokalnego pakietu.
 

@@ -8,7 +8,7 @@ import time
 import pytest
 
 import cavebot_combat
-from cavebot_lure import queued_pack_step
+from cavebot_lure import lure_stopping_path, open_sides, queued_pack_step
 from test_adaptive_cavebot import cell, connect_fake_walk
 from test_automation_safety import state
 from test_v2_combat import armed, monster
@@ -134,6 +134,54 @@ def test_rear_with_free_approach_keeps_its_spacing():
     assert queued_pack_step(area,origin,target,pack,3)
     # The rear can now catch up on its own. Do not stretch it one more tile.
     assert not queued_pack_step(area|room(0,5,-1,0),origin,target,pack,3)
+
+
+def test_partial_pack_can_gain_an_eighth_side_in_one_step():
+    here = (25,20,7)
+    terrain = OPEN - {(25,19,7)}
+    pack = {(24,20,7),(24,19,7),(26,20,7),(26,19,7)}
+    cells = [cell(*p) for p in terrain]
+    route = [here,(25,21,7),(25,22,7)]
+    path = lure_stopping_path(cells,route,[],pack,[],goal=8)
+    assert len(path) == 2 and open_sides(terrain,here) == 7
+    assert open_sides(terrain,path[-1]) == 8
+    assert not lure_stopping_path(cells,[path[-1],route[-1]],[],pack,[],goal=8)
+
+
+def test_pack_fights_the_route_blocker_before_repositioning(state,tmp_path):
+    c,cells=armed(state,tmp_path,mode="lure",lure_count=8,engage="visible")
+    pos=(25,20,7)
+    state.game_state.position=pos
+    cells[:]=[cell(*p) for p in OPEN if p!=(25,19,7)]
+    c.path=[list(pos),[25,21,7],[25,22,7]]
+    c.status="running"
+    blocker,_,_=monster(state,cells,x=25,y=21)
+    monster(state,cells,x=24,y=20,cid=blocker+1)
+    c.combat.policy_mode="lure"
+    c.combat.latch_lure("group")
+    c.combat.defer_movement=True
+    assert asyncio.run(c.combat.tick(c.map_now()))
+    assert c.combat.phase=="clear_path" and c.combat.sent_target==blocker
+    assert c.combat.movement_intent is None and not c.combat.route_step_allowed()
+
+
+def test_queue_at_room_mouth_can_use_a_free_side_without_inflating_group(state,tmp_path):
+    c,cells=armed(state,tmp_path,mode="lure",lure_count=8,engage="visible")
+    floor=("####.#.", "####...", "##.....", ".....##", "##.####")
+    cells[:]=[cell(10+x,10+y) for y,line in enumerate(floor) for x,t in enumerate(line) if t=='.']
+    origin=(12,13,7)
+    state.game_state.position=origin
+    c.path=[list(origin),[11,13,7],[10,13,7]]
+    c.status="running"
+    for i,(x,y) in enumerate([(13,13),(14,11),(14,12)]):
+        monster(state,cells,x=x,y=y,cid=0x40000001+i)
+    c.combat.policy_mode="lure"
+    c.combat.lure_started=time.monotonic()-c.combat.config['lure_seconds']-.1
+    c.combat.defer_movement=True
+    assert asyncio.run(c.combat.tick(c.map_now()))
+    assert c.combat.confirmed_count==1
+    intent=c.combat.movement_intent
+    assert intent and intent['validate']() and intent['target']==[13,12,7]
 
 
 def test_full_pack_correction_is_cancelled_when_destination_changes(state,tmp_path):

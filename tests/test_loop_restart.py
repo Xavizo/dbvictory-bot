@@ -1,6 +1,48 @@
 import asyncio
+from types import SimpleNamespace
 from test_adaptive_cavebot import cell, setup, connect_fake_walk
 from test_automation_safety import state
+
+
+def test_blocked_route_that_revisits_current_tile_waits_then_resumes(state,tmp_path):
+    c,cells,_=setup(state,tmp_path)
+    a,b=[10,10,7],[11,10,7]
+    c.path=[a,b,a];c.checkpoints=[dict(index=2,waypoint=1)]
+    # Only the player and their next step exist in this cul-de-sac.
+    cells[:]=[t for t in cells if [t['x'],t['y'],t['z']] in (a,b)]
+    target=next(t for t in cells if t['x']==11)
+    target.update(occupants=1,occupant_types={'monster':1})
+    sent=connect_fake_walk(state,c)
+    async def scenario():
+        run=asyncio.create_task(c.run())
+        async with asyncio.timeout(5):
+            while not c.blockage and not run.done():await asyncio.sleep(.01)
+            assert c.blockage and not sent and not c.navigation_hold
+            target.update(occupants=0,occupant_types={})
+            await run
+    asyncio.run(scenario())
+    assert c.laps==1 and c.status=='complete' and len(sent)==2
+
+
+def test_late_observed_exit_resumes_held_transition_without_another_use(state,tmp_path):
+    c,_,_=setup(state,tmp_path)
+    start,exit_tile=[10,10,7],[10,10,8]
+    c.path=[start,exit_tile]
+    c.edges=[dict(origin=start,entry=start,exit=exit_tile)]
+    c.domains=SimpleNamespace(movement_state="running")
+    c.status="running"
+    c.navigation_hold="Oczekiwanie na wyjście"
+    async def observe():
+        while c.domains.movement_state!="held":await asyncio.sleep(.01)
+        assert c.index==0 and c.navigation_hold
+        state.game_state.position=tuple(exit_tile)
+    def saved():
+        assert c.index==1 and c.navigation_hold is None
+        c.status="complete"
+    c.save_session_cursor=saved
+    async def scenario():
+        await asyncio.wait_for(asyncio.gather(c._navigation_loop(),observe()),2)
+    asyncio.run(scenario())
 
 
 def test_replace_offscreen_step_keeps_waypoint_and_validates_live_hops(state,tmp_path):

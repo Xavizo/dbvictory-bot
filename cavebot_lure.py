@@ -100,10 +100,26 @@ def queued_pack_step(terrain, origin, target, group, max_lead):
     return melee_capacity(terrain,target,group) > melee_capacity(terrain,origin,group)
 
 
-def pack_stopping_path(terrain, vacant, route, group, other, max_lead, remaining, visited, allow_queue_step):
+def open_sides(terrain, center):
+    x, y, z = center
+    return sum((x+dx, y+dy, z) in terrain for dx,dy in NEIGHBORS)
+
+
+def better_pack_tile(current_capacity, current_sides, capacity, sides, steps):
+    # If the same number can approach either tile, only a single step
+    # may be spent gaining more space around the player.
+    return sides >= current_sides and (capacity > current_capacity or (
+        steps == 1 and capacity == current_capacity and sides > current_sides))
+
+
+def pack_stopping_path(space, vacant, route, group, other, max_lead, remaining, visited, allow_queue_step):
     origin = tuple(route[0])
+    terrain = space - other
     current = melee_capacity(terrain, origin, group)
-    if current >= min(8, len(group)) or not remaining:
+    # A monster occupies a tile now, but does not turn it into a permanent wall.
+    current_sides = open_sides(space, origin)
+    all_fit = current >= min(8, len(group))
+    if not remaining or (all_fit and current_sides == 8):
         return ()
     distances = [walking_distances(terrain, p) for p in sorted(group)]
     if any(origin not in d for d in distances):
@@ -129,12 +145,13 @@ def pack_stopping_path(terrain, vacant, route, group, other, max_lead, remaining
             if capacity < current:
                 continue
             steps = len(path)
-            if capacity > current:
-                rank = (capacity, -steps, sum(gap(p,m)<=1 for m in group), p in route_prefix,
+            sides = open_sides(space, p)
+            if better_pack_tile(current, current_sides, capacity, sides, steps):
+                rank = (capacity, sides, -steps, sum(gap(p,m)<=1 for m in group), p in route_prefix,
                         -sum(d[p] for d in distances))
                 if rank > best_rank:
                     best_rank, chosen = rank, (*path,p)
-            if steps < remaining and not stretches:
+            if steps < remaining and not stretches and not all_fit:
                 queue.append((*path,p))
     return chosen
 
@@ -146,15 +163,14 @@ def lure_stopping_path(cells, route, edges, group, other_monsters, max_lead=3, *
         return ()
     origin = tuple(route[0])
     group = set(map(tuple, group))
-    if all(gap(origin, p) <= 1 for p in group):
+    if (goal is None or goal < 8) and all(gap(origin, p) <= 1 for p in group):
         return ()
-    terrain, vacant = placement_terrain(cells, origin, edges, group)
     other_monsters = set(map(tuple, other_monsters))
-    if goal is not None and goal >= 8:
-        terrain.difference_update(other_monsters)
+    full_pack = goal is not None and goal >= 8
+    terrain, vacant = placement_terrain(cells, origin, edges, group | other_monsters if full_pack else group)
     if not group <= terrain or origin not in terrain:
         return ()
-    if goal is not None and goal >= 8:
+    if full_pack:
         return pack_stopping_path(terrain, vacant, route, group, other_monsters, max_lead, remaining, visited, allow_queue_step)
 
     def access_score(center):
