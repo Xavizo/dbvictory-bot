@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.5.2",
+    "changes": [
+      {"title":"Start czeka na wybór postaci","detail":"Pierwszy klik otwiera zamkniętego klienta. Gdy zobaczysz listę postaci, kliknij Start ponownie. Jeśli lista była już otwarta przy uruchomieniu launchera, wystarczy jeden klik."}
+    ]
+  },
+  {
     "version": "v1.5.1",
     "changes": [
       {"title":"Lepsze ustawienie przy lurowaniu ośmiu mobów","detail":"Cavebot sprawdza, ile mobów może stanąć obok postaci. Gdy układ grupy się zmienia, może poprawić pozycję maksymalnie trzema lokalnymi krokami w jednej walce."}

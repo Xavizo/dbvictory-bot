@@ -34,12 +34,19 @@ function stopMonitor() {
 }
 async function clientInfo(folder) {
   const exe = await host.clientExe(folder);
-  let open = false;
+  let windowPid = null;
   if (exe) {
     const list = await host.clients().catch(()=>[]);
-    open = list.some(p=>p.HasWindow && p.Path && path.dirname(p.Path).toLowerCase()===path.resolve(folder).toLowerCase());
+    const match = list.find(p=>p.HasWindow && p.Path && path.dirname(p.Path).toLowerCase()===path.resolve(folder).toLowerCase());
+    windowPid = match?.Id || null;
   }
-  return {folder,installed:!!exe,clientOpen:open};
+  return {folder,installed:!!exe,clientOpen:!!windowPid,windowPid};
+}
+function showStart(info={}) {
+  const text = (info.clientOpen ?? view.clientOpen)
+    ? "Na liście postaci kliknij Start. Wejdź na postać po otwarciu panelu bota."
+    : "Kliknij Start, aby otworzyć klienta DBVictory.";
+  set("ready",text,info);
 }
 async function check(defer) {
   set("checking","Sprawdzanie lokalnej kolejki wydań…");
@@ -112,7 +119,7 @@ async function preparePrompt() {
     if (child!==proc) return;
     if (line.includes("Naciśnij Enter, gdy postać jest wylogowana")) {
       awaitingStart=true;clearTimeout(deadline);
-      set("ready","Kliknij Start, gdy postać jest wylogowana.");
+      showStart();
     } else if (line.startsWith("GOTOWE")) {
       checkingPanel=true;set("panel","Silnik gotowy. Oczekiwanie na główne okno…");
     } else if (line.startsWith("BŁĄD:")||line.startsWith("Błąd launchera:")) {
@@ -142,9 +149,14 @@ async function findOrLaunchClient(proc) {
   const current = () => !quitting && proc === child && awaitingStart;
   set("detecting","Wykrywanie klienta DBVictory…");
   const existing = await host.openWindowPid(folder);
-  if (!current() || existing) return existing;
+  if (!current()) return null;
+  if (existing && existing === view.windowPid) return existing;
+  if (existing) {
+    showStart({clientOpen:true,windowPid:existing});
+    return null;
+  }
 
-  set("detecting","Uruchamianie klienta DBVictory…");
+  set("detecting","Uruchamianie klienta DBVictory…",{clientOpen:false,windowPid:null});
   await host.openClient(folder);
   if (!current()) return null;
 
@@ -152,7 +164,11 @@ async function findOrLaunchClient(proc) {
   const until = performance.now() + 60000;
   while (current()) {
     const pid = await host.openWindowPid(folder);
-    if (pid) return pid;
+    if (!current()) return null;
+    if (pid) {
+      showStart({clientOpen:true,windowPid:pid});
+      return null;
+    }
     const remaining = until - performance.now();
     if (remaining <= 0) throw new Error("Okno DBVictory nie pojawiło się w ciągu minuty. Po aktualizacji klienta możesz ponowić próbę.");
     await delay(Math.min(750, remaining));
@@ -189,7 +205,7 @@ async function action(name) {
       if (!info.installed) {set("ready","W tym katalogu brakuje dbvStart.exe lub dbvStart_gl.exe.");return;}
       await fs.mkdir(path.dirname(settings),{recursive:true});
       await fs.writeFile(settings+".tmp",JSON.stringify({folder:info.folder}));await fs.rename(settings+".tmp",settings);
-      set("ready","Zapisano lokalizację klienta.",info);
+      showStart(info);
     }
   } catch (e) {
     if (awaitingStart) set("clientError",e.message,{failedStep:"client"});
