@@ -2,7 +2,8 @@
 import math
 import re
 import time
-from cavebot_lure import PursuitTracker,gap,group_needs_time,route_approaches,lure_stopping_path
+from cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker, gap, group_needs_time, melee_capacity,
+                          lure_stopping_path, placement_terrain, queued_pack_step, route_approaches)
 from combat_reachability import reachable_tiles
 from combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
 from combat_wave import facing
@@ -118,6 +119,7 @@ class CombatRuntime:
         self.phase='route';self.lure_started=None;self.battle_started=None;self.progress_at=0;self.last_health=None
         self.pursuit=PursuitTracker();self.lure_waiting=False;self.lure_stop_reason=None
         self.placement_checked=False;self.placement=None;self.placement_group=set()
+        self.pack_positions=[];self.pack_review_at=0;self.pack_members={};self.pack_queue_step=None;self.pack_destination=None
         self.anchor=None;self.deadlines={};self.cast_after=0;self.manual_override=False;self.policy_mode=None
         self.spell_checks=[];self.last_spell_attempt=None
         self.wave_turn=None;self.manual_target=0;self.manual_target_at=0
@@ -139,6 +141,7 @@ class CombatRuntime:
         self.blocker_id=0;self.blocker_since=None;self.group_clear_since=None
         self.confirmed_count=0
         self.placement_checked=False;self.placement=None;self.placement_group.clear()
+        self.pack_positions.clear();self.pack_review_at=0;self.pack_members.clear();self.pack_queue_step=None;self.pack_destination=None
 
     def positioning_step(self,origin,target):
         if not self.placement:return False
@@ -165,19 +168,85 @@ class CombatRuntime:
         members = {tuple(c['position']) for c in targets if c['id'] in self.placement_group}
         if len(members) != len(self.placement_group):
             return None
+        if self.pack_members and any(tuple(c['position']) != self.pack_members[c['id']]
+                                    for c in targets if c['id'] in self.pack_members):
+            return None
         new_contact = any(point not in members and (dist<=1 or gap(target,point)<dist and gap(target,point)<=2)
                           for point,dist in physical)
-        if (planned.get('kind')=='clear' and not planned.get('occupants',0)
-                and not planned.get('navigation') and not planned.get('stairs')
-                and not new_contact and self.engaged_count<=self.config['lure_count']
-                and not group_needs_time(sample['cells'], origin, target, members, self.pacing_limit)):
-            return target
-        return None
+        if (planned.get('kind')!='clear' or planned.get('occupants',0) or planned.get('navigation')
+                or planned.get('stairs') or new_contact or self.engaged_count>self.config['lure_count']):
+            return None
+        waiting = group_needs_time(sample['cells'], origin, target, members, self.pacing_limit)
+        dest = self.pack_destination
+        if dest is None:
+            return None if waiting else target
+        terrain,vacant = placement_terrain(sample['cells'], origin, self.owner.edges, members)
+        terrain.difference_update(tuple(c['position']) for c in targets if c['id'] not in self.placement_group)
+        if (dest not in vacant or dest not in terrain or not members <= terrain or
+                melee_capacity(terrain,dest,members) <= melee_capacity(terrain,origin,members)):
+            return None
+        if waiting and (self.pack_queue_step != (origin,target)
+                        or not queued_pack_step(terrain,origin,target,members,self.pacing_limit)):
+            return None
+        return target
 
     def allow_positioning(self,sample,targets,physical,boundary):
         target = self.placement_target(sample,targets,physical,boundary)
         o = self.owner
         return bool(target and o.index+1 < len(o.path) and tuple(o.path[o.index+1]) == target)
+
+    def review_pack_position(self,sample,candidates,physical,engaged,pos,now,can_move):
+        """Replan a single acknowledged move at a time during this gathered pack."""
+        o = self.owner
+        here = tuple(pos)
+        if not self.pack_positions:
+            if not o.path or list(o.path[o.index]) != pos:
+                return
+            self.pack_positions.append(here)
+        elif here != self.pack_positions[-1]:
+            if here[2] != self.pack_positions[0][2] or gap(here,self.pack_positions[-1]) != 1 or here in self.pack_positions:
+                self.pack_review_at = float('inf')
+            if len(self.pack_positions) <= MAX_PLACEMENT_STEPS:
+                self.pack_positions.append(here)
+            self.placement = None
+        if not can_move:
+            self.placement = None
+            return
+        if self.placement:
+            if self.placement_target(sample,candidates,physical,False) is not None:
+                return
+            self.placement = None
+        remaining = MAX_PLACEMENT_STEPS + 1 - len(self.pack_positions)
+        if remaining <= 0 or now < self.pack_review_at:
+            return
+        self.pack_review_at = now + .4
+        members = {c['id']:tuple(c['position']) for c in candidates if c['id'] in engaged}
+        missing = self.placement_group - members.keys()
+        if missing:
+            gs=o.state.game_state
+            missing={cid for cid in missing if gs.creatures.get(cid,{}).get('health') != 0}
+            cutoff=time.time()-2
+            for death in reversed(gs.kill_log):
+                if not missing or death['t']<cutoff:
+                    break
+                missing.discard(death.get('cid'))
+            if missing:
+                # A missing follower may still be catching up behind the group.
+                return
+        self.placement_group=set(members)
+        positions = set(members.values())
+        other = {tuple(c['position']) for c in candidates if c['id'] not in engaged}
+        other.update(point for point,_ in physical if point not in positions)
+        route = [pos, *o.path[o.index+1:o.index+4]]
+        path = lure_stopping_path(sample['cells'],route,o.edges,positions,other,self.pacing_limit,
+                                  goal=self.config['lure_count'],remaining=remaining,visited=self.pack_positions,
+                                  allow_queue_step=self.pack_queue_step is None or self.pack_queue_step[0]==here)
+        if path:
+            if group_needs_time(sample['cells'],here,path[1],positions,self.pacing_limit):
+                self.pack_queue_step=(here,path[1])
+            self.placement = (o.index,path[:2],now+.6)
+            self.pack_destination = path[-1]
+            self.pack_members = members
 
     def gathering_wait(self, sample, targets, followers):
         o = self.owner
@@ -431,7 +500,12 @@ class CombatRuntime:
                 elif at_transition:self.lure_stop_reason='transition'
                 elif self.lure_started is not None and (self.blocker_since or now)-self.lure_started>=cfg['lure_seconds']:self.lure_stop_reason='timeout'
                 luring=self.lure_stop_reason is None and allow_movement
-            if self.lure_stop_reason and not self.placement_checked:
+            if self.lure_stop_reason and cfg['lure_count']>=8:
+                can_move = (allow_movement and self.lure_stop_reason in {'group','timeout'} and not at_transition
+                            and not self.manual_target and self.engaged_count==len(engaged)<=cfg['lure_count']
+                            and (not blocker or blocker['id'] in engaged))
+                self.review_pack_position(sample,candidates,physical,engaged,pos,now,can_move)
+            elif self.lure_stop_reason and not self.placement_checked:
                 self.placement_checked=True
                 if (self.lure_stop_reason in {'group','timeout'} and allow_movement and not at_transition
                         and not blocker and not self.manual_target and self.engaged_count==len(engaged)
@@ -516,8 +590,10 @@ class CombatRuntime:
             target = next_placement()
             if target is not None:
                 self.phase='positioning';o.reason='Podchodzę do miejsca z lepszym dostępem dla grupy.'
-                if o.index+1 < len(o.path) and target == tuple(o.path[o.index+1]):
+                if o.index+1 < len(o.path) and pos==o.path[o.index] and target == tuple(o.path[o.index+1]):
                     return False
+                if pos==o.path[o.index]:
+                    self.anchor=list(pos)
                 await self.request_step(list(target), validate=lambda: next_placement() == target)
                 return True
             self.placement=None

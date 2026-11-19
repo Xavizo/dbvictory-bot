@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.5.1",
+    "changes": [
+      {"title":"Lepsze ustawienie przy lurowaniu ośmiu mobów","detail":"Cavebot sprawdza, ile mobów może stanąć obok postaci. Gdy układ grupy się zmienia, może poprawić pozycję maksymalnie trzema lokalnymi krokami w jednej walce."}
+    ]
+  },
+  {
     "version": "v1.5.0",
     "changes": [
       {"title":"Pajęczyny na trasie","detail":"Atlas oznacza pajęczynę 183. Cavebot może ją ominąć lub przeciąć AiO i przejść po potwierdzeniu wolnego pola."}

@@ -391,6 +391,16 @@ members within reach. An already adjacent group stays in place. A side step
 keeps the waypoint cursor at the route anchor and uses the existing movement
 executor. After combat the controller returns to the anchor.
 
+For a configured group of eight or more, the controller estimates how many
+members can occupy distinct neighboring melee squares. Adjacent attackers hold
+their squares. Other followers can approach from their side of the room until
+their first contact. The player, solid obstacles and occupied non-group tiles
+block those approaches. Once gathering ends, the controller can spend up to
+three local steps in total, revisiting the decision between steps as the pack
+moves. It holds position if a move cannot improve access. A physically queued
+rear can permit one extra spacing step that immediately frees melee access.
+An unobstructed slower follower retains the configured pacing protection.
+
 The configured gathering time now starts with the first adjacent eligible monster
 or confirmed follower, rather than the first distant candidate. Group-capacity
 latching, blocked-path combat, room exits and the existing time limit remain.

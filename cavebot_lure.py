@@ -40,29 +40,122 @@ def group_needs_time(cells, position, next_point, members, limit):
                for member in members)
 
 
-def lure_stopping_path(cells, route, edges, group, other_monsters, max_lead=3):
-    """Compare a short route prefix with a single step into an adjacent room."""
+NEIGHBORS = ((0,1),(1,0),(0,-1),(-1,0),(1,1),(-1,1),(1,-1),(-1,-1))
+MAX_PLACEMENT_STEPS = 3
+
+
+def melee_capacity(terrain, center, group):
+    """Count distinct melee slots a pack can reach before its members stop in melee."""
+    x,y,z = center
+    ring = {(x+dx,y+dy,z) for dx,dy in NEIGHBORS} & terrain
+    pinned = ring & group
+    slots = ring - pinned
+    if not slots or group == pinned:
+        return len(pinned)
+    # A monster approaching from behind cannot walk through the player or
+    # through another melee slot where it would already have stopped to fight.
+    outside = terrain - ring - {center}
+    waiting = group - pinned
+    choices = []
+    while waiting:
+        start = min(waiting)
+        if start not in outside:
+            waiting.remove(start)
+            continue
+        component = walking_distances(outside, start).keys()
+        members = waiting.intersection(component)
+        accessible = [slot for slot in sorted(slots) if any(
+            (slot[0]+dx, slot[1]+dy, z) in component for dx,dy in NEIGHBORS)]
+        choices.extend([accessible] * min(len(members), len(accessible)))
+        waiting -= members
+    # Different sides of a doorway can compete for the same diagonal slot.
+    owners = {}
+    def assign(member, seen):
+        for slot in choices[member]:
+            if slot not in seen:
+                seen.add(slot)
+                if slot not in owners or assign(owners[slot], seen):
+                    owners[slot] = member
+                    return True
+        return False
+    for member in range(len(choices)):
+        assign(member, set())
+    return len(pinned) + len(owners)
+
+
+def queued_pack_step(terrain, origin, target, group, max_lead):
+    """One space-making step when the rear is physically queued behind the pack."""
+    before = walking_distances(terrain, origin)
+    after = walking_distances(terrain, target)
+    if any(m not in before or m not in after for m in group):
+        return False
+    lagging = [m for m in group if after[m] > max(max_lead,before[m])]
+    if not lagging or any(after[m] > max_lead+2 for m in lagging):
+        return False
+    for x,y,z in lagging:
+        for dx,dy in NEIGHBORS:
+            p = x+dx,y+dy,z
+            if p != origin and p not in group and before.get(p,float('inf')) < before[x,y,z]:
+                return False
+    return melee_capacity(terrain,target,group) > melee_capacity(terrain,origin,group)
+
+
+def pack_stopping_path(terrain, vacant, route, group, other, max_lead, remaining, visited, allow_queue_step):
+    origin = tuple(route[0])
+    current = melee_capacity(terrain, origin, group)
+    if current >= min(8, len(group)) or not remaining:
+        return ()
+    distances = [walking_distances(terrain, p) for p in sorted(group)]
+    if any(origin not in d for d in distances):
+        return ()
+    queue = deque([(origin,)])
+    seen = set(visited) | {origin}
+    best_rank, chosen = (), ()
+    route_prefix = set(map(tuple,route[1:]))
+    while queue:
+        path = queue.popleft()
+        x,y,z = path[-1]
+        for dx,dy in NEIGHBORS:
+            p = (x+dx,y+dy,z)
+            if p in seen or p not in vacant or p in group or p in other:
+                continue
+            stretches = any(d.get(p, float('inf')) > max(max_lead, d[path[-1]]) for d in distances)
+            if stretches and not (allow_queue_step and len(path)==1 and queued_pack_step(terrain,origin,p,group,max_lead)):
+                continue
+            if any(gap(p,m) <= 2 and gap(p,m) < gap(origin,m) for m in other):
+                continue
+            seen.add(p)
+            capacity = melee_capacity(terrain, p, group)
+            if capacity < current:
+                continue
+            steps = len(path)
+            if capacity > current:
+                rank = (capacity, -steps, sum(gap(p,m)<=1 for m in group), p in route_prefix,
+                        -sum(d[p] for d in distances))
+                if rank > best_rank:
+                    best_rank, chosen = rank, (*path,p)
+            if steps < remaining and not stretches:
+                queue.append((*path,p))
+    return chosen
+
+
+def lure_stopping_path(cells, route, edges, group, other_monsters, max_lead=3, *,
+                       goal=None, remaining=MAX_PLACEMENT_STEPS, visited=(), allow_queue_step=True):
+    """Choose a bounded local improvement for a gathered group on ordinary terrain."""
     if len(group) < 2 or len(route) < 2:
         return ()
     origin = tuple(route[0])
     group = set(map(tuple, group))
     if all(gap(origin, p) <= 1 for p in group):
         return ()
-    tiles = {(c['x'], c['y'], c['z']): c for c in cells}
-    protected = {tuple(e[k]) for e in edges for k in ('entry', 'origin', 'exit')}
-    terrain = set()
-    vacant = set()
-    for p, cell in tiles.items():
-        if (p[2] != origin[2] or cell.get('kind') != 'clear' or cell.get('stairs')
-                or cell.get('navigation') or p in protected):
-            continue
-        occupants = cell.get('occupants', 0) - cell.get('occupant_types', {}).get('self', 0)
-        if occupants == 0:
-            vacant.add(p)
-        if occupants == 0 or p in group and occupants == cell.get('occupant_types', {}).get('monster'):
-            terrain.add(p)
+    terrain, vacant = placement_terrain(cells, origin, edges, group)
+    other_monsters = set(map(tuple, other_monsters))
+    if goal is not None and goal >= 8:
+        terrain.difference_update(other_monsters)
     if not group <= terrain or origin not in terrain:
         return ()
+    if goal is not None and goal >= 8:
+        return pack_stopping_path(terrain, vacant, route, group, other_monsters, max_lead, remaining, visited, allow_queue_step)
 
     def access_score(center):
         # Evaluate the same known room with the player blocking the chosen tile.
@@ -79,7 +172,6 @@ def lure_stopping_path(cells, route, edges, group, other_monsters, max_lead=3):
     if current >= desired:
         return ()
     initial_distances = walking_distances(terrain, origin)
-    other_monsters = set(map(tuple, other_monsters))
 
     def safe_step(point):
         if point not in vacant or point in group or point in other_monsters:
@@ -117,6 +209,22 @@ def lure_stopping_path(cells, route, edges, group, other_monsters, max_lead=3):
         if rank > best:
             best, chosen = rank, candidate
     return chosen
+
+
+def placement_terrain(cells, origin, edges, group):
+    protected = {tuple(e[k]) for e in edges for k in ('entry','origin','exit')}
+    terrain, vacant = set(), set()
+    for cell in cells:
+        p = cell['x'],cell['y'],cell['z']
+        if (p[2] != origin[2] or cell.get('kind') != 'clear' or cell.get('stairs')
+                or cell.get('navigation') or p in protected):
+            continue
+        occupants = cell.get('occupants',0) - cell.get('occupant_types',{}).get('self',0)
+        if occupants == 0:
+            vacant.add(p)
+        if occupants == 0 or p in group and occupants == cell.get('occupant_types',{}).get('monster'):
+            terrain.add(p)
+    return terrain, vacant
 
 
 def gap(a, b):
