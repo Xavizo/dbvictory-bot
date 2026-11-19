@@ -2,10 +2,20 @@
 
 ## Aktualizacja z launchera na Windows
 
-Skrót **Uruchom bota** sprawdza lokalną kolejkę zatwierdzonych wydań przed
-otwarciem konsoli. Okno podaje wersję na dysku i numer oczekującego wydania.
-Gdy poprzednia sesja działa, można dalej grać. Przy kolejnym zwykłym
-uruchomieniu po zamknięciu sesji launcher instaluje przygotowany pakiet.
+Skrót **Uruchom bota** otwiera **DBVictory Launcher.exe**. W tym samym oknie
+launcher sprawdza lokalną kolejkę, instaluje wydanie i pokazuje wersję na dysku.
+Przy aktywnej sesji pakiet czeka. Po jej zakończeniu użyj **Sprawdź ponownie**.
+Przycisk **Uruchom bota** otwiera klienta, jeśli potrzeba. Na liście postaci
+potwierdź gotowość w launcherze. Gdy główne okno bota zakończy ładowanie,
+launcher się schowa. Zamknięcie klienta kończy sesję uruchomioną z tego okna.
+Folder z plikami klienta można wskazać przez **Zmień**.
+Argument `--check` otwiera okno wyłącznie do sprawdzenia wersji.
+
+Plik EXE buduje się na Windows z lokalnego .NET Framework:
+
+```powershell
+.\launcher\build_desktop.ps1 -OutputFile '.\DBVictory Launcher.exe'
+```
 Status silnika i tytuł głównego panelu podają wersję załadowaną przy starcie.
 
 Wersja ma postać `v1.1.0 (abcdef0)`. Punktem odniesienia jest commit

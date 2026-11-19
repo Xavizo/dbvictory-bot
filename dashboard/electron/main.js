@@ -72,6 +72,16 @@ function createWindow() {
   // Next sets the document title on navigation. Keep the parent engine's identity visible.
   win.on("page-title-updated", (event) => event.preventDefault());
   trustWindow(win);
+  const launcherId = process.env.DBV_LAUNCHER_ID;
+  if (sessionToken && trayExitFile && /^[0-9a-f]{32}$/.test(launcherId || "")) {
+    const marker = path.resolve(__dirname, "../../.codex/launcher-events", launcherId + ".ready");
+    const notifyLauncher = () => {
+      if (!isDashboardUrl(win.webContents.getURL())) return;
+      win.webContents.removeListener("did-finish-load", notifyLauncher);
+      require("node:fs").promises.writeFile(marker, "", {flag:"wx"}).catch(() => {});
+    };
+    win.webContents.on("did-finish-load", notifyLauncher);
+  }
   const tray = installTray(electron, win, () => editorWindow, trayExitFile);
   win.on("closed", () => { if (editorWindow && !editorWindow.isDestroyed()) editorWindow.close(); });
   ipcMain.handle("dbv:open-route-editor", (event, draftId) => {

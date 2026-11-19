@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>DBVictory Launcher</title>
+<link rel="stylesheet" href="style.css">
+<script src="effects.js" defer></script><script src="render.js" defer></script>
+</head><body><main class="window">
+<div class="world"></div><div class="portrait" aria-hidden="true">
+    <div class="energy">
+      <svg class="streams" viewBox="0 0 865 489" preserveAspectRatio="none" aria-hidden="true">
+        <defs><linearGradient id="ice" x2=".8" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#78a3ff" stop-opacity=".18"/><stop offset=".42" stop-color="#76dfff"/><stop offset=".76" stop-color="#d4f7ff"/><stop offset="1" stop-color="#887bff" stop-opacity=".3"/></linearGradient></defs>
+        <g stroke="url(#ice)" stroke-width="2">
+          <path pathLength="100" d="M8 489 C33 449 28 429 61 407 S103 395 114 369 Q119 349 148 343 T190 309 Q200 288 223 276"/>
+          <path class="flow-b" pathLength="100" d="M122 485 Q134 448 164 432 T206 394 Q217 366 242 350 T293 299"/>
+          <path class="flow-c" pathLength="100" d="M702 369 Q717 332 738 313 T759 272 Q767 240 791 222 T836 172"/>
+          <path class="flow-d" pathLength="100" d="M784 359 Q804 323 823 312 T849 274 Q852 258 867 243"/>
+          <path class="flow-b" pathLength="100" d="M3 220 Q31 183 54 178 T98 139 Q110 108 133 99 T176 71"/>
+        </g>
+      </svg>
+      <div class="surge"></div>
+    </div>
+  </div><div class="mist"></div><div class="sweep"></div><div class="sweep second"></div>
+  <header class="titlebar"><span class="appname"><i class="mark"></i>DBVictory Launcher</span></header>
+  <section class="hero"><h1 class="word">DBVICTORY</h1><span class="ver" id="version">Sprawdzanie wersji…</span></section>
+  <div class="cards">
+    <section class="glass"><h2>Ostatnie zmiany</h2><ul class="change-list" id="changes"></ul></section>
+    <section class="glass action" aria-live="polite">
+      <div class="headrow"><h2 id="heading">Sprawdzanie aktualizacji</h2><span id="badge" class="state" hidden></span></div>
+      <div id="folderRow" class="pathrow" hidden><span class="folder" aria-hidden="true"></span><span id="folderPath"></span><button class="edit" id="folderEdit">Zmień</button></div>
+      <div class="bar" id="progress" hidden><div class="fill"></div></div>
+      <ul class="steps" id="steps"></ul>
+      <div class="launchzone"><p class="hint" id="detail"></p><div class="actions"><button class="edit" id="secondary" hidden></button><button class="primary" id="primary" hidden></button></div></div>
+    </section>
+  </div></main></body></html>
