@@ -19,7 +19,7 @@ internal static class Desktop
         Directory.CreateDirectory(temp);
         try
         {
-            foreach (string name in new [] {"main.js","bridge.js","host.js","index.html","effects.js","render.js","style.css","hero.webp"})
+            foreach (string name in new [] {"main.js","bridge.js","host.js","index.html","effects.js","render.js","style.css","hero.webp","release-notes.json"})
             {
                 using (var src = assembly.GetManifestResourceStream("DBVictory." + name))
                 using (var dst = File.Create(Path.Combine(temp, name))) src.CopyTo(dst);
@@ -41,7 +41,8 @@ internal static class Desktop
         {
             if (!File.Exists(runtime) || !File.Exists(Path.Combine(root,"launcher_files.py")))
                 throw new FileNotFoundException("Brakuje plików launchera lub lokalnego środowiska Electron. Otwórz launcher z głównej instalacji DBVictory.");
-            if (!File.Exists(entry)) entry = BootstrapEntry();
+            if (!File.Exists(entry) || !File.Exists(Path.Combine(root, @"launcher\desktop\release-notes.json")))
+                entry = BootstrapEntry();
             var start = new ProcessStartInfo(runtime, "\"" + entry + "\"" + (args.Length == 1 ? " --check" : "")) {
                 UseShellExecute = false, WorkingDirectory = root, CreateNoWindow = true
             };

@@ -14,12 +14,12 @@ app.setName("DBVictory Launcher");
 app.setPath("userData",path.join(app.getPath("appData"),"DBVictory Launcher"));
 const settings = path.join(app.getPath("userData"),"client.json");
 let win, child, oldPending, marker, clientPid, poll, deadline;
-let locked = false, checkingPanel = false, quitting = false, sessionError = "";
+let locked = false, checkingPanel = false, quitting = false, sessionError = "", awaitingStart = false;
 let view = {phase:"checking", text:"Sprawdzanie lokalnej kolejki wydań…",version:"",changes:[],
   folder:"",installed:false,clientOpen:false,canDefer:false,readOnly};
 
 function set(phase, text, extra={}) {
-  view = {...view,phase,text,canDefer:false,...extra};
+  view = {...view,phase,text,canDefer:false,canOpenClient:false,failedStep:null,...extra};
   if (win && !win.isDestroyed()) win.webContents.send("launcher:changed",view);
 }
 function reveal() {
@@ -36,7 +36,7 @@ async function clientInfo(folder) {
   let open = false;
   if (exe) {
     const list = await host.clients().catch(()=>[]);
-    open = list.some(p=>p.Path && path.dirname(p.Path).toLowerCase()===path.resolve(folder).toLowerCase());
+    open = list.some(p=>p.HasWindow && p.Path && path.dirname(p.Path).toLowerCase()===path.resolve(folder).toLowerCase());
   }
   return {folder,installed:!!exe,clientOpen:open};
 }
@@ -51,9 +51,15 @@ async function check(defer) {
     report=await host.checkRelease(root,["preflight"]);
   }
   oldPending=report.pending;
-  const extra={revision:report.installed,version:report.installed_label||"",changes:await host.history(root,report.installed),canDefer:!!(report.can_defer&&oldPending)};
+  let changes=[], notesError=false;
+  try { changes=await host.history(root,report.installed_label); } catch { notesError=true; }
+  const extra={revision:report.installed,version:report.installed_label||"",changes,notesError,canDefer:!!(report.can_defer&&oldPending)};
   if (report.state==="updated"||report.state==="current") {
-    set("ready",readOnly?"Sprawdzenie zakończone.":report.state==="updated"?"Zainstalowano aktualizację.":"Pozostaw klienta na liście postaci.",extra);
+    if (readOnly) set("ready","Sprawdzenie zakończone.",extra);
+    else {
+      set("preparing","Przygotowywanie launchera…",extra);
+      await preparePrompt();
+    }
   } else {
     const queued=report.state==="busy" && report.pending_label ? " W kolejce: "+report.pending_label+"." : "";
     const state=["busy","available","recovery"].includes(report.state)?report.state:"problem";
@@ -64,7 +70,7 @@ async function check(defer) {
 function watchSession(proc) {
   deadline=setTimeout(()=>{
     if (child===proc && ["starting","panel"].includes(view.phase))
-      set("waiting","Główne okno jeszcze nie potwierdziło gotowości.");
+      set("waiting",checkingPanel?"Główne okno nie potwierdziło gotowości.":"Silnik nie potwierdził gotowości.",{failedStep:checkingPanel?"panel":"engine"});
   },75000);
   let probing = false;
   poll=setInterval(async()=>{
@@ -94,23 +100,18 @@ function watchSession(proc) {
     finally {probing=false;}
   },600);
 }
-async function start() {
+async function preparePrompt() {
   if (child || readOnly) return;
-  await check();
-  if (view.phase!=="ready") return;
-  const folder=view.folder;
-  set("opening",view.clientOpen?"Sprawdzanie klienta…":"Otwieranie klienta gry…");
-  clientPid=await host.openClient(folder);
   const id=randomUUID().replaceAll("-","");
   const events=path.join(root,".codex","launcher-events");
   await fs.mkdir(events,{recursive:true});
   marker=path.join(events,id+".ready");
   sessionError="";
-  set("opening","Przygotowywanie sesji…");
   const proc=host.interactive(root,id,view.revision,line=>{
     if (child!==proc) return;
     if (line.includes("Naciśnij Enter, gdy postać jest wylogowana")) {
-      set("confirm","Po przejściu do listy postaci naciśnij Enter lub potwierdź poniżej.");
+      awaitingStart=true;clearTimeout(deadline);
+      set("ready","Kliknij Start, gdy postać jest wylogowana.");
     } else if (line.startsWith("GOTOWE")) {
       checkingPanel=true;set("panel","Silnik gotowy. Oczekiwanie na główne okno…");
     } else if (line.startsWith("BŁĄD:")||line.startsWith("Błąd launchera:")) {
@@ -122,14 +123,17 @@ async function start() {
   proc.once("close",(code)=>{
     if (child!==proc) return;
     const wasRunning=view.phase==="running";
-    stopMonitor();child=null;clientPid=null;
+    const failedStep=checkingPanel?"panel":clientPid?"engine":null;
+    stopMonitor();child=null;clientPid=null;awaitingStart=false;
     if (quitting || wasRunning && code===0) {app.quit();return;}
     reveal();
     if (code===75) set("problem","Pojawiło się nowsze wydanie. Sprawdź aktualizację ponownie.");
-    else if (code || sessionError) set("problem",sessionError||"Proces sesji zakończył się błędem.");
-    else set("ready","Sesja została zamknięta.");
+    else if (code || sessionError) set("problem",sessionError||"Proces sesji zakończył się błędem.",{failedStep});
+    else set("closed","Sesja została zamknięta.");
   });
-  watchSession(proc);
+  deadline=setTimeout(()=>{
+    if(child===proc && !awaitingStart){sessionError="Proces przygotowania nie zgłosił gotowości.";proc.stdin.end();set("problem",sessionError);}
+  },30000);
 }
 
 async function action(name) {
@@ -138,13 +142,33 @@ async function action(name) {
   try {
     if (name==="retry" && !child) await check();
     else if (name==="defer" && !child && !readOnly && view.canDefer) await check(oldPending);
-    else if (name==="start" && view.phase==="ready" && !readOnly) await start();
-    else if (name==="confirmed" && child && view.phase==="confirm" && !readOnly) {
-      set("starting","Uruchamianie silnika…");child.stdin.write("\n");
-      clearTimeout(deadline);deadline=setTimeout(()=>{if(view.phase==="panel"||view.phase==="starting")set("waiting","Trwa oczekiwanie na główne okno bota.");},75000);
-    } else if (name==="cancel" && child && ["confirm","waiting"].includes(view.phase)) {
+    else if (name==="start" && awaitingStart && ["ready","clientError"].includes(view.phase) && !readOnly) {
+      const proc=child;
+      set("detecting","Wykrywanie klienta DBVictory…");
+      try {
+        clientPid=await host.openWindowPid(view.folder);
+        if (!clientPid) {
+          if (proc===child) set("clientError","Nie wykryto klienta DBVictory.",{failedStep:"client",clientOpen:false,canOpenClient:view.installed});
+          return;
+        }
+      } catch(error) {
+        if (proc===child) {
+          const ambiguous=error.code==="MULTIPLE_CLIENTS";
+          set("clientError",ambiguous?error.message:"Nie udało się sprawdzić okna klienta w Windows.",{failedStep:"client",clientOpen:ambiguous,canOpenClient:false});
+        }
+        return;
+      }
+      if (child!==proc || !awaitingStart) return;
+      awaitingStart=false;
+      set("starting","Uruchamianie silnika…",{clientOpen:true});
+      watchSession(proc);
+      proc.stdin.write("\n"); // Forward only this user's Start gesture to the waiting console.
+    } else if (name==="openClient" && awaitingStart && view.phase==="clientError" && view.canOpenClient && !readOnly) {
+      await host.openClient(view.folder);
+      set("ready","Poczekaj na okno klienta. Kliknij Start, gdy postać jest wylogowana.");
+    } else if (name==="cancel" && child && view.phase==="waiting") {
       set("closing","Zamykanie uruchamianej sesji…");child.stdin.end();
-    } else if (name==="folder" && !child && view.phase==="ready" && !readOnly) {
+    } else if (name==="folder" && awaitingStart && ["ready","clientError"].includes(view.phase) && !readOnly) {
       const result=await dialog.showOpenDialog(win,{title:"Wybierz katalog klienta DBVictory",properties:["openDirectory"]});
       if (result.canceled) return;
       const info=await clientInfo(result.filePaths[0]);
@@ -153,7 +177,10 @@ async function action(name) {
       await fs.writeFile(settings+".tmp",JSON.stringify({folder:info.folder}));await fs.rename(settings+".tmp",settings);
       set("ready","Zapisano lokalizację klienta.",info);
     }
-  } catch (e) {set("problem",e.message);}
+  } catch (e) {
+    if (awaitingStart) set("clientError",e.message,{failedStep:"client"});
+    else set("problem",e.message);
+  }
   finally {locked=false;}
 }
 

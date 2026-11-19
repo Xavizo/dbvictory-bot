@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from types import SimpleNamespace
 
@@ -20,11 +21,29 @@ def test_desktop_handoff_holds_lock_and_uses_reviewed_version(tmp_path, monkeypa
         (feed / changed).touch()
     monkeypatch.setenv("DBV_LAUNCHER_REVISION", reviewed)
 
-    def interactive(*, session_lock_held):
-        assert changed == "none" and session_lock_held
+    async def interactive(args, env, *, on_confirm):
+        assert args.start is False
+        with launcher_lock(tmp_path / ".codex/standalone.lock"):
+            pass  # Idle launcher must not block a newer release.
+        on_confirm()
+        assert changed == "none"
         with pytest.raises(RuntimeError), launcher_lock(tmp_path / ".codex/standalone.lock"):
             pytest.fail("another session acquired the installation lock")
         return 0
 
-    monkeypatch.setitem(sys.modules, "run_bot", SimpleNamespace(main=interactive))
+    monkeypatch.setitem(sys.modules, "run_bot", SimpleNamespace(run=interactive, prepare_environment=lambda port:{}))
     assert main(tmp_path) == (0 if changed == "none" else 75)
+
+
+@pytest.mark.parametrize("input_lines", [[], ["q\n"]])
+def test_console_aborted_before_start_never_claims_session(input_lines):
+    from run_bot import run_console
+
+    async def lines():
+        for line in input_lines:
+            yield line
+
+    def unexpected_confirmation():
+        pytest.fail("the session was confirmed without a Start gesture")
+
+    asyncio.run(run_console(SimpleNamespace(start=False), {}, lines(), on_confirm=unexpected_confirmation))

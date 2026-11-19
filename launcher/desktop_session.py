@@ -1,20 +1,38 @@
 """Hand the verified installation to its ordinary, interactive session entry."""
+import asyncio
+from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
 import os
 import sys
 
 from launcher_lock import launcher_lock
 
 
+class ReleaseChanged(Exception):
+    """The desktop window must refresh its release before opening a session."""
+
+
 def main(root):
+    from dbv_revision import read_head_revision
+    from run_bot import prepare_environment, run
+
     feed = root / ".codex" / "updates"
-    with launcher_lock(root / ".codex" / "standalone.lock"):
-        from dbv_revision import read_head_revision
-        if (read_head_revision(root) != os.environ.get("DBV_LAUNCHER_REVISION")
-                or any((feed / name).exists() for name in ("pending.json", "transaction.json"))):
-            return 75  # A release arrived after the window's preflight.
-        from run_bot import main as interactive_session
-        return interactive_session(session_lock_held=True)
+    with ExitStack() as session:
+        def lock_reviewed_release():
+            session.enter_context(launcher_lock(root / ".codex" / "standalone.lock"))
+            if (read_head_revision(root) != os.environ.get("DBV_LAUNCHER_REVISION")
+                    or any((feed / name).exists() for name in ("pending.json", "transaction.json"))):
+                raise ReleaseChanged
+
+        # The interactive prompt may wait for an arbitrary time. Only the user's
+        # Start click claims the installation, and it must still be the same release.
+        args = SimpleNamespace(game_port=7475, start=False)
+        try:
+            asyncio.run(run(args, prepare_environment(args.game_port), on_confirm=lock_reviewed_release))
+        except ReleaseChanged:
+            return 75
+        return 0
 
 
 if __name__ == "__main__":

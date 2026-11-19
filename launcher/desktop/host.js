@@ -26,13 +26,27 @@ async function checkRelease(root, args) {
   return report;
 }
 
-async function history(root, revision) {
-  if (!validSha(revision)) return [];
-  const git = path.join(process.env.ProgramFiles || "C:\\Program Files","Git","cmd","git.exe");
-  try {
-    const {stdout} = await exec(git, ["-c","safe.directory="+root.replaceAll("\\","/"),"-C",root,"log","-5","--format=%s",revision],options);
-    return stdout.trim().split(/\r?\n/).filter(Boolean);
-  } catch { return []; }
+async function history(root, label) {
+  const match = /^v(\d+)\.(\d+)\.(\d+)(?:\s|$)/.exec(label || "");
+  if (!match) return [];
+  const installed = match.slice(1).map(Number);
+  const file = path.join(root,"launcher","desktop","release-notes.json");
+  let notes;
+  try { notes = JSON.parse(await fs.readFile(file,"utf8")); }
+  catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    notes = require("./release-notes.json");
+  }
+  if (!Array.isArray(notes)) throw new Error("Niepoprawny format historii wydań.");
+  return notes.filter(release => {
+    if (!/^v\d+\.\d+\.\d+$/.test(release.version) || !Array.isArray(release.changes) ||
+        !release.changes.every(item => typeof item?.title === "string" && typeof item?.detail === "string")) {
+      throw new Error("Niepoprawny wpis historii wydań.");
+    }
+    const version = release.version.slice(1).split(".").map(Number);
+    const difference = version.findIndex((part,i) => part !== installed[i]);
+    return difference < 0 || version[difference] < installed[difference];
+  });
 }
 
 async function clientExe(folder) {
@@ -46,8 +60,23 @@ async function clientExe(folder) {
 
 async function clients() {
   const ps = path.join(process.env.SystemRoot, "System32","WindowsPowerShell","v1.0","powershell.exe");
-  const query = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ConvertTo-Json -Compress -InputObject @(Get-Process -Name dbvStart,dbvStart_gl -ErrorAction SilentlyContinue | Select-Object Id,Path)";
+  const query = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ConvertTo-Json -Compress -InputObject @(Get-Process -Name dbvStart,dbvStart_gl -ErrorAction SilentlyContinue | Select-Object Id,Path,@{Name='HasWindow';Expression={$_.MainWindowHandle -ne [IntPtr]::Zero}})";
   return JSON.parse((await exec(ps, ["-NoProfile","-NonInteractive","-Command",query],{...options,timeout:12000})).stdout);
+}
+
+function windowPid(list, folder) {
+  const matches = list.filter(proc => proc.HasWindow && proc.Path &&
+    path.dirname(proc.Path).toLowerCase() === path.resolve(folder).toLowerCase());
+  if (matches.length > 1) {
+    const error = new Error("Otwarte są co najmniej dwa okna klienta z tego folderu. Pozostaw jedno.");
+    error.code = "MULTIPLE_CLIENTS";
+    throw error;
+  }
+  return matches[0]?.Id || null;
+}
+
+async function openWindowPid(folder) {
+  return windowPid(await clients(), folder);
 }
 
 async function openClient(folder) {
@@ -74,4 +103,4 @@ function interactive(root, id, revision, onLine) {
   return proc;
 }
 
-module.exports = {checkRelease,history,validSha,clientExe,clients,openClient,interactive};
+module.exports = {checkRelease,history,validSha,clientExe,clients,windowPid,openWindowPid,openClient,interactive};

@@ -97,15 +97,15 @@ async def start_checked(session, settings):
     await call(session, 'start_bot')
 
 
-async def run(args, env):
+async def run(args, env, *, on_confirm=None):
     ports = (4747, 8089, 8090, int(env.get('DBV_LOGIN_PORT','7171')), args.game_port)
     if occupied_ports(ports):
         raise RuntimeError('Inna sesja bota lub program zajmuje porty. Nie uruchamiam drugiej. Jeśli bot działa, wpisz panel w jego konsoli.')
     with tray_input(sys.stdin.encoding) as (exit_file, lines):
-        await run_console(args, {**env, EXIT_FILE_ENV: str(exit_file)}, lines)
+        await run_console(args, {**env, EXIT_FILE_ENV: str(exit_file)}, lines, on_confirm=on_confirm)
 
 
-async def run_console(args, env, lines):
+async def run_console(args, env, lines, *, on_confirm=None):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     print('DBVictory Bot — uruchamianie bez Codexa\n', flush=True)
@@ -116,6 +116,8 @@ async def run_console(args, env, lines):
         answer = await anext(lines, '')
         if not answer or answer.strip().lower() != '':
             return
+    if on_confirm is not None:
+        on_confirm()
     settings = json.loads((ROOT/'bot_settings.json').read_text(encoding='utf-8')) if (ROOT/'bot_settings.json').exists() else {}
     params = StdioServerParameters(command=sys.executable,args=[str(ROOT/'run_mcp.py')],cwd=str(ROOT),env=env)
     log_path = ROOT/'.codex/standalone-stderr.log'

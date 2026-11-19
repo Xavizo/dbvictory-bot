@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $compiler = Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (!(Test-Path -LiteralPath $compiler)) { $compiler = Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 $desktop = Join-Path $PSScriptRoot 'desktop'
-$embedded = foreach ($name in 'main.js','bridge.js','host.js','index.html','effects.js','render.js','style.css','hero.webp') {
+$embedded = foreach ($name in 'main.js','bridge.js','host.js','index.html','effects.js','render.js','style.css','hero.webp','release-notes.json') {
     '/resource:' + (Join-Path $desktop $name) + ',DBVictory.' + $name
 }
 $target = [IO.Path]::GetFullPath($OutputFile)

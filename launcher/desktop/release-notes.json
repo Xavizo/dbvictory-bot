@@ -1,0 +1,23 @@
+[
+  {
+    "version": "v1.3.0",
+    "changes": [
+      {"title": "Postęp po kliknięciu Start", "detail": "Launcher pokazuje osobno wykrycie klienta, uruchamianie silnika i otwarcie głównego panelu."},
+      {"title": "Przyczyna błędu przy odpowiednim kroku", "detail": "Czerwony znak i komunikat wskazują etap, który wymaga uwagi. Możesz poprawić problem i ponowić próbę."},
+      {"title": "Historia wydań w launcherze", "detail": "Pod listą ostatnich zmian wybierz Więcej, aby przeczytać opisy obecnego i wcześniejszych wydań."}
+    ]
+  },
+  {
+    "version": "v1.2.0",
+    "changes": [
+      {"title": "Aktualizacje i uruchamianie w jednym oknie", "detail": "Skrót na pulpicie otwiera graficzny launcher. Zajęta instalacja zachowuje pakiet do następnego startu."},
+      {"title": "Wybór folderu klienta", "detail": "Przycisk Zmień pozwala wskazać instalację DBVictory na tym komputerze."}
+    ]
+  },
+  {
+    "version": "v1.1.0",
+    "changes": [
+      {"title": "Czytelny numer wersji", "detail": "Launcher i główny panel wyświetlają numer wydania wraz ze skrótem commita."}
+    ]
+  }
+]

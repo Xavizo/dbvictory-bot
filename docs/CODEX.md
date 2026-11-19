@@ -5,11 +5,20 @@
 Skrót **Uruchom bota** otwiera **DBVictory Launcher.exe**. W tym samym oknie
 launcher sprawdza lokalną kolejkę, instaluje wydanie i pokazuje wersję na dysku.
 Przy aktywnej sesji pakiet czeka. Po jej zakończeniu użyj **Sprawdź ponownie**.
-Przycisk **Uruchom bota** otwiera klienta, jeśli potrzeba. Na liście postaci
-potwierdź gotowość w launcherze. Gdy główne okno bota zakończy ładowanie,
-launcher się schowa. Zamknięcie klienta kończy sesję uruchomioną z tego okna.
+Gdy postać jest wylogowana, kliknij **Start**. Krok **Wykrywanie klienta DBVictory…**
+sprawdza, czy klient z wybranego folderu ma otwarte okno. Stan zalogowania
+potwierdzasz samym kliknięciem **Start**. Jeśli brakuje okna, launcher pokaże
+na czerwono **Nie wykryto klienta DBVictory.** Możesz wtedy użyć **Otwórz klienta**
+i ponowić próbę. Kolejne kroki pokazują gotowość silnika i głównego panelu.
+Gdy panel się otworzy, launcher się schowa. Zamknięcie klienta kończy sesję uruchomioną z tego okna.
 Folder z plikami klienta można wskazać przez **Zmień**.
 Argument `--check` otwiera okno wyłącznie do sprawdzenia wersji.
+
+Przy wydaniu dopisz na początku `launcher/desktop/release-notes.json` numer
+wersji i zmiany widoczne dla użytkownika. Każda zmiana ma krótki tytuł
+(`title`) i opis (`detail`). Launcher wyświetla trzy najnowsze tytuły dla
+zainstalowanej wersji i wcześniejszych wydań. **Więcej** otwiera pełne opisy
+w tym samym oknie. Historia jest częścią lokalnego pakietu.
 
 Plik EXE buduje się na Windows z lokalnego .NET Framework:
 
