@@ -39,6 +39,10 @@
     "cc6d91160218e7565ab1247d19ae483485dedaf6a18e24a05978ef31badb3669": {
       "asset_sha256": "cc6d91160218e7565ab1247d19ae483485dedaf6a18e24a05978ef31badb3669",
       "types": {
+        "182": {
+          "kind": "web",
+          "evidence": "User confirmed the second AiO-cuttable web variant on 2026-11-19."
+        },
         "183": {
           "kind": "web",
           "evidence": "User identified breakable web 183 and AiO on 2026-11-19."

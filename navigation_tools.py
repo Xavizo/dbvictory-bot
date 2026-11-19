@@ -3,7 +3,7 @@ DIG_TOOLS = frozenset({3457, 8899, 8900})
 ROPE_TOOLS = frozenset({3003, 8899, 8900})
 
 
-WEB_ITEM_ID = 183
+WEB_ITEM_IDS = frozenset({182, 183})
 AIO_TOOLS = (8899, 8900)
 
 
@@ -11,22 +11,22 @@ def cuttable_web(tile):
     """Return the exact layer only when removing it would expose ordinary ground."""
     if not tile or tile.get('kind') not in {'clear', 'blocked', 'avoid'} or tile.get('transitions'):
         return None
-    features = tile.get('navigation', ())
-    if not features or any(f.get('kind') != 'web' or f.get('item_id') != WEB_ITEM_ID
-                           or f.get('source') != 'confirmed_id' for f in features):
+    features = tile.get('navigation') or ()
+    if len(features) != 1 or features[0].get('kind') != 'web' or features[0].get('source') != 'confirmed_id':
         return None
     items = tile.get('items', ())
-    webs = [i for i in items if i['id'] == WEB_ITEM_ID]
-    if len(webs) != 1 or webs[0].get('stack') != features[0].get('stack'):
+    webs = [i for i in items if i['id'] in WEB_ITEM_IDS]
+    if (len(webs) != 1 or webs[0]['id'] != features[0].get('item_id')
+            or webs[0].get('stack') != features[0].get('stack')):
         return None
-    other_flags = {f for i in items if i['id'] != WEB_ITEM_ID for f in i.get('flags', ())}
+    other_flags = {f for i in items if i['id'] not in WEB_ITEM_IDS for f in i.get('flags', ())}
     if 'ground' not in other_flags or other_flags & {'not_walkable', 'not_pathable', 'floor_change'}:
         return None
     return webs[0]
 
 
-def web_edge(origin, entry):
-    return dict(origin=list(origin), entry=list(entry), exit=list(entry), item_id=WEB_ITEM_ID,
+def web_edge(origin, entry, item_id=183):
+    return dict(origin=list(origin), entry=list(entry), exit=list(entry), item_id=item_id,
                 action='clear_web', tool_id=AIO_TOOLS[0], tool_ids=list(AIO_TOOLS))
 
 
@@ -43,7 +43,7 @@ def tool_kind(edge):
     if origin[2] != entry[2] or not known_item(edge.get('item_id')):
         return None
     distance = max(abs(origin[0]-entry[0]), abs(origin[1]-entry[1]))
-    if (edge.get('action') == 'clear_web' and edge['item_id'] == WEB_ITEM_ID
+    if (edge.get('action') == 'clear_web' and edge['item_id'] in WEB_ITEM_IDS
             and edge.get('tool_id') in AIO_TOOLS and tuple(entry) == tuple(dest) and distance == 1):
         return 'web'
     if (edge.get('action') == 'use_with' and edge.get('tool_id') in ROPE_TOOLS

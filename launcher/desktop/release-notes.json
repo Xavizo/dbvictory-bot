@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.5.3",
+    "changes": [
+      {"title":"Pajęczyna 182 w atlasie i na trasie","detail":"Oba potwierdzone warianty, 182 i 183, można przeciąć AiO. Atlas rozpoznaje również wcześniej zapisane pola z tymi przedmiotami."}
+    ]
+  },
+  {
     "version": "v1.5.2",
     "changes": [
       {"title":"Start czeka na wybór postaci","detail":"Pierwszy klik otwiera zamkniętego klienta. Gdy zobaczysz listę postaci, kliknij Start ponownie. Jeśli lista była już otwarta przy uruchomieniu launchera, wystarczy jeden klik."}

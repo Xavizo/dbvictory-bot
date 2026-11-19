@@ -5,7 +5,7 @@ import pytest
 
 from map_atlas import MapAtlas
 from map_navigation import load_confirmed_types, navigation_features
-from navigation_tools import WEB_ITEM_ID, cuttable_web, supported_transition, web_edge
+from navigation_tools import cuttable_web, supported_transition, web_edge
 from test_adaptive_cavebot import cell, setup
 from test_automation_safety import state
 from test_dig_and_paged_atlas import fake_tools
@@ -15,7 +15,7 @@ CURRENT_DAT = "cc6d91160218e7565ab1247d19ae483485dedaf6a18e24a05978ef31badb3669"
 ORIGIN, WEB, END = [10,10,7], [11,10,7], [12,10,7]
 
 
-def web_tile(iid=WEB_ITEM_ID):
+def web_tile(iid=183):
     tile = cell(*WEB, kind="blocked")
     tile["items"][0]["flags"] = ["ground"]
     tile["items"].append(dict(id=iid, stack=1, flags=["not_walkable","not_moveable"]))
@@ -28,40 +28,43 @@ def cut(tile):
     tile.update(kind="clear", navigation=[])
 
 
-def test_profile_and_historical_web(tmp_path):
-    tile = web_tile()
+@pytest.mark.parametrize("iid", [182,183])
+def test_profile_and_historical_web(tmp_path,iid):
+    tile = web_tile(iid)
     assert cuttable_web(tile)["stack"] == 1
-    for iid in (182,184):
-        assert not web_tile(iid)["navigation"]
-    assert WEB_ITEM_ID not in load_confirmed_types(asset_sha256="unknown")
+    assert not web_tile(184)["navigation"]
+    assert iid not in load_confirmed_types(asset_sha256="unknown")
     tile["navigation"] = []
     atlas = MapAtlas(tmp_path,"f"*64)
     atlas.observe(dict(status="ready",cells=[cell(*ORIGIN), tile, cell(*END)]))
     assert not atlas.plan([ORIGIN,END],[])["complete"]
-    atlas = MapAtlas(tmp_path,atlas.scope, web_definition=load_confirmed_types(asset_sha256=CURRENT_DAT)[WEB_ITEM_ID])
-    assert cuttable_web(next(c for c in atlas.view(*WEB)["cells"] if c["x"]==WEB[0]))
+    types = load_confirmed_types(asset_sha256=CURRENT_DAT)
+    atlas = MapAtlas(tmp_path,atlas.scope,web_definitions={k:v for k,v in types.items() if v["kind"]=="web"})
+    assert cuttable_web(next(c for c in atlas.view(*WEB)["cells"] if c["x"]==WEB[0]))["id"] == iid
     atlas.tiles.clear()  # Exercise the disk-backed page cache too.
     plan = atlas.plan([ORIGIN,WEB,END],[],loop=True)
     assert plan["loop_closed"] and len(plan["transitions"]) == 2
-    assert all(supported_transition(e) and e["entry"] == e["exit"] == WEB for e in plan["transitions"])
+    assert all(supported_transition(e) and e["item_id"] == iid and e["entry"] == e["exit"] == WEB for e in plan["transitions"])
 
 
-def test_bypass_and_permanent_wall(tmp_path):
+@pytest.mark.parametrize("iid", [182,183])
+def test_bypass_and_permanent_wall(tmp_path,iid):
     atlas = MapAtlas(tmp_path,'e'*64)
-    tile = web_tile()
+    tile = web_tile(iid)
     tile["items"].append(dict(id=4459,stack=2,flags=["not_walkable","blocks_projectiles"]))
     atlas.observe(dict(status="ready",cells=[cell(*ORIGIN),tile,cell(*END)]))
     assert not atlas.plan([ORIGIN,END],[])["complete"]
-    atlas.observe(dict(status="ready",cells=[web_tile(),cell(11,11)]))
+    atlas.observe(dict(status="ready",cells=[web_tile(iid),cell(11,11)]))
     plan = atlas.plan([ORIGIN,END],[])
     assert plan["path"] == [ORIGIN,[11,11,7],END] and not plan["transitions"]
 
 
 @pytest.mark.parametrize("tool,mode",[(8899,"intact"),(8900,"regrown"),(None,"open"),(3003,"missing"),(8900,"blocked_after"),(8899,"no_ack")])
-def test_route_web_sequence(state,tmp_path,monkeypatch,tool,mode):
-    tile = web_tile()
+@pytest.mark.parametrize("iid", [182,183])
+def test_route_web_sequence(state,tmp_path,monkeypatch,tool,mode,iid):
+    tile = web_tile(iid)
     cells = [cell(*ORIGIN),tile]
-    intact = web_tile()
+    intact = web_tile(iid)
     if mode == "regrown":
         cut(tile)
     controller,_,_ = setup(state,tmp_path,cells,[ORIGIN,WEB])
@@ -101,10 +104,18 @@ def test_occupied_web_defers_before_using_tool(state,tmp_path):
     controller,_,_ = setup(state,tmp_path,[cell(*ORIGIN),tile],[ORIGIN,WEB])
     tile["occupants"] = 1
     with pytest.raises(MovementDeferred, match="zajęte"):
-        asyncio.run(controller.clear_web(web_edge(ORIGIN,WEB), {"cells":[tile]}))
+        asyncio.run(controller.clear_web(web_edge(ORIGIN,WEB,183), {"cells":[tile]}))
 
 
 def test_cut_recipe_is_same_floor_and_aio_only():
-    edge = web_edge(ORIGIN, WEB)
+    edge = web_edge(ORIGIN, WEB,183)
     for change in ({"exit":[11,10,8]}, {"origin":END, "entry":ORIGIN}, {"item_id":184}, {"tool_id":3457}):
         assert not supported_transition({**edge, **change})
+
+
+def test_unknown_or_conflicting_web_layer():
+    tile = web_tile(182)
+    tile["navigation"][0]["item_id"] = 183
+    assert cuttable_web(tile) is None
+    tile["items"].append(dict(id=183, stack=2, flags=["not_walkable"]))
+    assert cuttable_web(tile) is None

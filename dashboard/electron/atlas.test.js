@@ -671,8 +671,10 @@ test('route blockers name the exact transition and avoided tile; a recognized do
 
 test('web traversal in the preview requires the confirmed web, an AiO and a single step on the same floor',()=>{
   const web={origin:[10,10,7],entry:[11,10,7],exit:[11,10,7],action:'clear_web',item_id:183,tool_id:8899};
-  assert.deepEqual(model.exports.routeExecutionIssues({transitions:[web,{...web,tool_id:8900}]}),[]);
-  for(const change of [{item_id:182},{item_id:184},{tool_id:3457},{exit:[11,10,8]},{origin:[9,10,7]}]){
+  for(const item_id of [182,183]){
+    assert.deepEqual(model.exports.routeExecutionIssues({transitions:[{...web,item_id},{...web,item_id,tool_id:8900}]}),[]);
+  }
+  for(const change of [{item_id:184},{tool_id:3457},{exit:[11,10,8]},{origin:[9,10,7]}]){
     assert.equal(model.exports.supportedTransition({...web,...change}),false);
   }
 });

@@ -12,7 +12,7 @@ from collections import deque
 from cavebot_combat import CombatRuntime,validate_combat
 from protocol import Direction,ClientOpcode,build_walk_packet,build_use_item_packet,build_use_item_ex_packet
 from combat_wave import TURN_OPCODES
-from navigation_tools import WEB_ITEM_ID, cuttable_web, supported_transition, transition_tools, web_edge
+from navigation_tools import WEB_ITEM_IDS, cuttable_web, supported_transition, transition_tools, web_edge
 
 class MovementDeferred(ValueError):
     """No ordinary step sent: retry from a fresh map while combat stays alive."""
@@ -792,7 +792,7 @@ class AdaptiveCavebot:
             return next((c for c in current['cells'] if [c['x'],c['y'],c['z']] == target), None)
         def clear(tile):
             return (walkable(tile) and not tile.get('navigation') and not tile.get('transitions')
-                    and not any(i['id'] == WEB_ITEM_ID for i in tile['items']))
+                    and not any(i['id'] in WEB_ITEM_IDS for i in tile['items']))
         def vacant(tile):
             return tile and not tile.get('occupants', 0)
 
@@ -1065,8 +1065,9 @@ class AdaptiveCavebot:
             if edge is None and distance(pos,target)==1:
                 # A web can reappear on a route saved while the field was clear.
                 next_tile=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
-                if cuttable_web(next_tile):
-                    edge=web_edge(pos,target)
+                web = cuttable_web(next_tile)
+                if web:
+                    edge=web_edge(pos,target,web['id'])
             if edge:
                 self._route_command=True;self._route_boundary=True
                 self.save_session_cursor(pending=target)
