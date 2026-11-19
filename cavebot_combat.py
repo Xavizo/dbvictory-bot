@@ -4,7 +4,7 @@ import re
 import time
 from cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker, better_pack_tile, gap, group_needs_time, melee_capacity, open_sides,
                           lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches,
-                          room_before_choke, walking_distances)
+                          pack_access_before_choke, walking_distances)
 from combat_reachability import reachable_tiles
 from combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
 from combat_wave import facing
@@ -119,6 +119,7 @@ class CombatRuntime:
         self.owner=owner;self.config=config;self.target=None;self.sent_target=0
         self.phase='route';self.lure_started=None;self.battle_started=None;self.progress_at=0;self.last_health=None
         self.pursuit=PursuitTracker();self.lure_waiting=False;self.lure_stop_reason=None
+        self.lure_access=None;self.bank_members=set();self.first_clear_map=None
         self.placement_checked=False;self.placement=None;self.placement_group=set()
         self.pack_positions=[];self.pack_review_at=0;self.pack_members={};self.pack_prospects=set();self.pack_queue_step=None;self.pack_destination=None
         self.anchor=None;self.deadlines={};self.cast_after=0;self.manual_override=False;self.policy_mode=None
@@ -139,6 +140,7 @@ class CombatRuntime:
 
     def reset_lure(self):
         self.pursuit.reset();self.lure_started=None;self.lure_waiting=False;self.lure_stop_reason=None;self.engaged_count=0;self.nearby_count=0
+        self.lure_access=None;self.bank_members.clear();self.first_clear_map=None
         self.blocker_id=0;self.blocker_since=None;self.group_clear_since=None
         self.confirmed_count=0
         self.placement_checked=False;self.placement=None;self.placement_group.clear()
@@ -226,7 +228,8 @@ class CombatRuntime:
         if remaining <= 0 or now < self.pack_review_at:
             return
         self.pack_review_at = now + .4
-        members = {c['id']:tuple(c['position']) for c in candidates if c['id'] in engaged}
+        tracked = engaged | self.bank_members
+        members = {c['id']:tuple(c['position']) for c in candidates if c['id'] in tracked}
         missing = self.placement_group - self.pack_prospects - members.keys()
         if missing:
             gs=o.state.game_state
@@ -242,9 +245,9 @@ class CombatRuntime:
         # The front monster can hide the rest of a queue from the pursuit
         # counter. Reserve fighting space for eligible monsters two steps
         # away without counting them as followers or exceeding the group limit.
-        nearby = {c['id']:tuple(c['position']) for c in candidates if c['id'] not in engaged
+        nearby = {c['id']:tuple(c['position']) for c in candidates if c['id'] not in tracked
                   and c['distance']==2 and target_policy(self.config,c)['mode']=='lure'}
-        self.pack_prospects.clear()
+        self.pack_prospects = self.bank_members - engaged
         if members and nearby and len(members)<self.config['lure_count']:
             terrain,_ = placement_terrain(sample['cells'],here,o.edges,set(members.values())|set(nearby.values()))
             distances = walking_distances(terrain,here)
@@ -258,7 +261,8 @@ class CombatRuntime:
         other.update(point for point,_ in physical if point not in positions)
         route = [pos, *o.path[o.index+1:o.index+4]]
         path = lure_stopping_path(sample['cells'],route,o.edges,positions,other,self.pacing_limit,
-                                  goal=self.config['lure_count'],remaining=remaining,visited=self.pack_positions,
+                                  goal=self.config['lure_count'],compare_capacity=bool(self.lure_access),
+                                  remaining=remaining,visited=self.pack_positions,
                                   allow_queue_step=self.pack_queue_step is None or self.pack_queue_step[0]==here)
         if path:
             if group_needs_time(sample['cells'],here,path[1],positions,self.pacing_limit):
@@ -344,25 +348,41 @@ class CombatRuntime:
         if boundary and targets:
             return 'transition'
         half_group = len(engaged) >= max(2, (goal+1)//2)
-        check_choke = goal == 8 and bool(engaged) and len(targets) >= 4
-        if not half_group and not check_choke:
+        if len(targets) < 2:
             return None
         o = self.owner
         pos = tuple(o.state.game_state.position)
         route = o.path[o.index:o.index+9]
-        if check_choke and route and tuple(route[0]) == pos:
-            # Nearby eligible recruits matter for room choice before their
-            # pursuit is confirmed. They do not change the displayed group count.
-            local = {tuple(c['position']) for c in targets
-                     if c['distance'] <= 3 and target_policy(self.config,c)['mode']=='lure'}
-            if len(local) >= 4 and room_before_choke(sample['cells'],route,o.edges,local):
+        if not route or tuple(route[0]) != pos:
+            return None
+        now = time.monotonic()
+        contacts = engaged | self.pursuit.recent_contacts(now)
+        eligible = [c for c in targets if target_policy(self.config,c)['mode']=='lure']
+        if any(c['id'] in contacts for c in eligible):
+            # Reserve slots for nearby, eligible recruits we are moving away
+            # from. Prospects never raise the engaged count or latch a stop alone.
+            pack = {}
+            approach_limits = {}
+            for c in eligible:
+                point = tuple(c['position'])
+                if c['id'] not in contacts:
+                    limit = 5 if self.pursuit.approaching(c['id'],now) else 3
+                    if c['distance'] > limit or route_approaches(pos,point,route,0,o.edges,lookahead=2):
+                        continue
+                    approach_limits[point] = limit
+                pack[c['id']] = point
+            access = pack_access_before_choke(sample['cells'],route,o.edges,set(pack.values()),approach_limits)
+            if access:
+                self.lure_access = (access.here, access.ahead)
+                self.bank_members = {cid for cid,p in pack.items() if p in access.members}
+                o.logs.append(f'Lurowanie: zostaję na {pos}. Miejsca dla grupy tutaj: {access.here}, dalej: {access.ahead}.')
                 return 'corridor'
         if not half_group:
             return None
 
         route = route[:5]
         members = {tuple(c['position']) for c in targets if c['id'] in engaged}
-        if not route or tuple(route[0]) != pos or not room_before_corridor(sample['cells'], route, o.edges, members):
+        if not room_before_corridor(sample['cells'], route, o.edges, members):
             return None
         # A configured attack radius can be shorter than the visible corridor.
         # Looking for another recruit must not change which targets may be attacked.
@@ -384,6 +404,14 @@ class CombatRuntime:
             reason = self.gather_stop_reason(sample, targets, adjacent | following, boundary)
             if reason:self.latch_lure(reason)
         return following
+
+    def group_clear_confirmed(self,sample,now):
+        if self.group_clear_since is None:
+            self.group_clear_since=now
+            self.first_clear_map=sample.get('captured_at')
+        if self.lure_access and self.first_clear_map is not None and sample.get('captured_at')==self.first_clear_map:
+            return False
+        return now-self.group_clear_since >= (.8 if self.lure_access else .4)
 
     def candidates(self,sample=None):
         rows=eligible_monsters(self.owner.state.game_state,sample if sample is not None else self.owner.map_now(),self.config)
@@ -499,15 +527,22 @@ class CombatRuntime:
             if now-self.transition_clear_since<.4:
                 o.reason='Sprawdzam dostępne cele przed przejściem.'
                 await asyncio.sleep(.05);return True
-        if current is not None:self.group_clear_since=None
+        if current is not None:
+            if self.lure_access and self.bank_members.isdisjoint(c['id'] for c in candidates):
+                # Other recruits can be attacked during clearance, but don't
+                # inherit the old pack's stop just by appearing on the map.
+                if self.group_clear_confirmed(sample,now):
+                    self.reset_lure();self.battle_started=None
+                    if self.anchor==pos:self.anchor=None
+            else:
+                self.group_clear_since=None;self.first_clear_map=None
         if current is None and not o.combat_only and (self.policy_mode=='lure' or cfg['mode']=='lure'):
             physical=self.visible_group(sample,candidates)
             if physical:
-                self.group_clear_since=None;o.reason='Sprawdzam odczyt grupy — ruch czeka, walka pozostaje aktywna.'
+                self.group_clear_since=None;self.first_clear_map=None;o.reason='Sprawdzam odczyt grupy — ruch czeka, walka pozostaje aktywna.'
                 await asyncio.sleep(.05);return True
             if self.battle_started is not None or self.lure_stop_reason:
-                if self.group_clear_since is None:self.group_clear_since=now
-                if now-self.group_clear_since<.4:
+                if not self.group_clear_confirmed(sample,now):
                     o.reason='Potwierdzam koniec walki przed dalszą trasą.'
                     await asyncio.sleep(.05);return True
         if current is None:
@@ -538,7 +573,10 @@ class CombatRuntime:
             return False
         self.target=current
         policy=target_policy(cfg,current);mode=policy['mode'];gap_distance=policy['distance']
-        if mode!=self.policy_mode:
+        if self.policy_mode is None and self.lure_access and mode=='lure':
+            # Dispatch may already have latched this stop before the first tick.
+            self.policy_mode=mode
+        elif mode!=self.policy_mode:
             self.policy_mode=mode;self.reset_lure();self.battle_started=None
         if blocker:
             self.blocker_id=blocker['id']
@@ -566,7 +604,7 @@ class CombatRuntime:
                         and (self.blocker_since or now)-self.lure_started>=cfg['lure_seconds']):
                     self.lure_stop_reason='timeout'
                 luring=self.lure_stop_reason is None and allow_movement
-            if self.lure_stop_reason and cfg['lure_count']>=8:
+            if self.lure_stop_reason and (cfg['lure_count']>=8 or self.lure_access):
                 can_move = (allow_movement and self.lure_stop_reason in {'group','timeout','corridor'} and not at_transition
                             and not self.manual_target and self.engaged_count==len(engaged)<=cfg['lure_count']
                             and not blocker)
@@ -598,6 +636,9 @@ class CombatRuntime:
         self.phase='fight';o.reason=f'Walka: {current["name"]} · {current["health"]}% HP.'
         if self.lure_stop_reason:
             label={'group':'Grupa zebrana','transition':'Przejście lub koniec odcinka','corridor':'Przed wąskim korytarzem','timeout':'Limit czasu zbierania'}[self.lure_stop_reason]
+            if self.lure_access:
+                here,ahead = self.lure_access
+                label=f'Przed przewężeniem · miejsca dla grupy tutaj: {here}, dalej: {ahead}'
             o.reason=f'{label} — stoję i walczę: {current["name"]} · {current["health"]}% HP.'
         cid=current['id']
         can_attack=attack_distance_ok(cfg,current)

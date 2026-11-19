@@ -5,6 +5,7 @@ away, each followed by a monster step closing that gap, are our conservative
 movement-based confirmation. No probe commands are sent to the game.
 """
 from collections import deque
+from dataclasses import dataclass
 from combat_reachability import ordinary_terrain
 
 
@@ -157,16 +158,16 @@ def pack_stopping_path(space, vacant, route, group, other, max_lead, remaining, 
 
 
 def lure_stopping_path(cells, route, edges, group, other_monsters, max_lead=3, *,
-                       goal=None, remaining=MAX_PLACEMENT_STEPS, visited=(), allow_queue_step=True):
+                       goal=None, compare_capacity=False, remaining=MAX_PLACEMENT_STEPS, visited=(), allow_queue_step=True):
     """Choose a bounded local improvement for a gathered group on ordinary terrain."""
     if len(group) < 2 or len(route) < 2:
         return ()
     origin = tuple(route[0])
     group = set(map(tuple, group))
-    if (goal is None or goal < 8) and all(gap(origin, p) <= 1 for p in group):
+    full_pack = compare_capacity or (goal is not None and goal >= 8)
+    if not full_pack and all(gap(origin, p) <= 1 for p in group):
         return ()
     other_monsters = set(map(tuple, other_monsters))
-    full_pack = goal is not None and goal >= 8
     terrain, vacant = placement_terrain(cells, origin, edges, group | other_monsters if full_pack else group)
     if not group <= terrain or origin not in terrain:
         return ()
@@ -269,10 +270,21 @@ def passage_width(tiles, point, axis):
     return width if walls == 2 else None
 
 
-def room_before_choke(cells, route, edges, members):
-    """Prefer an open fighting tile before a sustained loss of surrounding space."""
-    if not members or len(route) < 3:
-        return False
+@dataclass(frozen=True)
+class PackAccess:
+    here: int
+    ahead: int
+    members: frozenset
+
+
+def pack_access_before_choke(cells, route, edges, members, approach_limits=None):
+    """Compare distinct reachable melee slots here and on the way into a passage.
+
+    Unknown or occupied-only boundaries are not evidence of a narrowing.
+    Check intermediate tiles even when the destination opens back into a room.
+    """
+    if len(members) < 2 or len(route) < 3:
+        return None
     here = tuple(route[0])
     tiles = {(c['x'], c['y'], c['z']): c for c in cells if c['z'] == here[2]}
     def sides(point):
@@ -287,23 +299,49 @@ def room_before_choke(cells, route, edges, members):
             elif tile.get('occupants') and not any('not_walkable' in i.get('flags',()) for i in tile.get('items',())):
                 return None
         return count
-    if not ordinary_terrain(tiles.get(here)) or sides(here) != 8:
-        return False
+    room = sides(here)
+    if not ordinary_terrain(tiles.get(here)) or room is None or room < 5:
+        return None
     protected = {tuple(edge[key]) for edge in edges for key in ('entry','origin','exit')}
     previous = here
     narrower = 0
+    terrain = None
+    worst = None
+    wide_axes = [axis for axis in (0,1) if passage_width(tiles,here,axis)==4]
+    previous_narrow_axes = set()
     for point in map(tuple,route[1:9]):
         if point[2]!=here[2] or gap(previous,point)!=1 or point in protected or not ordinary_terrain(tiles.get(point)):
             break
         free = sides(point)
         if free is None:
             break
-        narrower = narrower + 1 if free <= 6 else 0
-        if narrower >= 2 and free <= 4:
-            terrain,_ = placement_terrain(cells,here,edges,members)
-            return here in terrain and members <= terrain and melee_capacity(terrain,here,members) >= min(8,len(members))
+        narrower = narrower + 1 if free <= room - 2 else 0
+        narrow_axes = {axis for axis in wide_axes if passage_width(tiles,point,axis) in (1,2,3)}
+        entering = any(point[1-axis] != previous[1-axis] for axis in narrow_axes & previous_narrow_axes)
+        previous_narrow_axes = narrow_axes
         previous = point
-    return False
+        if (narrower < 2 and not entering) or point in members:
+            continue
+        if terrain is None:
+            terrain, _ = placement_terrain(cells, here, edges, members)
+            if here not in terrain:
+                return None
+            # Compare the same pack at both positions. Exclude unreachable
+            # targets even when they are only a couple of tiles away on screen.
+            distances = walking_distances(terrain, here)
+            members = {p for p in members if p in distances and
+                       (not approach_limits or p not in approach_limits or distances[p] <= approach_limits[p])}
+            capacity = melee_capacity(terrain, here, members)
+            if capacity < 2:
+                return None
+        if point not in terrain:
+            break
+        ahead = melee_capacity(terrain, point, members)
+        if ahead + 2 <= capacity or (ahead <= 1 and capacity >= 2):
+            worst = ahead if worst is None else min(worst, ahead)
+            if worst <= 1:
+                break
+    return PackAccess(capacity, worst, frozenset(members)) if worst is not None else None
 
 
 def room_before_corridor(cells, route, edges, members):
@@ -418,7 +456,7 @@ class PursuitTracker:
                     position[2] != row['position'][2] or gap(position, row['position']) > 2):
                 self.tracks[cid] = dict(name=candidate['name'], position=position,
                                        pending=deque(maxlen=12), evidence=deque(maxlen=2), confirmed=False, last_follow=now,
-                                       seen=now, missing=False, contact=now if gap(position, player)<=1 else None)
+                                       seen=now, missing=False, approached=None, contact=now if gap(position, player)<=1 else None)
                 continue
             row['seen'] = now
             row['missing'] = False
@@ -435,6 +473,7 @@ class PursuitTracker:
                 pending.append((self.sequence, player, now))
             closes_gap = position != old and squared(position, player) < squared(old, player)
             if closes_gap:
+                row['approached'] = now
                 # Credit at most one player step per changed monster position.
                 proof = next((p for p in pending if squared(position, p[1]) < squared(old, p[1])), None)
                 if proof is not None:
@@ -463,3 +502,8 @@ class PursuitTracker:
     def recent_contacts(self, now):
         return {cid for cid, row in self.tracks.items() if row['contact'] is not None
                 and 0 <= now - row['contact'] <= self.RESPONSE_WINDOW}
+
+    def approaching(self, cid, now):
+        row = self.tracks.get(cid)
+        return bool(row and not row['missing'] and row['approached'] is not None
+                    and 0 <= now - row['approached'] <= self.CONTINUITY_WINDOW)

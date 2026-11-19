@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.7.1",
+    "changes": [
+      {"title":"Cavebot dobija grupę po otwartej stronie przejścia","detail":"Podczas lurowania porównuje liczbę miejsc, do których moby mogą dojść teraz i w przewężeniu na trasie. Pokazuje obie liczby w czasie walki i wznawia marsz po potwierdzeniu, że grupa zniknęła."}
+    ]
+  },
+  {
     "version": "v1.7.0",
     "changes": [
       {"title":"Start otwiera grę, silnik i panel","detail":"Przy zamkniętym kliencie kliknij Start raz. Panel inicjalizuje się podczas logowania na konto. Na liście postaci możesz połączyć już działający silnik z grą."},
