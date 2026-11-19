@@ -384,6 +384,12 @@ class PassiveMapMonitor:
         # Navigation needs the annotated live cells as soon as they are ready.
         # Atlas persistence uses the same immutable frame, on the reader thread.
         self._result = {**result, "asset": asset}
+        route = getattr(self.state, 'adaptive_cavebot', None)
+        reporter = getattr(route, 'reporter', None)
+        if (reporter is not None and getattr(route, 'status', None) == 'running'
+                and not getattr(route, 'combat_only', False) and reporter.gs is game_state
+                and result.get('status') == 'ready' and 'pet_map_generation' in result):
+            reporter.observe_map(result)
         if self.atlas is not None and not self._learning_error:
             try:
                 self.atlas.observe(result)

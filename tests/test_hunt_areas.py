@@ -1,5 +1,7 @@
 from copy import deepcopy
+import asyncio
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -7,6 +9,8 @@ import pytest
 from cavebot_history import RunHistory, save_report
 from hunt_areas import catalogue, save_area
 from map_atlas import MapAtlas
+from passive_map import PassiveMapMonitor
+from pet_tracking import PetTracker
 from test_cavebot_reports import owner_for
 
 
@@ -23,6 +27,82 @@ def test_first_contact_keeps_monster_position_once_per_lap(tmp_path):
     run.sample(True)
     contacts=[e for e in run.lap.events if e['kind']=='first_contact']
     assert [(e['detail'],e['monster_position']) for e in contacts]==[('Vegeta',[53,52,7])]
+
+
+def test_first_sighting_keeps_original_tile_through_lure_death_and_lap_boundary(tmp_path, monkeypatch):
+    now = time.time()
+    monkeypatch.setattr('cavebot_history.time', SimpleNamespace(time=lambda: now, monotonic=lambda: now))
+    atlas = MapAtlas(tmp_path, 'a'*64)
+    ident = atlas.save_draft('Saiyan - Vegeta East', [[669,407,7], [670,407,7]])
+    owner = owner_for(atlas.path)
+    owner.draft_id = ident
+    owner.status = 'running'
+    owner.loop_start = 1
+    gs = owner.state.game_state
+    gs.pets = PetTracker()
+    owner.state.connected = True
+    owner.state.adaptive_cavebot = owner
+    owner.reporter = run = RunHistory(owner, False)
+    monitor = PassiveMapMonitor(owner.state)
+    monitor._learn = lambda frame, asset: frame
+    first = (672,407,7)
+    bank = (666,407,7)
+    approach, wild, other, pet = range(101, 105)
+
+    def publish(visible):
+        nonlocal now
+        now += .1
+        captured = now
+        slots = {(*point, stack): cid for stack, (cid, point) in enumerate(visible)}
+        generation = gs.pets.observe_map([], captured, slots)
+        monitor._publish(dict(status='ready', captured_at=captured, center=gs.position,
+                              pet_map_generation=generation), {}, gs)
+
+    def named(cid, name):
+        gs.creatures[cid] = dict(source='dll', name=name, t=now)
+
+    async def replay():
+        gs.position = (665,407,7)
+        named(approach, 'Town mob')
+        publish([(approach, bank)])
+        run.sample(True)
+        assert run.lap is None
+        owner.index = 1
+        run.sample(True)
+        started = run.lap.id
+        named(other, 'Vegeta')
+        named(pet, 'Bills')
+        publish([(wild, first), (other, first), (approach, bank), (pet, bank)])
+        # Same numeric identity acquires a name after it has already moved.
+        named(wild, 'Vegeta')
+        publish([(wild, bank), (other, bank), (pet, bank)])
+        gs.pets._confirm(pet, bank, 'Bills')
+        owner.combat.target = {'id':wild}
+        gs.kill_log.append(dict(cid=wild, name='Vegeta', x=bank[0], y=bank[1], z=7))
+        gs.session_kills = 1
+        run.sample(True)
+        run.finish(True, 'okrążenie')
+        await asyncio.gather(*run.writes)
+        draft = catalogue(atlas)['drafts'][0]
+        entry = draft['latest']
+        assert entry['id'] == started and draft['sighting_laps'] == 1
+        assert entry['cells'] == [(664,400,7)]  # The monster was outside the walked sector.
+        marks = draft['sightings']
+        assert marks == [dict(kind='first_seen', cell=(672,400,7), at_monster=True, point=first,
+                              observer_cell=(664,400,7), name='Vegeta', count=2)]
+        assert any(m['kind']=='death' and m['cell']==(664,400,7) for m in entry['observations'])
+        # Another lap and temporary disappearance do not move the original marker.
+        publish([])
+        publish([(other, bank)])
+        owner.laps += 1
+        run.sample(True)
+        publish([])
+        run.finish(True, 'okrążenie')
+        await asyncio.gather(*run.writes)
+        draft = catalogue(atlas)['drafts'][0]
+        assert draft['sighting_laps'] == 2 and draft['sightings'] == marks
+        assert list(owner.state.cavebot_reports)[-1][1]['first_sightings'] == []
+    asyncio.run(replay())
 
 
 def test_bounds_only_from_full_lap_and_metrics_follow_draft_identity(tmp_path):
@@ -62,6 +142,7 @@ def test_bounds_only_from_full_lap_and_metrics_follow_draft_identity(tmp_path):
     assert (entries[a]['xp_hour'],entries[a]['senzu_hour'])==(36000,120)
     assert entries[a]['latest']['cells']==[(664,400,7),(664,400,8),(664,400,9)]
     assert entries[a]['latest']['observations']==[dict(kind='death',cell=(672,400,9),name='Bardock',count=1,at_monster=True)]
+    assert entries[a]['sightings'] == [] and entries[a]['sighting_laps'] == 0
     data=dict(scope=atlas.scope,name='Spot',drafts=[a,b],cells=entries[a]['latest']['cells'],create_key=str(uuid4()))
     ident=save_area(atlas,data)
     assert save_area(atlas,data)==ident

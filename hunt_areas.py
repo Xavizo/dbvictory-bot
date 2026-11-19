@@ -76,10 +76,10 @@ def save_area(atlas, body):
     return area_id
 
 
-def _evidence(db, ident, footprints):
+def _evidence(db, ident, tables, sightings):
     events = json.loads(db.execute('SELECT events FROM laps WHERE id=?',(ident,)).fetchone()[0])
     cells = {sector(e['position']) for e in events if observed_position(e.get('position'))}
-    if footprints:
+    if 'lap_footprints' in tables:
         row = db.execute('SELECT cells FROM lap_footprints WHERE id=?',(ident,)).fetchone()
         if row:
             cells.update(map(tuple,json.loads(row[0])))
@@ -92,8 +92,10 @@ def _evidence(db, ident, footprints):
         pos = e['monster_position'] if exact else e.get('position')
         if observed_position(pos):
             observations[kind,sector(pos), e['detail'], bool(exact)] += 1
-    return dict(cells=sorted(cells), observations=[dict(kind=kind,cell=p,name=name,count=n,at_monster=exact)
-                                  for (kind,p,name,exact),n in sorted(observations.items())])
+    marks = [dict(kind=kind,cell=p,name=name,count=n,at_monster=exact)
+             for (kind,p,name,exact),n in sorted(observations.items())]
+    cells.update(tuple(row['observer_cell']) for row in sightings or ())
+    return dict(cells=sorted(cells), observations=marks)
 
 
 def catalogue(atlas):
@@ -105,13 +107,15 @@ def catalogue(atlas):
     for d in atlas.drafts()+archived:
         aliases[d['navigation_revision']] = d['id']
         drafts[d['id']] = dict(id=d['id'],name=d['name'],archived=d['id'] in archived_ids,laps=0,duration_ms=0,blocked_ms=0,
-                               xp=0,xp_ms=0,senzu=0,senzu_ms=0,latest=None)
+                               xp=0,xp_ms=0,senzu=0,senzu_ms=0,latest=None,sighting_laps=0,sightings=Counter())
     path = atlas.path.with_name('cavebot-reports-' + atlas.path.name)
     if path.exists():
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=1)) as db:
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if 'laps' in tables:
-                for ident, raw in db.execute('SELECT id,summary FROM laps ORDER BY started DESC'):
+                query = ('SELECT l.id,l.summary,s.sightings FROM laps l LEFT JOIN lap_sightings s ON s.id=l.id'
+                         if 'lap_sightings' in tables else 'SELECT id,summary,NULL FROM laps')
+                for ident, raw, raw_sightings in db.execute(query+' ORDER BY started DESC'):
                     s = json.loads(raw)
                     d = drafts.get(s.get('draft_id') or aliases.get(s.get('revision')))
                     if d is None or not s['complete'] or s['duration_ms'] <= 0:
@@ -123,9 +127,18 @@ def catalogue(atlas):
                         if s.get(metric) is not None:
                             d[metric] += s[metric]
                             d[metric+'_ms'] += s['duration_ms']
+                    sightings = json.loads(raw_sightings) if raw_sightings is not None else None
+                    if sightings is not None:
+                        d['sighting_laps'] += 1
+                        for row in sightings:
+                            key = (tuple(row['point']), tuple(row['observer_cell']), row['name'])
+                            d['sightings'][key] += row['count']
                     if d['latest'] is None:
-                        d['latest'] = dict(id=ident, started=s['started_at'], **_evidence(db,ident,'lap_footprints' in tables))
+                        d['latest'] = dict(id=ident, started=s['started_at'], **_evidence(db,ident,tables,sightings))
     for d in drafts.values():
+        d['sightings'] = [dict(kind='first_seen', cell=sector(point), point=point, observer_cell=origin,
+                               name=name, count=count, at_monster=True)
+                          for (point,origin,name),count in sorted(d['sightings'].items())]
         for metric in ('xp','senzu'):
             duration = d.pop(metric+'_ms')
             d[metric+'_hour'] = round(d.pop(metric)*3600000/duration) if duration else None

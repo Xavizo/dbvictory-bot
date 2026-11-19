@@ -12,6 +12,7 @@ from cavebot_reports import Lap
 from farming_telemetry import experience_for_level
 from route_identity import navigation_revision
 from hunt_areas import observed_position
+from hunt_sightings import FirstSightings
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ def archive_path(state):
 
 
 def summary(report):
-    return {k:v for k,v in report.items() if k not in ('events', 'visited_sectors')}
+    return {k:v for k,v in report.items() if k not in ('events', 'visited_sectors', 'first_sightings')}
 
 
 def save_report(path, report):
@@ -36,6 +37,10 @@ def save_report(path, report):
             db.execute('CREATE TABLE IF NOT EXISTS lap_footprints(id TEXT PRIMARY KEY,cells TEXT)')
             db.execute('INSERT OR IGNORE INTO lap_footprints VALUES (?,?)',
                        (report['id'], json.dumps(report['visited_sectors'])))
+        if report.get('first_sightings') is not None:
+            db.execute('CREATE TABLE IF NOT EXISTS lap_sightings(id TEXT PRIMARY KEY, sightings TEXT)')
+            db.execute('INSERT OR IGNORE INTO lap_sightings VALUES (?,?)',
+                       (report['id'], json.dumps(report['first_sightings'])))
 
 
 def read_reports(state, ident=None, before=None):
@@ -54,7 +59,14 @@ def read_reports(state, ident=None, before=None):
             if db.execute("SELECT 1 FROM sqlite_master WHERE name='laps'").fetchone():
                 if ident:
                     row = db.execute('SELECT summary,events FROM laps WHERE id=?', (ident,)).fetchone()
-                    return dict(json.loads(row[0]),events=json.loads(row[1])) if row else None
+                    if row is None:
+                        return None
+                    report = dict(json.loads(row[0]), events=json.loads(row[1]))
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE name='lap_sightings'").fetchone():
+                        sightings = db.execute('SELECT sightings FROM lap_sightings WHERE id=?', (ident,)).fetchone()
+                        if sightings:
+                            report['first_sightings'] = json.loads(sightings[0])
+                    return report
                 for (data,) in db.execute('SELECT summary FROM laps WHERE started < ? ORDER BY started DESC LIMIT 21',
                                            (float('inf') if before is None else before,)):
                     item = json.loads(data)
@@ -84,8 +96,19 @@ class RunHistory:
         self.last_target = None
         self.tracked = {}
         self.seen_contacts = set()
+        self.sightings = FirstSightings(self.gs)
+        self.sightings_failed = False
         self.last_kills = getattr(self.gs, 'session_kills', 0)
         self.writes = set()
+
+    def observe_map(self, frame):
+        if self.sightings_failed:
+            return
+        try:
+            self.sightings.observe(frame)
+        except Exception:
+            self.sightings_failed = True
+            log.exception('Could not record map sightings for this run')
 
     def frame(self, now):
         o, gs = self.owner, self.gs
@@ -123,6 +146,7 @@ class RunHistory:
         frame = self.frame(now)
         if self.lap is None:
             self.lap = Lap(frame,self.start_known,time.time(),self.profile)
+            self.sightings.begin_lap(self.lap.started_at)
         else:
             self.lap.observe(frame)
         combat = self.owner.combat
@@ -202,6 +226,9 @@ class RunHistory:
             return
         end = self.frame(time.monotonic())
         report = self.lap.report(end,boundary,reason)
+        sightings = self.sightings.end_lap(time.time() if boundary else None)
+        if sightings is not None and not self.sightings_failed:
+            report['first_sightings'] = sightings
         self.lap = None
         self.tracked.clear()
         self.seen_contacts.clear()

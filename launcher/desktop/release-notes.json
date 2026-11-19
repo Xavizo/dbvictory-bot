@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.10.1",
+    "changes": [
+      {"title":"Atlas zapamiętuje, gdzie po raz pierwszy widać potwora","detail":"Na mapie expowiska znacznik zostaje na pierwszym zaobserwowanym polu danego stwora, także po lurowaniu. Miejsca pokonania możesz obejrzeć osobno."}
+    ]
+  },
+  {
     "version": "v1.10.0",
     "changes": [
       {"title":"Expowiska na mapie świata","detail":"Zapisz granice z pełnego obiegu, popraw je na każdym piętrze i przypisz kilka szkiców do jednego expowiska."},

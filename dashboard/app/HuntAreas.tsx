@@ -3,9 +3,9 @@ import {useEffect,useMemo,useRef,useState} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 import WorldMap,{type GroundLayer,type Position} from "./WorldMap";
 
-type Observation={kind:"death"|"first_contact";cell:Position;name:string;count:number;at_monster:boolean};
+type Observation={kind:"death"|"first_contact"|"first_seen";cell:Position;name:string;count:number;at_monster:boolean;point?:Position;observer_cell?:Position};
 type Draft={id:string;name:string;archived:boolean;laps:number;duration_ms:number;blocked_ms:number;xp_hour:number|null;senzu_hour:number|null;
-  latest:{id:string;cells:Position[];observations:Observation[]}|null};
+  sightings?:Observation[];sighting_laps?:number;latest:{id:string;cells:Position[];observations:Observation[]}|null};
 type Area={id:string|null;version?:number;name:string;cells:Position[];drafts:string[]};
 type Catalogue={scope:string;sector_size:number;areas:Area[];drafts:Draft[]};
 const endpoint="http://127.0.0.1:8089/api/map/grounds";
@@ -28,8 +28,8 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose}:{ini
   const [initialFloor]=useState(playerFloor);
   const [data,setData]=useState<Catalogue|null>(null),[key,setKey]=useState(""),[copy,setCopy]=useState<Area|null>(null);
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[reload,setReload]=useState(0);
-  const [showKills,setShowKills]=useState(true),[species,setSpecies]=useState("");
-  const [kind,setKind]=useState<Observation["kind"]>("death");
+  const [showMonsters,setShowMonsters]=useState(true),[species,setSpecies]=useState("");
+  const [kind,setKind]=useState<Observation["kind"]>("first_seen");
   const [focus,setFocus]=useState<GroundLayer["focus"]>(null);
   const createKey=useRef("");
   useEffect(()=>{
@@ -52,18 +52,23 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose}:{ini
   const linked=useMemo(()=>data?.drafts.filter(d=>area?.drafts.includes(d.id))??[],[area?.drafts,data]);
   const observations=useMemo(()=>{
     const cells=new Set(area?.cells.map(p=>p.join(",")));
-    const names=new Map<string,number>(), locations=new Map<string,{cell:Position;lines:string[]}>();
-    for(const d of linked)for(const k of d.latest?.observations??[]){
+    const names=new Map<string,number>(), locations=new Map<string,{position:Position;lines:Map<string,number>}>();
+    for(const d of linked)for(const k of (kind==="first_seen"?d.sightings:d.latest?.observations)??[]){
       if(k.kind!==kind)continue;
-      const loc=k.cell.join(",");
-      if(!cells.has(loc))continue;
+      const origin=k.kind==="first_seen"?k.observer_cell:k.cell;
+      const position=k.kind==="first_seen"?k.point:k.cell;
+      if(!origin||!position||!cells.has(origin.join(",")))continue;
       names.set(k.name,(names.get(k.name)??0)+k.count);
       if(species&&species!==k.name)continue;
-      const item=locations.get(loc)??{cell:k.cell,lines:[]};
-      item.lines.push(k.name+" ×"+k.count+(k.at_monster?" · pozycja potwora":" · okolica postaci"));
+      const loc=position.join(",");
+      const item=locations.get(loc)??{position,lines:new Map<string,number>()};
+      const line=k.name+(kind==="first_seen"?"":k.at_monster?" · pozycja potwora":" · okolica postaci");
+      item.lines.set(line,(item.lines.get(line)??0)+k.count);
       locations.set(loc,item);
     }
-    return {names,marks:Array.from(locations.values(),v=>({cell:v.cell,title:v.lines.join("\n")}))};
+    return {names,marks:Array.from(locations.values(),v=>({position:v.position,exact:kind==="first_seen",
+      title:[...(kind==="first_seen"?["Pierwsze wykrycie ("+v.position.join(", ")+")"]:[]),
+        ...Array.from(v.lines,([name,count])=>name+" ×"+count)].join("\n")}))};
   },[area?.cells,linked,species,kind]);
   const side=data?.sector_size??8;
   const floors=Array.from(new Set(area?.cells.map(p=>p[2]))).sort((a,b)=>a-b);
@@ -91,7 +96,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose}:{ini
   }
   return <div className="hunt-atlas-layout">
     <WorldMap initialFloor={initialFloor} onOpen={onOpen} toolbar={<button disabled={!!copy||busy} onClick={onClose}>← Świat</button>}
-      ground={{cells:area?.cells??[],marks:showKills?observations.marks:[],side,editing:!!copy,toggle,focus}}/>
+      ground={{cells:area?.cells??[],marks:showMonsters?observations.marks:[],side,editing:!!copy,toggle,focus}}/>
     <aside className="hunt-area-panel">
       <h2>Expowiska</h2>
       {error&&<p role="alert">{error} {!copy&&<button onClick={()=>setReload(v=>v+1)}>Wczytaj ponownie</button>}</p>}
@@ -116,12 +121,14 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose}:{ini
           <dt>XP/h</dt><dd>{label(d.xp_hour)}</dd><dt>Senzu/h</dt><dd>{label(d.senzu_hour)}</dd>
           <dt>Blokady / obieg</dt><dd>{seconds(d.blocked_ms/d.laps)} s</dd></dl>:<p>Brak pełnych obiegów.</p>}</div>)}
         <h3>Potwory</h3><select aria-label="Rodzaj obserwacji" value={kind} onChange={e=>{setKind(e.target.value as Observation["kind"]);setSpecies("");}}>
-          <option value="death">Pokonane potwory</option><option value="first_contact">Pierwszy kontakt z grupą lub celem</option></select>
-        <label><input type="checkbox" checked={showKills} onChange={e=>setShowKills(e.target.checked)}/> Pokaż na mapie</label>
+          <option value="first_seen">Pierwsze wykrycia na mapie</option><option value="death">Pokonane potwory</option><option value="first_contact">Dołączenie do walki lub grupy</option></select>
+        <label><input type="checkbox" checked={showMonsters} onChange={e=>setShowMonsters(e.target.checked)}/> Pokaż na mapie</label>
         {observations.names.size?<><select aria-label="Gatunek potwora" value={species} onChange={e=>setSpecies(e.target.value)}><option value="">Wszystkie gatunki</option>
           {Array.from(observations.names).sort(([a],[b])=>a.localeCompare(b)).map(([n,count])=><option key={n} value={n}>{n} ×{count}</option>)}</select>
-          <small>Ostatni pełny obieg każdego szkicu. Starsze zapisy pokazują okolicę postaci w chwili pokonania.</small>
-        </>:<p>Brak obserwacji w tym obszarze.</p>}
+          <small>{kind==="first_seen"?"Pierwsze zaobserwowane pole każdego potwora ze wszystkich pełnych obiegów.":
+            kind==="death"?"Ostatni pełny obieg. Starsze zapisy wskazują okolicę postaci w chwili pokonania.":"Miejsce kontaktu bojowego z ostatniego pełnego obiegu."}</small>
+        </>:<p>{kind==="first_seen"&&linked.some(d=>d.latest)&&!linked.some(d=>d.sighting_laps)
+          ?"W tych obiegach nie zapisano pierwszych wykryć.":"Brak obserwacji w tym obszarze."}</p>}
       </>}
     </aside>
   </div>;

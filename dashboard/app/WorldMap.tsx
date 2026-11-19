@@ -4,7 +4,7 @@ import type {PointerEvent as ReactPointerEvent, ReactNode} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 
 export type Position = [number, number, number];
-export type GroundLayer = {cells:Position[]; marks:{cell:Position;title:string}[]; side:number;
+export type GroundLayer = {cells:Position[]; marks:{position:Position;title:string;exact:boolean}[]; side:number;
   editing:boolean; toggle:(p:Position)=>void; focus:{floor:number;cells:Position[]}|null};
 type Sector = {x:number; y:number; terrain?:string; atlas?:string};
 type Floor = {floor:number; sectors:Sector[]};
@@ -100,8 +100,9 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar}:{init
       <Sectors sectors={result.sectors} overlay={overlay}/>
       {ground&&<g fill="#ffbc61" fillOpacity=".31" stroke="#ffd497" strokeWidth=".2">{ground.cells.filter(p=>p[2]===floor).map(([x,y])=>
         <rect key={x+','+y} x={x} y={y} width={side} height={side}/>)}</g>}
-      {ground&&<g>{ground.marks.filter(m=>m.cell[2]===floor).map(m=>
-        <circle key={m.cell.join(',')} cx={m.cell[0]+side/2} cy={m.cell[1]+side/2} r={side/4} fill="#eee6ff" stroke="#4f2872" strokeWidth=".6"><title>{m.title}</title></circle>)}</g>}
+      {ground&&<g>{ground.marks.filter(m=>m.position[2]===floor).map(m=>
+        <circle key={m.position.join(',')} cx={m.position[0]+(m.exact ? 0.5 : side/2)} cy={m.position[1]+(m.exact ? 0.5 : side/2)}
+          r={m.exact?1:side/4} fill="#eee6ff" stroke="#4f2872" strokeWidth=".5"><title>{m.title}</title></circle>)}</g>}
       {grid&&<rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#world-sector-grid)"/>}
       {selection&&<circle cx={selection[0]+.5} cy={selection[1]+.5} r={Math.max(.8,view.width/190)} fill="none" stroke="white" strokeWidth={2} vectorEffect="non-scaling-stroke"/>}
     </svg>}
