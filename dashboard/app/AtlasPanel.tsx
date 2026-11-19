@@ -39,16 +39,16 @@ const huntMilestones = [
 ] as const;
 const ObjectMap=dynamic(()=>import("./PassiveMapPanel"),{ssr:false});
 function lines(points:Pos[],z:number) {const result:Pos[][]=[];let line:Pos[]=[];for(const p of points){if(p[2]===z)line.push(p);else if(line.length){result.push(line);line=[];}}if(line.length)result.push(line);return result;}
-export default function AtlasPanel({state,active,onRefresh,initialDraftId="",selectionVersion=0,embedded=false,browseOnly=false,profileScope,routePicker,routeEnabledControl,moreActions,onDraftSaved,onEditingChange,onLoopChange}:{state:BotState|null;active:boolean;onRefresh:()=>void;initialDraftId?:string;selectionVersion?:number;embedded?:boolean;browseOnly?:boolean;profileScope?:string;routePicker?:ReactNode;routeEnabledControl?:ReactNode;moreActions?:ReactNode;onDraftSaved?:(id:string)=>void;onEditingChange?:(dirty:boolean)=>void;onLoopChange?:(value:boolean)=>void}) {
-  const [manual,setManual]=useState<Pos>([100,100,7]),[follow,setFollow]=useState(true),[radius,setRadius]=useState(12),[atlas,setAtlas]=useState<Atlas|null>(null);
-  const [selected,setSelected]=useState<Pos|null>(null),[drafts,setDrafts]=useState<Draft[]>([]),[draftId,setDraftId]=useState(""),[draftName,setDraftName]=useState(""),[savedVersion,setSavedVersion]=useState("");
+export default function AtlasPanel({state,active,onRefresh,initialPosition,initialDraftId="",selectionVersion=0,embedded=false,browseOnly=false,profileScope,routePicker,routeEnabledControl,moreActions,onDraftSaved,onEditingChange,onLoopChange}:{state:BotState|null;active:boolean;onRefresh:()=>void;initialPosition?:Pos;initialDraftId?:string;selectionVersion?:number;embedded?:boolean;browseOnly?:boolean;profileScope?:string;routePicker?:ReactNode;routeEnabledControl?:ReactNode;moreActions?:ReactNode;onDraftSaved?:(id:string)=>void;onEditingChange?:(dirty:boolean)=>void;onLoopChange?:(value:boolean)=>void}) {
+  const [manual,setManual]=useState<Pos>(initialPosition??[100,100,7]),[follow,setFollow]=useState(!initialPosition),[radius,setRadius]=useState(12),[atlas,setAtlas]=useState<Atlas|null>(null);
+  const [selected,setSelected]=useState<Pos|null>(initialPosition??null),[drafts,setDrafts]=useState<Draft[]>([]),[draftId,setDraftId]=useState(""),[draftName,setDraftName]=useState(""),[savedVersion,setSavedVersion]=useState("");
   const [tileMenu,setTileMenu]=useState<TileMenuPosition|null>(null);
   const [simIndex,setSimIndex]=useState<number|null>(null),[simPlaying,setSimPlaying]=useState(false);
   const [loop,setLoop]=useState(true);
   const [newTags,setNewTags]=useState<DraftTag[]>([]);
   const [mapOpen,setMapOpen]=useState(!embedded),[optimization,setOptimization]=useState<{before:Plan;candidate:Plan}|null>(null),[simulation,setSimulation]=useState<ReturnType<typeof simulationReport>|null>(null);
 
-  const [viewport,setViewport]=useState({width:700,height:450}),[segmentIndex,setSegmentIndex]=useState(0),[showTrace,setShowTrace]=useState(false),[sidebar,setSidebar]=useState(false);
+  const [viewport,setViewport]=useState({width:700,height:450}),[segmentIndex,setSegmentIndex]=useState(0),[showTrace,setShowTrace]=useState(false),[sidebar,setSidebar]=useState(!!initialPosition);
   const pan=useRef<{x:number;y:number;origin:Pos;pixel:number}|null>(null);
   const [panMode,setPanMode]=useState(false);
   const [drawMode,setDrawMode]=useState<"points"|"freehand">("points"),[overview,setOverview]=useState(false);

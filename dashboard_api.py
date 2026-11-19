@@ -137,6 +137,25 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_list_recordings()
         if urlsplit(self.path).path == "/api/map/atlas":
             return self._handle_atlas()
+        if urlsplit(self.path).path == "/api/map/world":
+            import sqlite3
+            import zlib
+            from world_minimap import client_minimap, world_floor
+            query = parse_qs(urlsplit(self.path).query)
+            try:
+                floor = int(query.get('z', ['7'])[0])
+                if not 0 <= floor <= 15:
+                    raise ValueError()
+            except ValueError:
+                return self._json_response({'error': 'Nieprawidłowe piętro.'}, 400)
+            atlas = getattr(getattr(_state, 'passive_map_monitor', None), 'atlas', None)
+            try:
+                result = world_floor(client_minimap(), getattr(atlas, 'path', None), floor)
+            except (KeyError, FileNotFoundError):
+                return self._json_response({'error': 'Brak zapisanej minimapy DBVictory.'}, 404)
+            except (OSError, ValueError, sqlite3.Error, zlib.error):
+                return self._json_response({'error': 'Nie można odczytać zapisanej mapy. Spróbuj ponownie.'}, 503)
+            return self._json_response(result)
         if self.path == "/api/map/drafts":
             return self._handle_map_drafts()
         # GET /api/cavebot/actions_map/<name>

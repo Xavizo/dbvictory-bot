@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.9.0",
+    "changes": [
+      {"title":"Mapa świata w atlasie","detail":"W zakładce Świat zobaczysz zapisaną minimapę klienta. Możesz zmienić piętro, włączyć pola zbadane przez atlas lub siatkę sektorów 64 × 64 i otworzyć szczegóły wybranego pola."}
+    ]
+  },
+  {
     "version": "v1.8.1",
     "changes": [
       {"title":"Trasa sama rusza po chwilowym braku odczytu HP","detail":"Cavebot zachowuje waypoint i czeka na świeży odczyt postaci. Potwierdzona śmierć, wylogowanie i ręczny Stop wciąż kończą ruch."},
