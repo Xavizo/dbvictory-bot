@@ -231,6 +231,67 @@ def gap(a, b):
     return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
 
+def passage_width(tiles, point, axis):
+    """Measure up to four walkable cells across. A narrow result requires two walls."""
+    width = 1
+    walls = 0
+    for sign in (-1, 1):
+        x, y, z = point
+        for _ in range(3):
+            x += sign if axis == 0 else 0
+            y += sign if axis == 1 else 0
+            tile = tiles.get((x, y, z))
+            if ordinary_terrain(tile):
+                width += 1
+                if width >= 4:
+                    return 4
+                continue
+            if (tile and tile.get('kind') in {'blocked','no_ground'} and not tile.get('navigation')
+                    and (not tile.get('occupants') or any('not_walkable' in i.get('flags', ()) for i in tile['items']))):
+                walls += 1
+            break
+    return width if walls == 2 else None
+
+
+def room_before_corridor(cells, route, edges, members):
+    """Stop on the room side of two consecutive narrow cross-sections on this route."""
+    if len(route) < 3:
+        return False
+    here = tuple(route[0])
+    tiles = {(c['x'], c['y'], c['z']): c for c in cells if c['z'] == here[2]}
+    if not ordinary_terrain(tiles.get(here)):
+        return False
+    # Even three walkable lanes fill only 15 of these 25 cells in a straight tunnel.
+    x, y, z = here
+    if sum(ordinary_terrain(tiles.get((x+dx,y+dy,z))) for dx in range(-2,3) for dy in range(-2,3)) <= 15:
+        return False
+    ahead = []
+    previous = here
+    for point in map(tuple, route[1:5]):
+        tile = tiles.get(point)
+        if (not ordinary_terrain(tile) or tile.get('navigation') or gap(previous, point) != 1
+                or any(tuple(e['origin']) == previous and tuple(e['exit']) == point for e in edges)):
+            break
+        ahead.append(point)
+        previous = point
+    for axis in (0, 1):
+        if passage_width(tiles, here, axis) != 4:
+            continue
+        along = 1 - axis
+        previous_narrow = None
+        for point in ahead:
+            width = passage_width(tiles, point, axis)
+            if width is None or width >= 4:
+                previous_narrow = None
+                continue
+            if (previous_narrow and (point[along] - previous_narrow[along])
+                    * (previous_narrow[along] - here[along]) > 0):
+                terrain, _ = placement_terrain(cells, here, edges, members)
+                return here in terrain and members <= terrain and melee_capacity(terrain, here, members) >= len(members)
+            previous_narrow = point
+    return False
+
+
 def squared(a, b):
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 

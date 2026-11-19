@@ -297,6 +297,7 @@ test('lure status distinguishes confirmed followers from group, timeout and tran
   assert.match(html({stop_reason:'timeout'}),/Limit czasu · walczę/);
   assert.doesNotMatch(html({stop_reason:'timeout'}),/Grupa zebrana/);
   assert.match(html({stop_reason:'transition'}),/Przed przejściem/);
+  assert.match(html({engaged:4,goal:8,stop_reason:'corridor'}),/Przed wąskim korytarzem · walczę/);
   const paused=render(React.createElement(panel.default,{progress,paused:true}));
   assert.match(paused,/Lurowanie wstrzymane/);assert.doesNotMatch(paused,/atakuję|walczę/);
   const settings=render(React.createElement(panel.LureSettings,{value:component('../lib/cavebotModel.ts').defaultCombat(),onChange:()=>{throw Error('render cannot start anything');}}));

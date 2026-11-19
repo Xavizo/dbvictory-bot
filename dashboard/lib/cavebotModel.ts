@@ -1,5 +1,5 @@
 export type Position=[number,number,number];
-export type LureProgress={engaged?:number;nearby?:number;following:number;goal:number;waiting:boolean;stop_reason:'group'|'timeout'|'transition'|null};
+export type LureProgress={engaged?:number;nearby?:number;following:number;goal:number;waiting:boolean;stop_reason:'group'|'timeout'|'transition'|'corridor'|null};
 export type ConditionOp='>'|'>='|'='|'<='|'<';
 export type CombatSpell={words:string;trigger:"visible"|"distance";cooldown:number;ki:number;range:number;count:number;
   aim?:'target'|'self';ki_op?:ConditionOp;ki_unit?:'percent'|'value';hp?:number|null;hp_op?:ConditionOp;hp_unit?:'percent'|'value';range_op?:ConditionOp;count_op?:ConditionOp};

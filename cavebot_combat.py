@@ -3,7 +3,7 @@ import math
 import re
 import time
 from cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker, gap, group_needs_time, melee_capacity,
-                          lure_stopping_path, placement_terrain, queued_pack_step, route_approaches)
+                          lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches)
 from combat_reachability import reachable_tiles
 from combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
 from combat_wave import facing
@@ -311,21 +311,46 @@ class CombatRuntime:
         mode=self.policy_mode or self.config['mode']
         if mode!='lure':return not targets
         physical=self.visible_group(sample,targets)
-        following=self.refresh_lure_limit(targets,physical,boundary)
+        following=self.refresh_lure_limit(targets,physical,boundary,sample)
         if self.lure_stop_reason or self.battle_started:
             return self.allow_positioning(sample,targets,physical,boundary)
         if self.engaged_count>=self.config['lure_count'] or (boundary and physical):return False
         return not self.gathering_wait(sample, targets, following)
 
-    def refresh_lure_limit(self,targets,physical,boundary):
+    def gather_stop_reason(self, sample, targets, engaged, boundary):
+        goal = self.config['lure_count']
+        if len(engaged) >= goal:
+            return 'group'
+        if boundary and targets:
+            return 'transition'
+        if len(engaged) < max(2, (goal+1)//2):
+            return None
+
+        o = self.owner
+        pos = tuple(o.state.game_state.position)
+        route = o.path[o.index:o.index+5]
+        members = {tuple(c['position']) for c in targets if c['id'] in engaged}
+        if not route or tuple(route[0]) != pos or not room_before_corridor(sample['cells'], route, o.edges, members):
+            return None
+        # A configured attack radius can be shorter than the visible corridor.
+        # Looking for another recruit must not change which targets may be attacked.
+        visible = targets if self.config['engage'] == 'visible' else eligible_monsters(
+            o.state.game_state, sample, {**self.config, 'engage':'visible'})
+        if any(c['id'] not in engaged and c['id'] not in self.stalled_targets
+               and route_approaches(pos,c['position'],route,0,o.edges) for c in visible):
+            return None
+        return 'corridor'
+
+    def refresh_lure_limit(self,targets,physical,boundary,sample):
         adjacent={c['id'] for c in targets if c['distance']<=1}
         following={c['id'] for c in targets if c['id'] in self.pursuit.following}
         self.nearby_count=max(len(adjacent),sum(gap<=1 for _,gap in physical))
         known_positions={tuple(c['position']) for c in targets if c['id'] in adjacent|following}
         self.confirmed_count=len(adjacent|following)
         self.engaged_count=self.confirmed_count+sum(gap<=1 and point not in known_positions for point,gap in physical)
-        if self.confirmed_count>=self.config['lure_count']:self.latch_lure('group')
-        elif boundary and targets:self.latch_lure('transition')
+        if not self.lure_stop_reason:
+            reason = self.gather_stop_reason(sample, targets, adjacent | following, boundary)
+            if reason:self.latch_lure(reason)
         return following
 
     def candidates(self,sample=None):
@@ -496,9 +521,10 @@ class CombatRuntime:
                 # Seeing an uncollected monster ahead is an approach, not a
                 # gathering interval. Start the limit when a real group forms.
                 if self.lure_started is None and self.confirmed_count:self.lure_started=now
-                if self.confirmed_count>=cfg['lure_count']:self.lure_stop_reason='group'
-                elif at_transition:self.lure_stop_reason='transition'
-                elif self.lure_started is not None and (self.blocker_since or now)-self.lure_started>=cfg['lure_seconds']:self.lure_stop_reason='timeout'
+                self.lure_stop_reason = self.gather_stop_reason(sample, candidates, engaged, at_transition)
+                if (not self.lure_stop_reason and self.lure_started is not None
+                        and (self.blocker_since or now)-self.lure_started>=cfg['lure_seconds']):
+                    self.lure_stop_reason='timeout'
                 luring=self.lure_stop_reason is None and allow_movement
             if self.lure_stop_reason and cfg['lure_count']>=8:
                 can_move = (allow_movement and self.lure_stop_reason in {'group','timeout'} and not at_transition
@@ -533,7 +559,7 @@ class CombatRuntime:
             await asyncio.sleep(.05);return True
         self.phase='fight';o.reason=f'Walka: {current["name"]} · {current["health"]}% HP.'
         if self.lure_stop_reason:
-            label={'group':'Grupa zebrana','transition':'Przejście lub koniec odcinka','timeout':'Limit czasu zbierania'}[self.lure_stop_reason]
+            label={'group':'Grupa zebrana','transition':'Przejście lub koniec odcinka','corridor':'Przed wąskim korytarzem','timeout':'Limit czasu zbierania'}[self.lure_stop_reason]
             o.reason=f'{label} — stoję i walczę: {current["name"]} · {current["health"]}% HP.'
         cid=current['id']
         can_attack=attack_distance_ok(cfg,current)
@@ -601,7 +627,7 @@ class CombatRuntime:
         if luring:
             fresh=o.map_now()
             latest=self.candidates(fresh)
-            self.refresh_lure_limit(latest,self.visible_group(fresh,latest),at_transition)
+            self.refresh_lure_limit(latest,self.visible_group(fresh,latest),at_transition,fresh)
             luring = self.lure_stop_reason is None
             if luring and self.engaged_count>=cfg['lure_count']:
                 o.reason='Sprawdzam odczyt grupy przed dalszym lurowaniem.'

@@ -71,13 +71,13 @@ def test_pet_moves_as_occupied_tile_but_is_never_a_target_group_member_or_spell_
                                  health=100, t=time.time())
     targets = runtime.candidates(live)
     assert [c["id"] for c in targets] == [WILD]
-    runtime.refresh_lure_limit(targets, runtime.visible_group(live), False)
+    runtime.refresh_lure_limit(targets, runtime.visible_group(live), False, live)
     assert runtime.engaged_count == 1 and runtime.lure_stop_reason is None
     spell = validate_spell(dict(words="Shunkan", aim="self", count=2, range=1))
     assert evaluate_spell(spell, gs, targets, targets[0])["matched_count"] == 1
     alone = sample(gs, [(NEXT, 1, identity)])
     assert runtime.candidates(alone) == [] and runtime.visible_group(alone) == []
-    runtime.refresh_lure_limit([], [], True)
+    runtime.refresh_lure_limit([], [], True, live)
     assert runtime.lure_stop_reason is None
 
 
