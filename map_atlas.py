@@ -456,11 +456,70 @@ class MapAtlas:
                 for values in edges.values() for dest,r in values
                 if tuple(r['entry']) in visible and tuple(r['origin']) in tiles and dest in tiles and r['action']!='unknown']
 
+    def recording_step_observations(self, observations):
+        """Resolve a recorded floor step when the same entrance had several tile stacks."""
+        with self.lock:
+            tiles = PagedTiles(self.path,self.tiles)
+        entries = {}
+        for row in observations:
+            if (row.get("evidence")=="observed" and row.get("entry") and row.get("exit")
+                    and row["entry"][2]!=row["exit"][2]):
+                entries.setdefault(tuple(row["entry"]),[]).append(row)
+        discard = set()
+        for entry, rows in entries.items():
+            if (len(rows)<2 or len({tuple(r["exit"]) for r in rows})!=1 or
+                    not all(r.get("reason")=="matched_command" and r.get("action")=="step"
+                            and r.get("item_id") is None and r.get("entry_items") for r in rows)):
+                continue
+            stacks = {tuple(sorted(r["entry_items"])) for r in rows}
+            if len(stacks)<2:
+                continue
+            ids = {item["id"] for item in tiles.get(entry,{}).get("items",[])}
+            matching = [stack for stack in stacks if set(stack)<=ids]
+            if len(matching)==1:
+                discard.update(r["id"] for r in rows if tuple(sorted(r["entry_items"]))!=matching[0])
+        return [r for r in observations if r.get("id") not in discard]
+
+    def ordinary_recorded_tiles(self, recording, observations):
+        with self.lock:
+            tiles = PagedTiles(self.path,self.tiles)
+        entries = {tuple(row["entry"]) for row in observations if row.get("entry")}
+        points = {tuple(s["pos"]) for s in recording["observed_path"] if position(s.get("pos"))}
+        return {p for p in points-entries if (cell := tiles.get(p,{})).get("kind") == "clear"
+                and not cell.get("navigation") and not cell.get("stairs")}
+
+    def unavailable_recorded_crossings(self, recording, observations):
+        with self.lock:
+            tiles = PagedTiles(self.path,self.tiles)
+        trace = recording["observed_path"]
+        pairs = {(tuple(a["pos"]),tuple(b["pos"])) for a,b in zip(trace,trace[1:])
+                 if a["pos"][2]!=b["pos"][2] and not b.get("break_before")}
+        permitted = set()
+        bound = list(observations)
+        wanted = {}
+        for a,b in pairs:
+            pair = [list(a),list(b)]
+            links = trace_links(pair,observations,pair)
+            if links:
+                identity = links[0]["id"]
+                wanted[a,b] = identity
+                for source in observations:
+                    if source.get("id")==identity and source["origin"]!=pair[0]:
+                        row = transition_from_origin(source,pair[0],observations)
+                        if row is not None:
+                            bound.append(row)
+        edges = navigation_edges(tiles,bound)
+        for (a,b),identity in wanted.items():
+            if any(dest==b and row["id"]==identity for dest,row in edges.get(a,())):
+                permitted.add((a,b))
+        return pairs-permitted
+
     def recording_route(self,recording,observations,optimize):
         if recording.get("atlas_scope") not in (None,self.scope):
             raise ValueError("To nagranie pochodzi z innego atlasu.")
         rows=self.remember_recorded_ropes(recording,observations)
-        points,original,links=recording_points(recording,rows,optimize=optimize,include_links=True)
+        points,original,links=recording_points(recording,rows,optimize=optimize,include_links=True,
+                                              keep_positions=recording.get("coverage_anchors", ()))
         # A recorded ordinary waypoint can lie on terrain the live executor
         # avoids. Prefer an adjacent tile actually visited on this run, only
         # if both adjoining legs can be planned entirely on clear terrain.
@@ -521,12 +580,16 @@ class MapAtlas:
         # IDs identify an entry/exit mechanism, not its most recently observed
         # approach. Preserve saved links after learning a different approach.
         bound=list(observations)
+        bound_approaches=set()
         for link in links:
             a,b=points[link['from_index']:link['from_index']+2]
             for source in observations:
                 if source.get('id')!=link['id'] or source.get('exit')!=b:continue
                 row=transition_from_origin(source,a,observations)
-                if row is not None and row['origin']!=source['origin']:bound.append(row)
+                key=(link['id'],tuple(a),tuple(b))
+                if row is not None and row['origin']!=source['origin'] and key not in bound_approaches:
+                    bound.append(row)
+                    bound_approaches.add(key)
         edges=navigation_edges(tiles,bound)
         automatic_entries={tuple(r["entry"]) for values in edges.values() for _,r in values if r["action"] in {"step","use_with_then_step"}}
         def walkable(p):

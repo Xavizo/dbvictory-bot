@@ -1,5 +1,12 @@
 [
   {
+    "version": "v1.4.0",
+    "changes": [
+      {"title":"Szkic przez całe odwiedzone expowisko","detail":"Nagrywanie adaptacyjne obejmuje także boczne sale i odcinki lurowania. Panel oddzielnie pokazuje etap nagrania i liczbę sektorów w trasie."},
+      {"title":"Miejsca spotkań z potworami","detail":"Nowe nagrania rozróżniają pierwszy kontakt z mobem, śmierć wybranego celu przy przyroście XP i inne pobliskie śmierci przy XP."}
+    ]
+  },
+  {
     "version": "v1.3.1",
     "changes": [
       {"title": "Start otwiera również klienta DBVictory", "detail": "Jeśli klient jest zamknięty, launcher uruchomi go z wybranego folderu i poczeka na jego okno. Jeśli już działa, Start użyje otwartego klienta."}

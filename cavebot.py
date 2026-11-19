@@ -170,7 +170,12 @@ def _sample_recording_position(state):
                 and max(abs(trace[-1]["pos"][i]-pos[i]) for i in (0, 1)) <= 3):
             xp_gain = xp - previous[1]
         state._recording_xp_sample = (gs, xp)
-    if trace and trace[-1]["pos"]==list(pos) and not new_segment:
+    same_position = bool(trace and trace[-1]["pos"]==list(pos) and not new_segment)
+    encounters = getattr(state, "_recording_encounters", None)
+    if encounters is not None and (same_position or len(trace) < 20000):
+        encounters.sample(gs, state.passive_map_monitor, len(trace)-int(same_position), time.time(),
+                          xp_gain, new_segment or bool(trace and trace[-1]["pos"][2] != pos[2]))
+    if same_position:
         trace[-1]["last_t"] = max(trace[-1].get("last_t",trace[-1]["t"]),elapsed)
         if xp_gain:
             trace[-1]["xp_gain"] = trace[-1].get("xp_gain", 0) + xp_gain
@@ -208,6 +213,10 @@ def start_recording(state, name: str, *, mode: str = "manual") -> str | None:
     state.recording_mode = mode
     state.recording_hunt_progress = {"stage": 0} if mode == "adaptive" else None
     state._recording_xp_sample = None
+    state._recording_encounters = None
+    if mode == "adaptive":
+        from hunt_encounters import HuntEncounters
+        state._recording_encounters = HuntEncounters()
     state.recording_waypoints = []
     state.recording_observed_path = []
     state.recording_trace_limited = False
@@ -379,6 +388,7 @@ def _recording_data(state):
         "start_position": list(state.recording_start_pos),
         "waypoints": state.recording_waypoints,
         "observed_path": state.recording_observed_path,
+        **({"encounters": state._recording_encounters.events} if getattr(state, "_recording_encounters", None) else {}),
         "trace_limited": state.recording_trace_limited,
         "position_source": "client" if getattr(state.game_state,"client_state_required",False) else "server",
     }
@@ -413,6 +423,7 @@ def stop_recording(state, *, discard: bool = False) -> dict | None:
     if getattr(state, "recording_mode", "manual") == "adaptive":
         recording["recording_mode"] = "adaptive"
     state.recording_mode = "manual"
+    state._recording_encounters = None
     state.recording_hunt_progress = None
     state._recording_xp_sample = None
     state.recording_active = False

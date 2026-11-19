@@ -348,7 +348,11 @@ class _Handler(BaseHTTPRequestHandler):
                     if recording.get("atlas_scope") != atlas.scope:
                         raise ValueError("To nagranie pochodzi z innego atlasu.")
                     observations = atlas.remember_recorded_ropes(recording, observations)
-                    recording, hunt = hunting_excerpt(recording, observations)
+                    observations = atlas.recording_step_observations(observations)
+                    source_recording = recording
+                    ground = atlas.ordinary_recorded_tiles(recording, observations)
+                    unavailable = atlas.unavailable_recorded_crossings(recording, observations)
+                    recording, hunt = hunting_excerpt(recording, observations, ordinary_tiles=ground, unavailable=unavailable)
                     optimize = True
                 points,original,links,adjusted=atlas.recording_route(recording,observations,optimize)
             else:points=body.get("points")
@@ -356,13 +360,20 @@ class _Handler(BaseHTTPRequestHandler):
             if type(loop)is not bool:raise ValueError("Nieprawidłowa opcja pętli.")
             result=atlas.plan(points,observations,original,loop=loop,links=links)
             if hunt is not None:
-                from adaptive_recording import stays_near_trace
-                if not result["complete"] or not stays_near_trace(result["path"], recording["observed_path"]):
+                from adaptive_recording import sector, stays_near_trace
+                required = {sector(p) for p in recording["coverage_anchors"]}
+                if (not result["complete"] or not required.issubset(map(sector, result["path"]))
+                        or not stays_near_trace(result["path"], recording["observed_path"])):
+                    if hunt.get("reordered"):
+                        recording, hunt = hunting_excerpt(source_recording, observations, reorder=False)
                     points, original, links, adjusted = atlas.recording_route(recording, observations, False)
                     result = atlas.plan(points, observations, original, loop=loop, links=links)
                     if not stays_near_trace(result["path"], recording["observed_path"]):
                         raise ValueError("Droga przez atlas wychodzi poza zaobserwowany obszar expienia. Możesz wczytać pełny ślad.")
-                result["adaptive_evidence"] = hunt
+                covered = len(required.intersection(map(sector, result["path"])))
+                if result["complete"] and covered < len(required):
+                    raise ValueError(f'Plan atlasu omija {len(required)-covered} odwiedzonych sektorów. Pełny ślad pozostaje dostępny.')
+                result["adaptive_evidence"] = {**hunt, "covered":covered}
             if recording is None and body.get('optimize') is True:
                 from map_atlas import recording_points
                 from map_atlas import validate_labels,remap_links

@@ -185,7 +185,7 @@ export interface CavebotState {
   recording: {
     active: boolean;
     mode?: "manual" | "adaptive";
-    hunt_progress?: {stage: 0 | 1 | 2 | 3 | 4 | null; areas?: number; total_areas?: number; revisited?: number} | null;
+    hunt_progress?: {stage: 0 | 1 | 2 | 3 | 4 | null; areas?: number; total_areas?: number; revisited?: number; sectors?:number; missing_sectors?:number} | null;
     name: string;
     waypoint_count: number;
     waypoints: WaypointInfo[];
