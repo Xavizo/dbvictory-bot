@@ -95,7 +95,7 @@ def test_first_traversal_marks_matching_hint_only(learner):
 
 def test_new_rope_and_shovel_ids_are_asset_scoped():
     known=load_confirmed_types(asset_sha256=UPDATED.dat_sha256)
-    assert set(known)=={9410,606,607,476,1948}
+    assert set(known)=={183,9410,606,607,476,1948}
     assert known[476]["kind"]=="hole" and known[1948]["kind"]=="ladder"
     assert known[9410]["kind"]=="rope_spot" and known[606]["kind"]=="covered_hole" and known[607]["kind"]=="hole"
     assert 9410 not in load_confirmed_types(asset_sha256=LEGACY.dat_sha256)

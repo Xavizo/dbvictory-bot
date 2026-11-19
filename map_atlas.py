@@ -5,6 +5,7 @@ from contextlib import closing
 import heapq
 import hashlib
 from itertools import groupby
+from functools import lru_cache
 import json
 from pathlib import Path
 import sqlite3
@@ -14,7 +15,7 @@ import uuid
 
 from transition_learning import position,gate_entry_record
 from cavebot_combat import validate_combat
-from navigation_tools import tool_kind
+from navigation_tools import WEB_ITEM_ID, cuttable_web, tool_kind, web_edge
 from recorded_rope import recorded_rope_edges
 
 CACHE_TILES=4096
@@ -148,7 +149,7 @@ def review_recorded_actions(recording,transitions):
             if wp['type']=='use_item':
                 if row['action'] not in {'use','use_then_step'} or wp.get('item_id')!=row.get('item_id'):continue
             else:
-                if row['action'] not in {'use_with','use_with_then_step'} or wp.get('item_id') not in (row.get('tool_ids') or [row.get('tool_id')]):continue
+                if row['action'] not in {'use_with','use_with_then_step','clear_web'} or wp.get('item_id') not in (row.get('tool_ids') or [row.get('tool_id')]):continue
                 if wp.get('target_item_id') is not None and wp['target_item_id']!=row.get('item_id'):continue
             confirmed=False
             for start in range(len(trace)-1):
@@ -258,18 +259,27 @@ def navigation_edges(tiles,observations):
     return edges
 
 
-def decode_tile(row):
+def decode_tile(row, web_definition=None):
     x,y,z,raw,seen=row;cell=json.loads(raw)
     if (not isinstance(cell,dict) or not position([x,y,z]) or
         [cell.get(k) for k in ("x","y","z")]!=[x,y,z] or cell.get("kind") not in KINDS
         or not isinstance(cell.get("items"),list) or len(cell["items"])>16):
         raise ValueError("Nieprawidłowe pole w atlasie.")
+    if web_definition:
+        features = cell.get('navigation', [])
+        for item in cell['items']:
+            if item['id'] == WEB_ITEM_ID and not any(f.get('item_id') == WEB_ITEM_ID and f.get('source') != 'client_hint' for f in features):
+                cell['navigation'] = [dict(web_definition, item_id=WEB_ITEM_ID, stack=item['stack'], source='confirmed_id'),
+                                      *(f for f in features if f.get('item_id') != WEB_ITEM_ID)]
+                break
     return (x,y,z),{**cell,"seen_at":seen}
 
 
 class PagedTiles:
     """Small read cache; the entire persistent atlas is addressable on demand."""
-    def __init__(self,path,recent=()):self.path=path;self.recent=dict(recent);self.pages=OrderedDict()
+    def __init__(self,path,recent=(),web_definition=None):
+        self.path=path;self.recent=dict(recent);self.pages=OrderedDict()
+        self.web_definition=web_definition
     def get(self,key,default=None):
         key=tuple(key)
         if key in self.recent:return self.recent[key]
@@ -279,7 +289,7 @@ class PagedTiles:
             with closing(sqlite3.connect(self.path.as_uri()+"?mode=ro",uri=True,timeout=.5)) as db:
                 rows=db.execute("SELECT x,y,z,data,seen FROM tiles WHERE z=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?",
                                 (z,left,left+PAGE_SIZE-1,top,top+PAGE_SIZE-1)).fetchall()
-            self.pages[page]=dict(decode_tile(row) for row in rows)
+            self.pages[page]=dict(decode_tile(row,self.web_definition) for row in rows)
             if len(self.pages)>CACHE_PAGES:self.pages.popitem(last=False)
         self.pages.move_to_end(page)
         return self.pages[page].get(key,default)
@@ -291,7 +301,8 @@ class PagedTiles:
 
 
 class MapAtlas:
-    def __init__(self,directory,scope):
+    def __init__(self,directory,scope,*,web_definition=None):
+        self.web_definition=web_definition
         self.scope=scope
         self.path=Path(directory)/f"map_atlas-{scope[:16]}.sqlite3"
         self.tiles=OrderedDict();self.total=0;self.floors=set();self.error=None;self.revision=0
@@ -321,7 +332,7 @@ class MapAtlas:
                 self.total=db.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
                 self.floors={r[0] for r in db.execute("SELECT DISTINCT z FROM tiles")}
                 rows=db.execute("SELECT x,y,z,data,seen FROM tiles ORDER BY seen DESC LIMIT ?",(CACHE_TILES,)).fetchall()
-                self.tiles=OrderedDict(decode_tile(row) for row in rows)
+                self.tiles=OrderedDict(decode_tile(row,self.web_definition) for row in rows)
         except (OSError,sqlite3.Error,ValueError,TypeError,KeyError):
             self.tiles=OrderedDict();self.error="Atlas niedostępny lub nieprawidłowy. Plik nie zostanie nadpisany."
 
@@ -362,7 +373,7 @@ class MapAtlas:
                 with closing(sqlite3.connect(self.path.as_uri()+"?mode=ro",uri=True,timeout=.5)) as db:
                     rows=db.execute("SELECT x,y,z,data,seen FROM tiles WHERE z=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?",
                                     (z,x-radius,x+radius,y-radius,y+radius)).fetchall()
-                cells=[decode_tile(row)[1] for row in rows]
+                cells=[decode_tile(row,self.web_definition)[1] for row in rows]
             except (sqlite3.Error,ValueError,TypeError,KeyError):
                 cells=[c for (xx,yy,zz),c in self.tiles.items() if zz==z and abs(xx-x)<=radius and abs(yy-y)<=radius]
                 self.error=self.error or "Nie udało się odczytać fragmentu atlasu; dane pozostają na dysku."
@@ -433,7 +444,7 @@ class MapAtlas:
             return rows+[row for key,row in self.recorded_ropes.items() if key not in known]
 
     def infer_recorded_ropes(self,recording,observations):
-        with self.lock:tiles=PagedTiles(self.path,self.tiles)
+        with self.lock:tiles=PagedTiles(self.path,self.tiles,self.web_definition)
         return recorded_rope_edges(recording,observations,self.scope,tiles)
 
     def remember_recorded_ropes(self,recording,observations):
@@ -450,7 +461,7 @@ class MapAtlas:
     def route_transitions(self,observations,cells):
         if self.error:return []
         visible={(c['x'],c['y'],c['z']) for c in cells}
-        with self.lock:tiles=PagedTiles(self.path,self.tiles)
+        with self.lock:tiles=PagedTiles(self.path,self.tiles,self.web_definition)
         edges=navigation_edges(tiles,[r for r in self.with_recorded_ropes(observations) if tuple(r.get('entry') or ()) in visible])
         return [{k:r.get(k) for k in ('id','origin','entry','exit','action','item_id','tool_id','prepared_item_id','tool_ids','count')}
                 for values in edges.values() for dest,r in values
@@ -459,7 +470,7 @@ class MapAtlas:
     def recording_step_observations(self, observations):
         """Resolve a recorded floor step when the same entrance had several tile stacks."""
         with self.lock:
-            tiles = PagedTiles(self.path,self.tiles)
+            tiles = PagedTiles(self.path,self.tiles,self.web_definition)
         entries = {}
         for row in observations:
             if (row.get("evidence")=="observed" and row.get("entry") and row.get("exit")
@@ -482,7 +493,7 @@ class MapAtlas:
 
     def ordinary_recorded_tiles(self, recording, observations):
         with self.lock:
-            tiles = PagedTiles(self.path,self.tiles)
+            tiles = PagedTiles(self.path,self.tiles,self.web_definition)
         entries = {tuple(row["entry"]) for row in observations if row.get("entry")}
         points = {tuple(s["pos"]) for s in recording["observed_path"] if position(s.get("pos"))}
         return {p for p in points-entries if (cell := tiles.get(p,{})).get("kind") == "clear"
@@ -490,7 +501,7 @@ class MapAtlas:
 
     def unavailable_recorded_crossings(self, recording, observations):
         with self.lock:
-            tiles = PagedTiles(self.path,self.tiles)
+            tiles = PagedTiles(self.path,self.tiles,self.web_definition)
         trace = recording["observed_path"]
         pairs = {(tuple(a["pos"]),tuple(b["pos"])) for a,b in zip(trace,trace[1:])
                  if a["pos"][2]!=b["pos"][2] and not b.get("break_before")}
@@ -524,7 +535,7 @@ class MapAtlas:
         # avoids. Prefer an adjacent tile actually visited on this run, only
         # if both adjoining legs can be planned entirely on clear terrain.
         adjusted=[]
-        with self.lock: tiles=PagedTiles(self.path,self.tiles)
+        with self.lock: tiles=PagedTiles(self.path,self.tiles,self.web_definition)
         ends={i for link in links for i in (link['from_index'],link['from_index']+1)}
         trace=recording.get('observed_path') or []
         def ordinary_avoid(i):
@@ -576,7 +587,7 @@ class MapAtlas:
         # Keep drawn anchors intact. A nearby endpoint may close via verified
         # ordinary terrain; distant returns still require explicit waypoints.
         loop_closed=points[-1]==points[0]
-        with self.lock:tiles=PagedTiles(self.path,self.tiles)
+        with self.lock:tiles=PagedTiles(self.path,self.tiles,self.web_definition)
         # IDs identify an entry/exit mechanism, not its most recently observed
         # approach. Preserve saved links after learning a different approach.
         bound=list(observations)
@@ -592,12 +603,18 @@ class MapAtlas:
                     bound_approaches.add(key)
         edges=navigation_edges(tiles,bound)
         automatic_entries={tuple(r["entry"]) for values in edges.values() for _,r in values if r["action"] in {"step","use_with_then_step"}}
-        def walkable(p):
-            tile=tiles.get(p,{})
-            # Transitions, doors and teleports require explicit observed edges.
-            # not_pathable is a preference (fields), not the not_walkable flag.
-            # Doors remain explicit transitions even when last seen open.
-            return p not in automatic_entries and tile.get("kind") in {"clear","avoid"} and all(f["kind"] in {"rope_spot","ladder"} for f in tile.get("navigation",[]))
+        @lru_cache(maxsize=4096)
+        def terrain(p):
+            if p in automatic_entries:
+                return None
+            tile = tiles.get(p)
+            if not tile:
+                return None
+            if tile['kind'] in {'clear','avoid'} and all(f['kind'] in {'rope_spot','ladder'} for f in tile.get('navigation', ())):
+                return tile['kind']
+            if cuttable_web(tile):
+                return 'web'
+            return None
         path=[list(points[0])];actions=[];gaps=[];legs=[];expanded=0
         pairs=list(zip(points,points[1:]))
         for index,(a,b) in enumerate(pairs):
@@ -605,7 +622,7 @@ class MapAtlas:
             a,b=tuple(a),tuple(b)
             entered_gate=index>0 and any(tuple(t['exit'])==a and tuple(t['entry'])==a and t['action']=='use' for t in actions)
             open_door=tiles.get(a,{}).get('kind')=='clear' and any(f.get('door_state_hint')=='open' for f in tiles.get(a,{}).get('navigation',[]))
-            if a not in tiles or (not walkable(a) and a not in edges and not entered_gate and not open_door):
+            if a not in tiles or (not terrain(a) and a not in edges and not entered_gate and not open_door):
                 gaps.append({"segment":index,"from":list(a),"to":list(b),"reason":"Punkt początkowy jest nieznany lub zablokowany"})
                 break
             if index in selected:
@@ -628,12 +645,19 @@ class MapAtlas:
                     q=(p[0]+dx,p[1]+dy,p[2])
                     # DBVictory acknowledges diagonal steps even between two
                     # blocked side tiles. Only the destination is entered.
-                    if walkable(q):
-                        neighbors.append((q,(14 if dx and dy else 10)+(50 if tiles[q]["kind"]=="avoid" else 0),None))
+                    kind = terrain(q)
+                    if kind is None:
+                        continue
+                    step_cost = 14 if dx and dy else 10
+                    # Prefer a short clear bypass to using a tool.
+                    if kind == 'web':
+                        neighbors.append((q, step_cost + 35, web_edge(p,q)))
+                    else:
+                        neighbors.append((q, step_cost + (50 if kind == 'avoid' else 0), None))
                 # Known normal doors can open on the route. Floor changes,
                 # holes and teleports still require explicit selected edges.
                 for q,row in edges.get(p,[]):
-                    if row.get('automatic_door') and q[2]==a[2] and walkable(q):
+                    if row.get('automatic_door') and q[2]==a[2] and terrain(q) in {'clear','avoid'}:
                         neighbors.append((q,20,row))
                 for q,step,row in neighbors:
                     new=distance+step
@@ -643,8 +667,8 @@ class MapAtlas:
                 target=tiles.get(b)
                 reason=('Osiągnięto limit wyszukiwania drogi.' if expanded>=MAX_EXPANSIONS else
                         'Pole docelowe nie zostało zapisane w atlasie.' if target is None else
-                        'Pole docelowe jest przejściem; brakuje przypisanego wejścia i wyjścia.' if target.get('navigation') and not walkable(b) else
-                        'Pole docelowe jest zapisane jako zablokowane.' if not walkable(b) else
+                        'Pole docelowe jest przejściem; brakuje przypisanego wejścia i wyjścia.' if any(f.get('kind') != 'web' for f in target.get('navigation', ())) and not terrain(b) else
+                        'Pole docelowe jest zapisane jako zablokowane.' if not terrain(b) else
                         'Znane pola atlasu nie tworzą dostępnej drogi między tymi punktami.')
                 gaps.append({"segment":index,"from":list(a),"to":list(b),"reason":reason})
                 break
@@ -697,7 +721,7 @@ class MapAtlas:
             else:
                 return_mode='unavailable'
                 gaps.append({'segment':len(anchors)-1,'from':anchors[-1],'to':anchors[0],'reason':return_error})
-        avoided=[p for p in path if tiles.get(tuple(p),{}).get("kind")=="avoid"]
+        avoided=[p for p in path if tiles.get(tuple(p),{}).get("kind")=="avoid" and terrain(tuple(p))!="web"]
         return {"points":anchors,"original":original or anchors,"path":path,"transitions":actions,"gaps":gaps,"loop":loop,"loop_closed":loop_closed,
                 "legs":legs,"avoid_tiles":avoided,"requires_action_review":bool(avoided),
                 "complete":not gaps,"links":links,"expanded":expanded,"preview_only":True,"scope":self.scope,

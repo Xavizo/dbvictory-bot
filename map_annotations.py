@@ -16,6 +16,7 @@ ACTIVATIONS = {
     "ladder":("use",), "descent":("step","use"),
     "door":("open_if_closed",), "level_gate":("open_if_closed",),
     "rope_spot":("rope","aio","fly_up","rope_or_fly_up"),
+    "web":("aio",),
     "covered_hole":("shovel","aio"),
 }
 

@@ -13,6 +13,7 @@ export const navigationStyles: Record<MapNavigationFeature["kind"], { label: str
   descent: { label: "Zejście / klapa", symbol: "↓", color: "#fbbf24" },
   hole: { label: "Dziura", symbol: "↓", color: "#fbbf24" },
   covered_hole: { label: "Shovel spot · zasypana dziura", symbol: "↓", color: "#fbbf24" },
+  web: { label: "Pajęczyna", symbol: "W", color: "#c4b5fd" },
   rope_spot: { label: "Rope spot", symbol: "R", color: "#7dd3fc" },
   door: { label: "Drzwi", symbol: "D", color: "#fde68a" },
   level_gate: { label: "Bramka levelowa", symbol: "G", color: "#fde68a" },

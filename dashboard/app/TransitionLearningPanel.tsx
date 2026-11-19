@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { TransitionAction, PassiveMapState, TransitionObservation } from "@/lib/api";
 
 export const transitionActions: Record<TransitionAction, string> = {
-  step: "Wejście na pole", use: "Użycie obiektu", use_with: "Użycie narzędzia na polu",
+  clear_web: "Przetnij pajęczynę AiO i przejdź", step: "Wejście na pole", use: "Użycie obiektu", use_with: "Użycie narzędzia na polu",
   use_then_step: "Użycie obiektu → przejście", use_with_then_step: "Narzędzie → wejście na pole", fly_up: "Czar fly up", unknown: "Nieustalona",
 };
 const objectBehaviors = {open_then_step:"Otwarcie bez ruchu → potem krok", use_enters:"Użycie przenosi na pole", manual_close:"Ręczne zamknięcie", closes_after_exit:"Zamknięcie po wyjściu", stays_open:"Otwarte przez ≥2 s po wyjściu"};

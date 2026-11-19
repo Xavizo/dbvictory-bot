@@ -53,6 +53,7 @@ export function NavigationDetails({ feature, historical=false }: { feature: MapN
       {feature.closing_policy === "automatic" || feature.closing_policy === "after_exit" ? " Zaobserwowano zamknięcie po wyjściu." : feature.closing_policy === "observed_open" ? " Pozostały otwarte przez co najmniej 2 s po przejściu." : feature.closing_policy === "manual" ? " Zaobserwowano ręczne zamknięcie." : " Sposób zamykania: nieustalony."}
     </p>}
     {feature.behavior_hint && feature.behavior_hint!=="unknown" && <p className="mt-1 text-teal-200">Zaobserwowana czynność: {feature.behavior_hint==="use_enters" ? "użycie przenosi postać na pole obiektu" : "użycie otwiera przejście; otwarcie bez przemieszczenia postaci"}. {feature.observation_count ?? 1}×</p>}
+    {feature.kind === "web" && <p className="mt-1 text-violet-200">AiO 8899 lub 8900 przecina pajęczynę. Ruch po zwolnieniu pola.</p>}
     {feature.kind === "rope_spot" && <p className="mt-1 text-sky-200">Rope 3003 · AiO 8899 · czar fly up. Cel i skuteczną metodę zapisze ręczne przejście.</p>}
     {feature.kind === "covered_hole" && <p className="mt-1 text-amber-200">Shovel 3457 lub AiO 8899 → otwarcie dziury → wejście na pole.</p>}
     {feature.kind === "teleport" && <p className="mt-1 text-gray-300">Cel wymaga obserwacji przejścia. Blokada pola nie wyklucza teleportu.</p>}
@@ -271,7 +272,7 @@ export default function PassiveMapPanel({ map, focusPosition }: { map?: PassiveM
       {creatureKinds.map(k=><span key={k} style={{color:creatureStyles[k].color}}>{creatureStyles[k].symbol} {creatureStyles[k].label}</span>)}<span>◎ Ty</span>
     </div>
     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-      {(["stairs", "ladder", "hole", "rope_spot", "door", "level_gate", "teleport"] as const).map((kind) =>
+      {(["stairs", "ladder", "hole", "rope_spot", "web", "door", "level_gate", "teleport"] as const).map((kind) =>
         <span key={kind} style={{ color: navigationStyles[kind].color }}><b>{navigationStyles[kind].symbol}</b> {navigationStyles[kind].label}</span>)}
       <span className="text-gray-400">? = wskazówka klienta</span>
       <span className="text-teal-300">↗ = zaobserwowane przejście</span>

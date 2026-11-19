@@ -3,7 +3,7 @@ import { authenticatedFetch } from "./auth";
 const API_BASE = "http://127.0.0.1:8089";
 
 export interface MapNavigationFeature {
-  kind: "stairs" | "ladder" | "descent" | "hole" | "covered_hole" | "rope_spot" | "door" | "level_gate" | "teleport" | "floor_change" | "passage";
+  kind: "web" | "stairs" | "ladder" | "descent" | "hole" | "covered_hole" | "rope_spot" | "door" | "level_gate" | "teleport" | "floor_change" | "passage";
   item_id: number; stack: number; source: "confirmed_id" | "confirmed_location" | "client_hint" | "user_annotation" | "observed";
   observation_count?:number;
   behavior_hint?:"use_enters"|"open_then_step"|"unknown";
@@ -43,7 +43,7 @@ export interface PassiveMapState {
   annotation_scope?: string | null; annotation_error?: string | null; annotation_editable?: boolean;
 }
 
-export type TransitionAction = "step" | "use" | "use_with" | "use_then_step" | "use_with_then_step" | "fly_up" | "unknown";
+export type TransitionAction = "clear_web" | "step" | "use" | "use_with" | "use_then_step" | "use_with_then_step" | "fly_up" | "unknown";
 export interface MapTransitionLink {
   id: string; exit: [number, number, number]; action: TransitionAction;
   direction: "up" | "down" | "same_floor"; count: number;

@@ -357,7 +357,9 @@ class PassiveMapMonitor:
                 self.annotations = MapAnnotations(Path(__file__).parent / "local_data",scope)
             if self.atlas is None or self.atlas.scope != scope:
                 from map_atlas import MapAtlas
-                self.atlas = MapAtlas(Path(__file__).parent / "local_data",scope)
+                from navigation_tools import WEB_ITEM_ID
+                types = load_confirmed_types(asset_sha256=asset.get("sha256"))
+                self.atlas = MapAtlas(Path(__file__).parent / "local_data",scope,web_definition=types.get(WEB_ITEM_ID))
             tasks = getattr(self.state,"_action_tasks",{})
             auto_task = getattr(self.state,"_auto_task",None)
             automated = (getattr(self.state,"playback_active",False) or (auto_task is not None and not auto_task.done())

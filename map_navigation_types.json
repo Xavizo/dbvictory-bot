@@ -39,6 +39,10 @@
     "cc6d91160218e7565ab1247d19ae483485dedaf6a18e24a05978ef31badb3669": {
       "asset_sha256": "cc6d91160218e7565ab1247d19ae483485dedaf6a18e24a05978ef31badb3669",
       "types": {
+        "183": {
+          "kind": "web",
+          "evidence": "User identified breakable web 183 and AiO on 2026-11-19."
+        },
         "9410": {
           "kind": "rope_spot",
           "evidence": "User report 2026-11-16: Rope 3003 or fly up. Destination not observed."

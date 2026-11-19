@@ -182,7 +182,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
     if(undoShortcut(e.key,e.ctrlKey,e.shiftKey,target?.tagName ?? "",!!target?.isContentEditable) && history.length){e.preventDefault();e.stopPropagation();undoEdit();}
   };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[active,history,atlas,loop]);
   function openTransition(p:Pos){const cell=cells.find(c=>c.x===p[0] && c.y===p[1] && c.z===p[2]);
-    if(cell?.navigation?.length || atlas?.route_transitions?.some(t=>t.entry.every((n,i)=>n===p[i]))){setTransitionSpot(p);return true;}return false;}
+    if(cell?.navigation?.some(f=>f.kind!=="web") || atlas?.route_transitions?.some(t=>t.entry.every((n,i)=>n===p[i]))){setTransitionSpot(p);return true;}return false;}
   async function useTransition(edge:RouteTransition){if(!scope || !compatible||busy)return;
     const id=++generation.current;setBusy(true);setError("");
     try {const {points:next,links:chosen,sourceIndices}=selectTransition(points,links,edge,editSegment);
@@ -338,7 +338,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
         onContextMenu={e=>{e.preventDefault();const p=locate(e as unknown as React.PointerEvent);if(!p)return;openTileMenu(p,e.clientX,e.clientY);}}
         onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer}>
         <rect width={grid.columns} height={grid.rows} fill="#14111c"/>
-        {cells.map(c=>{const f=c.navigation?.[0],style=f?navigationStyles[f.kind]:null,destination=transitionDestination([c.x,c.y,c.z],[...(atlas?.route_transitions??[]),...(workingPlan?.transitions??[])]),names:Record<string,string>={stairs:"Schody",ladder:"Drabina",hole:"Dziura",descent:"Zejście",covered_hole:"Odkop",door:"Drzwi",level_gate:"Bramka",teleport:"Teleport",rope_spot:"Rope",passage:destination.startsWith('↓')?'Zejście':destination.startsWith('↑')?'Wejście':'Przejście',floor_change:'Przejście'},detailed=viewport.width/grid.columns>=43,suffix=f?.door_state_hint==="open"?"−":f?.door_state_hint==="closed"?"+":f?.source==="client_hint"?"?":f?.direction_hint==="up"?"↑":f?.direction_hint==="down"?"↓":"";
+        {cells.map(c=>{const f=c.navigation?.[0],style=f?navigationStyles[f.kind]:null,destination=transitionDestination([c.x,c.y,c.z],[...(atlas?.route_transitions??[]),...(workingPlan?.transitions??[])]),names:Record<string,string>={web:"Pajęczyna",stairs:"Schody",ladder:"Drabina",hole:"Dziura",descent:"Zejście",covered_hole:"Odkop",door:"Drzwi",level_gate:"Bramka",teleport:"Teleport",rope_spot:"Rope",passage:destination.startsWith('↓')?'Zejście':destination.startsWith('↑')?'Wejście':'Przejście',floor_change:'Przejście'},detailed=viewport.width/grid.columns>=43,suffix=f?.door_state_hint==="open"?"−":f?.door_state_hint==="closed"?"+":f?.source==="client_hint"?"?":f?.direction_hint==="up"?"↑":f?.direction_hint==="down"?"↓":"";
           return <g key={`${c.x},${c.y}`} opacity={c.live?1:.68}><rect x={c.x-center[0]+ox+.04} y={c.y-center[1]+oy+.04} width={.92} height={.92} fill={tileStyles[c.kind]?.fill ?? "#252331"}/>
             {style && <g pointerEvents="none"><rect x={c.x-center[0]+ox+.08} y={c.y-center[1]+oy+.08} width={.84} height={.84} rx={.10} fill="#131b24" fillOpacity={.68} stroke={style.color} strokeOpacity={.7} strokeWidth={.035}/>
               <text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+(detailed ? .45 : .66)} textAnchor="middle" fontSize={detailed ? .23 : .45} fontWeight="700" fill={style.color}>{detailed?(names[f!.kind]??style.label):style.symbol}{!detailed&&suffix}</text>
@@ -424,7 +424,7 @@ export default function AtlasPanel({state,active,onRefresh,initialDraftId="",sel
     {tileMenu && menuCell && <TileContextMenu key={`${tileMenu.key}:${menuCell.items.map(i=>i.id).join(',')}`} position={tileMenu} cell={menuCell} scope={scope} editable={canAnnotate} onClose={()=>setTileMenu(null)} onCopy={copyMenuCell}
       waypoints={browseOnly?[]:points.flatMap((p,i)=>p.join(',')===tileMenu.key?[i]:[])}
       onRemoveWaypoint={browseOnly?undefined:index=>updatePoints(removeAnchor(points,index))}
-      onTransition={!browseOnly&&(menuCell.navigation?.length||atlas?.route_transitions?.some(t=>t.entry.join(',')===tileMenu.key))?()=>openTransition([menuCell.x,menuCell.y,menuCell.z]):undefined}
+      onTransition={!browseOnly&&(menuCell.navigation?.some(f=>f.kind!=="web")||atlas?.route_transitions?.some(t=>t.entry.join(',')===tileMenu.key))?()=>openTransition([menuCell.x,menuCell.y,menuCell.z]):undefined}
       routeLocked={busy||!!optimization||!!recorder?.active||simPlaying}/>}
     <div className="route-workflow route-icon-toolbar" role="group" aria-label="Narzędzia waypointów"><div className="route-toolbar-heading">{routeEnabledControl??<strong>Waypointy</strong>}{points.length>0&&<small>{points.length} pkt</small>}</div>
       {embedded&&<MapTool icon="map" label="Otwórz mapę" disabled={recorder?.active} onClick={editHere}/>}

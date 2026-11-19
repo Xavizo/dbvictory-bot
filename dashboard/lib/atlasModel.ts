@@ -185,6 +185,7 @@ export function supportedTransition(t:Partial<DisplayTransition>&{action:string}
   const item=(v:unknown)=>typeof v==='number'&&Number.isInteger(v)&&v>=100&&v<=65535;
   if(!t.origin||!t.entry||!t.exit||!item(t.item_id)||t.origin[2]!==t.entry[2])return false;
   const distance=Math.max(Math.abs(t.origin[0]-t.entry[0]),Math.abs(t.origin[1]-t.entry[1]));
+  if(t.action==='clear_web')return t.item_id===183&&[8899,8900].includes(t.tool_id??0)&&positionKey(t.entry)===positionKey(t.exit)&&distance===1;
   if(t.action==='use_with')return [3003,8899,8900].includes(t.tool_id??0)&&t.exit[2]===t.origin[2]-1&&distance<=1;
   return t.action==='use_with_then_step'&&[3457,8899,8900].includes(t.tool_id??0)&&item(t.prepared_item_id)&&t.prepared_item_id!==t.item_id&&t.exit[2]===t.origin[2]+1&&distance===1;
 }

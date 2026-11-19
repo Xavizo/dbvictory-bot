@@ -10,7 +10,7 @@ from pathlib import Path
 
 CATALOGUE_PATH = Path(__file__).with_name("map_navigation_types.json")
 ASSET_SHA256 = "26e6342c67378183dd422d3a044a7ef159e27ebfe2af1594fae8e0a35f200c91"
-SUPPORTED_KINDS = {"stairs", "ladder", "hole", "descent", "covered_hole", "rope_spot", "door", "level_gate", "teleport"}
+SUPPORTED_KINDS = {"stairs", "ladder", "hole", "descent", "covered_hole", "rope_spot", "door", "level_gate", "teleport", "web"}
 _catalogue_key = None
 _catalogue_value = {}
 _location_value = {}
@@ -51,6 +51,8 @@ def load_confirmed_types(path=CATALOGUE_PATH, asset_sha256=ASSET_SHA256):
             result[int(item_id)] = {"kind": entry["kind"]}
             if entry["kind"] == "rope_spot":
                 result[int(item_id)].update(activation_hint="rope_or_fly_up", direction_hint="up")
+            if entry["kind"] == "web":
+                result[int(item_id)]["activation_hint"] = "aio"
             if entry["kind"] == "covered_hole":
                 result[int(item_id)].update(activation_hint="shovel", direction_hint="down")
         locations = document.get("locations",{})

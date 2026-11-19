@@ -669,6 +669,14 @@ test('route blockers name the exact transition and avoided tile; a recognized do
   assert.equal(model.exports.routeExecutionIssues({transitions:[{...dig,origin:[10,10,7]}]}).length,1);
 });
 
+test('web traversal in the preview requires the confirmed web, an AiO and a single step on the same floor',()=>{
+  const web={origin:[10,10,7],entry:[11,10,7],exit:[11,10,7],action:'clear_web',item_id:183,tool_id:8899};
+  assert.deepEqual(model.exports.routeExecutionIssues({transitions:[web,{...web,tool_id:8900}]}),[]);
+  for(const change of [{item_id:182},{item_id:184},{tool_id:3457},{exit:[11,10,8]},{origin:[9,10,7]}]){
+    assert.equal(model.exports.supportedTransition({...web,...change}),false);
+  }
+});
+
 test('recorded rope ascent is executable with AiO or rope; preview and simulation agree',()=>{
   const base={origin:[10,10,9],entry:[11,10,9],exit:[11,11,8],action:'use_with',item_id:386,tool_id:8900};
   const plan={path:[base.origin,base.exit],points:[base.origin,base.exit],transitions:[base],gaps:[],complete:true};

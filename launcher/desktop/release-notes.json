@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.5.0",
+    "changes": [
+      {"title":"Pajęczyny na trasie","detail":"Atlas oznacza pajęczynę 183. Cavebot może ją ominąć lub przeciąć AiO i przejść po potwierdzeniu wolnego pola."}
+    ]
+  },
+  {
     "version": "v1.4.0",
     "changes": [
       {"title":"Szkic przez całe odwiedzone expowisko","detail":"Nagrywanie adaptacyjne obejmuje także boczne sale i odcinki lurowania. Panel oddzielnie pokazuje etap nagrania i liczbę sektorów w trasie."},
