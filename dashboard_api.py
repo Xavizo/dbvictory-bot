@@ -357,7 +357,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json_response(body)
             if route:
                 from hunt_routes import propose
-                if not 0 < int(self.headers.get('Content-Length',0)) <= 2048:
+                if not 0 < int(self.headers.get('Content-Length',0)) <= 256*1024:
                     raise ValueError('Nieprawidłowe dane propozycji.')
                 body = self._read_body()
                 if not isinstance(body, dict) or body.get('scope') != atlas.scope:
@@ -513,8 +513,11 @@ class _Handler(BaseHTTPRequestHandler):
             if recording is None and body.get('optimize') is True:
                 from map_atlas import recording_points
                 from map_atlas import validate_labels,remap_links
+                from hunt_routes import shorter_draft
                 labels=validate_labels(body.get('labels'),len(points))
                 if not result['complete']:result['optimization_blocked']=True
+                elif (shortened:=shorter_draft(atlas,observations,result,labels)) is not result:
+                    result=shortened
                 else:
                     optimized,original=recording_points({'observed_path':[{'pos':p} for p in result['path'][:result['return_start']+1]]},observations,optimize=True,keep_positions=[p for p,label in zip(points,labels) if label]+[p for link in result['links'] for p in points[link['from_index']:link['from_index']+2]])
                     result=atlas.plan(optimized,observations,original,loop=loop,links=remap_links(result['links'],points,optimized))

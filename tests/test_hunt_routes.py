@@ -52,6 +52,37 @@ def test_one_way_exit_does_not_claim_coverage_or_implicit_return(tmp_path):
         propose(atlas,edges,dict(request,scope='other'))
 
 
+def test_sector_selection_preserves_entrance_and_only_uses_remaining_stairs(tmp_path):
+    atlas, request, edges=fixture(tmp_path)
+    original=propose(atlas,edges,request)
+    request.update(excluded=[[32,32,7]],loop_start=original['entrance'])
+    route=propose(atlas,edges,request)
+    assert route['covered']==1 and route['total']==8
+    assert route['missing'] and route['entrance']==original['entrance']
+    assert {sector(p) for p in route['path']}=={(24,32,7)}
+    for z,dest in ((7,8),(8,7)):
+        atlas.observe(sample([cell(28,31,z,item=1956)]))
+        edges.append(dict(id=f'alt-{z}',origin=[28,32,z],entry=[28,31,z],exit=[28,32,dest],
+                          action='use',evidence='observed',item_id=1956,entry_items=[1956]))
+    route=propose(atlas,edges,request)
+    assert route['covered']==7 and route['transitions']>=4
+    assert (32,32,7) not in set(map(sector,route['path']))
+    with pytest.raises(ValueError,match='tylko sektory'):
+        propose(atlas,edges,dict(request,excluded=[[8,32,7]]))
+
+
+def test_optimization_keeps_unique_exploration_and_cuts_a_repeated_return(tmp_path):
+    from hunt_routes import shorter_draft
+    atlas=MapAtlas(tmp_path,'e'*64)
+    atlas.observe(sample([cell(x,32,7) for x in range(24,47)]))
+    points=[[x,32,7] for x in (24,32,24,32,46,24)]
+    plan=atlas.plan(points,[],loop=True)
+    r=shorter_draft(atlas,[],plan,['']*len(points))
+    assert len(r['path'])<len(plan['path']) and set(map(tuple,r['path']))==set(map(tuple,plan['path']))
+    assert r['loop_closed'] and r['points'][0]==r['points'][-1]==points[0]
+    assert shorter_draft(atlas,[],plan,['keep']*len(points)) is plan
+
+
 def test_sightings_guide_visits_without_following_a_lured_monster_or_crossing_a_wall(tmp_path,monkeypatch):
     atlas = MapAtlas(tmp_path,'b'*64)
     atlas.observe(sample([cell(x,y) for x in range(24,40) for y in range(32,40) if (x,y)!=(39,39)]))

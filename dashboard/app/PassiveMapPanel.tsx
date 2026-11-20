@@ -7,7 +7,7 @@ import { labelVisiblePet, saveMapAnnotation } from "@/lib/api";
 import {activationLabels,activations,defaultActivation} from "@/lib/mapInteractions";
 import { transitionActions } from "./TransitionLearningPanel";
 
-import {tileStyles as styles,navigationStyles,petStyle} from "@/lib/mapVisuals";
+import {tileStyles as styles,navigationStyles,petStyle,cutWebStyle} from "@/lib/mapVisuals";
 const flags: Record<string, string> = {
   ground: "podłoże", on_top: "górna warstwa", container: "kontener", force_use: "używalny", multi_use: "użycie na celu",
   not_walkable: "blokuje chodzenie", not_moveable: "nieruchomy", blocks_projectiles: "blokuje pociski",
@@ -29,6 +29,7 @@ function creatureCounts(cell: PassiveMapCell) {
 export function copyCellText(cell: PassiveMapCell) {
   return [
     `Pole (${cell.x}, ${cell.y}, ${cell.z}) — ${styles[cell.kind]?.label ?? cell.kind}`,
+    ...(cell.web_cut?[cutWebStyle.label+" · ID 189"]:[]),
     `Blokada przekazana przez serwer: ${cell.server_blocking === undefined ? "nieustalona" : cell.server_blocking ? `tak (${cell.server_blocking})` : "nie"}`,
     ...cell.items.map(i => `ID ${i.id} · warstwa ${i.stack} · ${i.flags.map(f=>flags[f] ?? f).join(", ") || "brak flag"}${i.lens_help !== undefined ? ` · kod pomocy ${i.lens_help}` : ""}${i.minimap_color !== undefined ? ` · kolor minimapy ${i.minimap_color}` : ""}`),
     ...(cell.navigation ?? []).map(f=>`${navigationStyles[f.kind].label} · ID ${f.item_id} · ${f.source === "observed" ? `zaobserwowano ${f.observation_count ?? 1}×` : f.source === "client_hint" ? "wskazówka klienta" : f.source === "user_annotation" ? "własny opis pola" : "potwierdzone"}${f.required_level ? ` · wymagany poziom ${f.required_level} (zgłoszenie użytkownika dla tego pola)` : ""}${f.activation_hint ? ` · ${activationLabels[f.activation_hint]}` : ""}${f.door_state_hint ? ` · stan: ${f.door_state_hint === "open" ? "otwarte" : f.door_state_hint === "closed" ? "zamknięte" : "nieznany"}` : ""}${f.note ? ` · ${f.note}` : ""}`),
@@ -71,6 +72,7 @@ function CellDetails({ cell }: { cell: PassiveMapCell | undefined }) {
       {!!cell.occupant_types?.self && <span>Twoja postać</span>}
     </div>
     {cell.reason && <p className="mt-1 text-xs text-gray-400">{cell.reason}</p>}
+    {cell.web_cut&&<p>{cutWebStyle.label} · ID 189</p>}
     {cell.navigation?.map((feature) => <NavigationDetails key={`${feature.stack}-${feature.item_id}`} feature={feature} />)}
     {cell.transitions?.map(t => <div key={t.id} className="mt-2 rounded border border-teal-700 bg-gray-800 p-2 text-xs text-teal-200">
       Zaobserwowane przejście → ({t.exit.join(", ")}) · {transitionActions[t.action]} · {t.count} razy
@@ -296,7 +298,7 @@ export default function PassiveMapPanel({ map, preview, focusPosition }: { map?:
           const key = keyOf(c), px = (c.x - shown.origin![0]) * 22, py = (c.y - shown.origin![1]) * 22;
           const player = c.x === shown.center![0] && c.y === shown.center![1];
           const feature = c.navigation?.find((f) => f.source === "user_annotation") ?? c.navigation?.find((f) => f.source === "confirmed_location") ?? c.navigation?.find((f) => f.source === "confirmed_id") ?? c.navigation?.[0];
-          const baseNav = feature ? navigationStyles[feature.kind] : c.transitions?.length ? {label:"Zaobserwowane przejście",symbol:"↗",color:"#5eead4"} : undefined;
+          const baseNav = feature ? navigationStyles[feature.kind] : c.web_cut ? cutWebStyle : c.transitions?.length ? {label:"Zaobserwowane przejście",symbol:"↗",color:"#5eead4"} : undefined;
           const nav = baseNav && feature?.door_state_hint ? {...baseNav,
             label:`${baseNav.label} · ${feature.door_state_hint==="open" ? "otwarte" : feature.door_state_hint==="closed" ? "zamknięte" : "stan nieustalony"}`,
             color:feature.door_state_hint==="open" ? "#6ee7b7" : feature.door_state_hint==="closed" ? "#fda4af" : baseNav.color} : baseNav;

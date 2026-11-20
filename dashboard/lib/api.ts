@@ -27,6 +27,7 @@ export interface PassiveMapCell {
   pet_manual?: boolean;
   items: { id: number; flags: string[]; stack: number; lens_help?: number; minimap_color?: number }[];
   navigation?: MapNavigationFeature[];
+  web_cut?: boolean;
   transitions?: MapTransitionLink[];
   server_blocking?: number; ground_speed?: number; reason?: string;
 }

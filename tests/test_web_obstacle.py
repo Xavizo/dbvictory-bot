@@ -119,3 +119,27 @@ def test_unknown_or_conflicting_web_layer():
     assert cuttable_web(tile) is None
     tile["items"].append(dict(id=183, stack=2, flags=["not_walkable"]))
     assert cuttable_web(tile) is None
+
+
+def test_hunt_handles_intact_and_cut_web_on_ordinary_ground(tmp_path):
+    from hunt_routes import GroundMap,manual_circuit
+    from navigation_tools import has_cut_web
+    kinds=load_confirmed_types(asset_sha256=CURRENT_DAT)
+    only_web={i:f for i,f in kinds.items() if f['kind']=='web'}
+    atlas=MapAtlas(tmp_path,'2'*64,web_definitions=only_web)
+    # Real Gotrunks arrangement after AiO, with optional nonblocking decoration.
+    intact=web_tile(183)
+    intact['items'][0]['id']=486
+    atlas.observe(dict(status='ready',cells=[cell(*ORIGIN),intact,cell(*END)]))
+    edges=list(GroundMap(atlas,[]).neighbors(tuple(ORIGIN)))
+    assert (tuple(WEB),45,True) in edges
+    area=dict(seed=ORIGIN,cells=[[8,8,7]],sightings=[dict(point=END,observer_cell=[8,8,7],count=1)])
+    assert manual_circuit(atlas,[],area)['transitions']==2
+    after=cell(*WEB)
+    after['items']=[dict(id=i,stack=n,flags=['ground','not_moveable'] if n==0 else ['not_moveable'])
+                    for n,i in enumerate((486,2889,189))]
+    assert has_cut_web(after['items'],only_web) and not has_cut_web(after['items'],{})
+    atlas.observe(dict(status='ready',cells=[after]))
+    saved=next(t for t in atlas.view(*WEB)['cells'] if t['x']==WEB[0])
+    assert saved['web_cut'] and not cuttable_web(saved) and saved['kind']=='clear'
+    assert manual_circuit(atlas,[],area)['transitions']==0

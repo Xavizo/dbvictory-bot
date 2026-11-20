@@ -1,5 +1,14 @@
 [
   {
+    "version":"v1.14.0",
+    "changes":[
+      {"title":"Wybierz sektory swojej pętli","detail":"W Expowiskach możesz pominąć kilka sektorów prostokątem, cofnąć zaznaczenie i przeliczyć trasę. Atlas sprawdza, które piętra mają jeszcze dojście i powrót."},
+      {"title":"Znajdź postać i gatunki na mapie świata","detail":"Wyśrodkuj mapę na postaci lub wybierz gatunek, aby wyróżnić sektory jego pierwszych wykryć. Przeliczanie ma widoczny wskaźnik postępu."},
+      {"title":"Krótsze powroty na expowisku","detail":"Propozycje atlasu i optymalizacja zapisanego szkicu skracają zbędne nawroty z zachowaniem pokrycia i przejść."},
+      {"title":"Pajęczyna przed i po przecięciu","detail":"Planer expowisk uwzględnia przejścia przez pajęczynę z AiO. Atlas oznacza również przecięty wariant 189."}
+    ]
+  },
+  {
     "version":"v1.13.1",
     "changes":[
       {"title":"Pętla expowiska startuje w największej połączonej części","detail":"Atlas sprawdza, skąd da się przejść najwięcej sektorów i wrócić. Dotychczasowe wizyty można przeliczyć od razu."},

@@ -11,7 +11,7 @@ import {atlasCenter,visibleAtlasCells,routeLines,simulationStep,simulationReport
 import AtlasRouteOverview from "./AtlasRouteOverview";
 import DraftTags from "./DraftTags";
 import type {DraftTag} from "@/lib/cavebotModel";
-import {tileStyles,navigationStyles,petStyle} from "@/lib/mapVisuals";
+import {tileStyles,navigationStyles,petStyle,cutWebStyle} from "@/lib/mapVisuals";
 import {NavigationDetails,TileContextMenu,copyCellText,type TileMenuPosition} from "./PassiveMapPanel";
 import {transitionActions} from "./TransitionLearningPanel";
 import {transitionMarkers,transitionApproaches,endpointMarkers,routeExecutionIssues,MAX_ATLAS_RADIUS} from "@/lib/atlasModel";
@@ -338,10 +338,10 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
         onContextMenu={e=>{e.preventDefault();const p=locate(e as unknown as React.PointerEvent);if(!p)return;openTileMenu(p,e.clientX,e.clientY);}}
         onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer}>
         <rect width={grid.columns} height={grid.rows} fill="#14111c"/>
-        {cells.map(c=>{const f=c.navigation?.[0],style=f?navigationStyles[f.kind]:null,destination=transitionDestination([c.x,c.y,c.z],[...(atlas?.route_transitions??[]),...(workingPlan?.transitions??[])]),names:Record<string,string>={web:"Pajęczyna",stairs:"Schody",ladder:"Drabina",hole:"Dziura",descent:"Zejście",covered_hole:"Odkop",door:"Drzwi",level_gate:"Bramka",teleport:"Teleport",rope_spot:"Rope",passage:destination.startsWith('↓')?'Zejście':destination.startsWith('↑')?'Wejście':'Przejście',floor_change:'Przejście'},detailed=viewport.width/grid.columns>=43,suffix=f?.door_state_hint==="open"?"−":f?.door_state_hint==="closed"?"+":f?.source==="client_hint"?"?":f?.direction_hint==="up"?"↑":f?.direction_hint==="down"?"↓":"";
+        {cells.map(c=>{const f=c.navigation?.find(f=>f.kind==="web")??c.navigation?.[0],style=f?navigationStyles[f.kind]:c.web_cut?cutWebStyle:null,destination=transitionDestination([c.x,c.y,c.z],[...(atlas?.route_transitions??[]),...(workingPlan?.transitions??[])]),names:Record<string,string>={web:"Pajęczyna",stairs:"Schody",ladder:"Drabina",hole:"Dziura",descent:"Zejście",covered_hole:"Odkop",door:"Drzwi",level_gate:"Bramka",teleport:"Teleport",rope_spot:"Rope",passage:destination.startsWith('↓')?'Zejście':destination.startsWith('↑')?'Wejście':'Przejście',floor_change:'Przejście'},detailed=viewport.width/grid.columns>=43,suffix=f?.door_state_hint==="open"?"−":f?.door_state_hint==="closed"?"+":f?.source==="client_hint"?"?":f?.direction_hint==="up"?"↑":f?.direction_hint==="down"?"↓":"";
           return <g key={`${c.x},${c.y}`} opacity={c.live?1:.68}><rect x={c.x-center[0]+ox+.04} y={c.y-center[1]+oy+.04} width={.92} height={.92} fill={tileStyles[c.kind]?.fill ?? "#252331"}/>
             {style && <g pointerEvents="none"><rect x={c.x-center[0]+ox+.08} y={c.y-center[1]+oy+.08} width={.84} height={.84} rx={.10} fill="#131b24" fillOpacity={.68} stroke={style.color} strokeOpacity={.7} strokeWidth={.035}/>
-              <text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+(detailed ? .45 : .66)} textAnchor="middle" fontSize={detailed ? .23 : .45} fontWeight="700" fill={style.color}>{detailed?(names[f!.kind]??style.label):style.symbol}{!detailed&&suffix}</text>
+              <text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+(detailed ? .45 : .66)} textAnchor="middle" fontSize={detailed ? .23 : .45} fontWeight="700" fill={style.color}>{detailed?(f?names[f.kind]??style.label:style.label):style.symbol}{!detailed&&suffix}</text>
               {detailed&&<text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+.78} textAnchor="middle" fontSize={.22} fill={style.color}>{destination|| (f?.door_state_hint==="open"?"otw.":f?.door_state_hint==="closed"?"zamk.":suffix)}</text>}
             </g>}
             {c.live && !!c.occupant_types?.pet && <g pointerEvents="none" transform={`translate(${c.x-center[0]+ox+.8} ${c.y-center[1]+oy+.23})`}>
@@ -396,6 +396,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
         {selectedCell.live && !!selectedCell.occupant_types?.pet && <p style={{color:petStyle.color}}>{petStyle.label} · {selectedCell.pet_names?.join(", ") ?? selectedCell.occupant_types.pet}</p>}
         <button onClick={e=>{const box=e.currentTarget.getBoundingClientRect();openTileMenu(selected,box.left,box.bottom);}}>Opcje pola</button>
         {!selectedCell.live && <small>Stan drzwi i przeszkód może już być inny.</small>}
+        {selectedCell.web_cut&&<small>{cutWebStyle.label} · ID 189</small>}
         {selectedCell.navigation?.map((feature,i)=><NavigationDetails key={i} feature={feature} historical={!selectedCell.live}/>)}
         {selectedCell.transitions?.map(t=><button key={t.id} onClick={()=>setCenter(t.exit)}>Wyjście {pointText(t.exit)}<small>{transitionActions[t.action]} · {t.count}×</small></button>)}
         {!selectedCell.navigation?.length && <small>Brak rozpoznanego przejścia na tym polu.</small>}

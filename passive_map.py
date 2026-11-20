@@ -12,6 +12,7 @@ import struct
 import threading
 import time
 from map_navigation import navigation_features, load_confirmed_types, load_location_notes
+from navigation_tools import has_cut_web
 
 CLIENT_SHA256 = "828ea9e11c6890f92cc14956733bac3aa7b80f57bfd8bb8e225568780c6e4b40"
 DAT_SHA256 = "26e6342c67378183dd422d3a044a7ef159e27ebfe2af1594fae8e0a35f200c91"
@@ -208,6 +209,7 @@ class MapReader:
         for stack, identity in monster_stacks:
             self.monster_slots[(*xyz, stack)] = identity
         return {"x": xyz[0], "y": xyz[1], "z": xyz[2], "kind": kind,
+                **({"web_cut":True} if has_cut_web(items,self.navigation_types) else {}),
                 "stairs": stairs, "items": items, "occupants": occupants,
                 "occupant_types":dict(occupant_types), "alert_players": alert_players,
                 "navigation": navigation,

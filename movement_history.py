@@ -46,6 +46,7 @@ class MovementHistory:
         self.last_frame = None
         self.coverage = None
         self.last_gap = None
+        self.last_web_blockage = None
         self.completed = deque()
         self.unwritten_reports = 0
         self.closed = False
@@ -162,11 +163,26 @@ class MovementHistory:
             if self.position != pos:
                 self._event(now, "map_position", position=pos)
                 self.position = pos
+                if self.last_web_blockage and self.last_web_blockage[0]!=pos:
+                    self.last_web_blockage=None
             if observer is not None:
                 counts = (observer.dropped, observer.partial, observer.failures)
                 if counts != self.coverage:
                     self._event(now,"observer_totals",dropped=counts[0],partial=counts[1],failures=counts[2])
                     self.coverage = counts
+
+    def web_blocked(self,origin,target,cell,reason):
+        items=tuple((i['id'],i.get('stack'),tuple(i.get('flags',()))) for i in (cell or {}).get('items',()))
+        if not any(i in (182,183,189) for i,_,_ in items):
+            return
+        key=(tuple(origin),tuple(target),items,reason)
+        with self.lock:
+            if self.closed or key==self.last_web_blockage:
+                return
+            self.last_web_blockage=key
+            now=self.clock()
+            self._event(now,'web_obstruction',origin=tuple(origin),target=tuple(target),items=items,reason=reason)
+            self._trigger(now,'web_obstruction')
 
     def cancelled(self, position, direction, received):
         with self.lock:

@@ -328,3 +328,28 @@ section[aria-label="Widok cavebota"],section[aria-label="Widok diagnostyki"] {di
 .hunt-area-panel dl{display:grid;grid-template-columns:1fr auto;gap:2px 8px;margin:6px 0 12px}.hunt-area-panel dd{font-variant-numeric:tabular-nums;text-align:right}
 .hunt-area-panel p,.hunt-area-panel small{color:#cabed1;margin:6px 0}.hunt-floors{display:flex;align-items:center;gap:4px;margin:6px 0}
 @media(max-width:670px){.hunt-atlas-layout{grid-template-columns:1fr;grid-template-rows:minmax(220px,1fr) minmax(0,36%)}}
+.global-atlas-dialog { color-scheme:dark }
+.global-atlas-dialog select,.global-atlas-dialog option,.global-atlas-dialog optgroup { color:#f3edf8;background-color:#302737 }
+.global-atlas-dialog select { border:1px solid #6a5877;border-radius:5px;padding:4px 6px }
+.global-atlas-dialog :focus-visible { outline:2px solid #80e6ce;outline-offset:2px }
+.world-atlas { position:relative;min-width:0 }
+.world-map-navigation,.map-zoom,.map-selection,.map-exclusions { display:flex;align-items:center;gap:5px;flex-wrap:wrap }
+.world-map-navigation { margin-left:auto }
+.map-zoom { gap:0 }.map-zoom button { min-width:29px }
+.map-layer-menu { position:relative }
+.map-layer-menu>div { position:absolute;top:calc(100% + 5px);right:0;z-index:4;min-width:168px;display:grid;gap:8px;padding:10px;background:#2b2434;border:1px solid #6a5877;border-radius:6px;box-shadow:0 6px 16px #120c1cad }
+.world-atlas-tools .habitat-key,.map-selection .habitat-key { color:#e3caff }
+.world-atlas>svg.select-sectors { cursor:crosshair }
+.atlas-loading { display:inline-flex;align-items:center;gap:8px;font-size:12px }
+.atlas-spinner { width:14px;height:14px;border-radius:50%;border:2px solid #695c78;border-top-color:#7ae1c5;animation:atlas-turn .8s linear infinite }
+@keyframes atlas-turn { to {transform:rotate(360deg)} }
+@media(prefers-reduced-motion:reduce){.atlas-spinner{animation:none}}
+.map-work-indicator { position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:9px 14px;border-radius:6px;background:#231d2cf2;border:1px solid #776485;box-shadow:0 3px 16px #100d1680;pointer-events:none }
+.map-selection { padding:4px 6px;background:#2b2432;font-size:12px }.map-selection>span:first-child { font-variant-numeric:tabular-nums }
+.map-selection button:last-child { margin-left:auto }
+.hunt-area-panel { padding:12px;background:#27212d }.hunt-area-panel h2 {font-size:15px}
+.hunt-section { border-block:1px solid #51445a;margin:12px 0;padding:6px 0 12px }
+.hunt-section h3 { margin:4px 0 8px }.hunt-results summary { cursor:pointer }
+.global-atlas-dialog .atlas-primary,.global-atlas-dialog .map-exclusions [aria-pressed=true] { background:#25463e;color:#d3fff0;border-color:#538e7c }
+.map-exclusions { margin:8px 0 }.map-exclusions small { flex-basis:100%;margin:1px 0 }
+@media(max-width:670px){.world-atlas-tools{gap:4px}.world-map-navigation{margin-left:0;gap:3px}.hunt-area-panel{padding:8px}}

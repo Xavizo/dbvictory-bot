@@ -7,6 +7,13 @@ WEB_ITEM_IDS = frozenset({182, 183})
 AIO_TOOLS = (8899, 8900)
 
 
+def has_cut_web(items, definitions):
+    # Only the verified 183 -> 189 pair is known for the current client assets.
+    cut_id = (definitions or {}).get(183, {}).get('cut_id')
+    return bool(cut_id and any(i['id']==cut_id for i in items)
+                and not any(i['id'] in WEB_ITEM_IDS for i in items))
+
+
 def cuttable_web(tile):
     """Return the exact layer only when removing it would expose ordinary ground."""
     if not tile or tile.get('kind') not in {'clear', 'blocked', 'avoid'} or tile.get('transitions'):

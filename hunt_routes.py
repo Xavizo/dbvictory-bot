@@ -5,7 +5,7 @@ import heapq
 
 from hunt_areas import SIDE, catalogue, sector
 from map_atlas import MAX_ANCHORS, MAX_EXPANSIONS, navigation_edges
-from navigation_tools import supported_transition
+from navigation_tools import cuttable_web, supported_transition
 from transition_learning import position
 
 
@@ -13,30 +13,44 @@ STEPS = ((0,-1), (1,0), (0,1), (-1,0), (1,-1), (1,1), (-1,1), (-1,-1))
 
 
 class GroundMap:
-    def __init__(self, atlas, observations):
+    def __init__(self, atlas, observations, excluded=frozenset()):
         tiles = atlas._paged_tiles()
         records = navigation_edges(tiles, observations)
         entries = {tuple(row['entry']) for edges in records.values() for _, row in edges
                    if row['action'] in {'step','use_with_then_step'}}
         self.links = defaultdict(dict)
+        self.excluded = excluded
         for p, edges in records.items():
             for q, row in sorted(edges, key=lambda e: e[1].get('id') or ''):
+                if excluded and any(sector(tile) in excluded for tile in (p,row['entry'],q)):
+                    continue
                 if (row.get('id') and supported_transition(row) and q in tiles and
                         (row.get('evidence') == 'observed' or row.get('automatic_door'))):
                     self.links[p].setdefault(q, row['id'])
 
         @lru_cache(maxsize=16000)
         def clear(p):
+            if excluded and sector(p) in excluded:
+                return False
             tile = tiles.get(p)
             return bool(p not in entries and tile and tile['kind'] == 'clear' and
                         all(f['kind'] in {'rope_spot','ladder'} for f in tile.get('navigation', ())))
         self.clear = clear
+        @lru_cache(maxsize=16000)
+        def web(p):
+            if p in entries or (excluded and sector(p) in excluded):
+                return False
+            return cuttable_web(tiles.get(p)) is not None
+        self.web = web
 
     def neighbors(self, p):
         for dx, dy in STEPS:
             q = p[0]+dx, p[1]+dy, p[2]
             if self.clear(q):
                 yield q, 14 if dx and dy else 10, None
+            elif self.web(q):
+                # Pin both endpoints for the shared simulator's conditional AiO action.
+                yield q, (14 if dx and dy else 10)+35, True
         for q, identity in self.links.get(p, {}).items():
             # A floor change interrupts a sweep of the room. Prefer finishing
             # nearby sectors before using the same stairs again.
@@ -78,7 +92,101 @@ def shortest(start, goals, neighbors, priority=None, budget=None):
     return walk[::-1]
 
 
-def simulated(atlas, observations, walk):
+def shorten_sweeps(path, clear, *, anchors=None, protected=()):
+    """Cut local backtracks only when all previously visited 4×4 areas remain covered."""
+    def patch(p):
+        return p[0]//4,p[1]//4,p[2]
+
+    path = list(map(tuple,path))
+    counts = Counter(map(patch,path))
+    stops = set(anchors) if anchors is not None else None
+    protected = set(protected)
+    shortened, kept = [], {}
+    i = 0
+    while i < len(path):
+        kept[i] = len(shortened)
+        a = path[i]
+        shortened.append(a)
+        if stops is not None and i not in stops:
+            i += 1
+            continue
+        candidates = []
+        for j in range(i+1,min(i+49,len(path))):
+            b = path[j]
+            if b[2]!=a[2] or j in protected:
+                break
+            if stops is not None and j not in stops:
+                continue
+            steps = max(abs(a[0]-b[0]),abs(a[1]-b[1]))
+            gain = j-i-steps
+            if steps<=12 and gain>=2 and (i or j<len(path)-1):
+                candidates.append((gain,j,steps))
+        for _,j,steps in sorted(candidates,reverse=True):
+            b = path[j]
+            if not clear(a) or not clear(b):
+                continue
+            middle = [(a[0]+round((b[0]-a[0])*k/steps),a[1]+round((b[1]-a[1])*k/steps),a[2])
+                      for k in range(1,steps)]
+            if any(not clear(p) or patch(p) not in counts for p in middle):
+                continue
+            delta = Counter(map(patch,path[i+1:j] if steps else path[i+1:j+1]))
+            delta.subtract(map(patch,middle))
+            if any(counts[key]<=lost for key,lost in delta.items()):
+                continue
+            counts.subtract(delta)
+            shortened.extend(middle)
+            if not steps:
+                kept[j]=kept[i]
+            i=j if steps else j+1
+            break
+        else:
+            i+=1
+    return shortened,kept
+
+
+def shorter_draft(atlas,observations,plan,labels):
+    """Preview a shorter authored loop with the same entrances, exits and coverage."""
+    if not plan['complete'] or not plan['loop_closed'] or plan['return_mode']!='closed':
+        return plan
+    points, path = plan['points'],plan['path']
+    indices = [0]+[leg['end'] for leg in plan['legs']]
+    if len(indices)!=len(points) or len(set(indices))!=len(indices):
+        return plan
+    protected = {indices[i] for i,label in enumerate(labels) if label}
+    for link in plan['links']:
+        k=link['from_index']
+        protected.update(indices[k:k+2])
+    ground = GroundMap(atlas,atlas.with_recorded_ropes(observations))
+    _, kept = shorten_sweeps(path,ground.clear,anchors=indices,protected=protected)
+    remaining = [i for i,at in enumerate(indices) if at in kept]
+    if len(remaining)==len(points) or len(remaining)<2:
+        return plan
+    def replay(selected):
+        order={old:new for new,old in enumerate(selected)}
+        links=[dict(from_index=order[l['from_index']],id=l['id']) for l in plan['links']]
+        return atlas.plan([points[i] for i in selected],observations,loop=True,links=links)
+    candidate=replay(remaining)
+    def coverage(result):
+        return {(x//4,y//4,z) for x,y,z in result['path']}
+    # The simulator can choose a different equal-cost diagonal. Restore the
+    # original anchors of the affected shortcuts and verify the entire loop.
+    missing=coverage(plan)-coverage(candidate)
+    if missing and candidate['complete']:
+        restore=set(remaining)
+        for i,j in zip(remaining,remaining[1:]):
+            if j>i+1 and any((x//4,y//4,z) in missing for x,y,z in path[indices[i]:indices[j]+1]):
+                restore.update(range(i+1,j))
+        if len(remaining)<len(restore)<len(points):
+            candidate=replay(sorted(restore))
+    if (candidate['complete'] and candidate['loop_closed'] and len(candidate['path'])<len(path)
+            and candidate['transitions']==plan['transitions'] and coverage(plan)<=coverage(candidate)
+            and set(map(sector,candidate['path']))==set(map(sector,path))
+            and set(map(tuple,candidate['avoid_tiles']))<=set(map(tuple,plan['avoid_tiles']))):
+        return candidate
+    return plan
+
+
+def simulated(atlas, observations, walk, excluded=frozenset()):
     """Keep every turn and the two endpoints of each explicit action."""
     retained = [0]
     for i in range(1,len(walk)-1):
@@ -87,12 +195,15 @@ def simulated(atlas, observations, walk):
             retained.append(i)
     retained.append(len(walk)-1)
     points = [list(walk[i][0]) for i in retained]
-    links = [dict(from_index=j-1,id=walk[i][1]) for j,i in enumerate(retained) if walk[i][1]]
+    links = [dict(from_index=j-1,id=walk[i][1]) for j,i in enumerate(retained) if isinstance(walk[i][1],str)]
     if len(points) > MAX_ANCHORS:
         raise ValueError('Propozycja przekracza rozmiar szkicu. Podziel expowisko na mniejsze obszary.')
     plan = atlas.plan(points, observations, links=links, loop=points[0]==points[-1])
     if not plan['complete']:
         raise ValueError('Symulacja: '+plan['gaps'][0]['reason'])
+    if excluded and (any(sector(p) in excluded for p in plan['path']) or
+                     any(sector(t[k]) in excluded for t in plan['transitions'] for k in ('origin','entry','exit'))):
+        raise ValueError('Symulacja przecięła pominięty sektor. Zmień wybór sektorów.')
     return dict(points=points, links=links, path=plan['path'], transitions=len(plan['transitions']))
 
 
@@ -113,17 +224,28 @@ def propose(atlas, observations, body):
         area = next(iter(discoveries(atlas,key)),None)
         if not area:
             raise ValueError('Wykryte expowisko zmieniło się. Wczytaj obszary ponownie.')
-        if 'approach' not in body:
-            result = manual_circuit(atlas,observations,area)
-            remember_check(atlas,area,result)
-            return result
     else:
         area = next((a for a in info['areas'] if a['id']==key), None)
         if not area:
             raise ValueError('Nie znaleziono expowiska.')
     cells = set(map(tuple,area['cells']))
+    skip = body.get('excluded',[])
+    if not isinstance(skip,list) or not all(position(p) and tuple(p) in cells for p in skip):
+        raise ValueError('Można pomijać tylko sektory wybranego expowiska.')
+    excluded = frozenset(map(tuple,skip))
+    cells -= excluded
+    if not cells:
+        raise ValueError('Pozostaw co najmniej jeden sektor w pętli.')
+    anchor = body.get('loop_start')
+    if anchor is not None and (not position(anchor) or sector(anchor) not in cells|excluded):
+        raise ValueError('Początek pętli leży poza wybranym expowiskiem.')
+    if key.startswith('manual:') and 'approach' not in body:
+        result = manual_circuit(atlas,observations,area,excluded=excluded,anchor=anchor)
+        if not excluded and anchor is None:
+            remember_check(atlas,area,result)
+        return result
     observations = atlas.with_recorded_ropes(observations)
-    ground = GroundMap(atlas,observations)
+    ground = GroundMap(atlas,observations,excluded)
     if 'approach' in body:
         a, b = body['approach'], body.get('entrance')
         if not position(a) or not position(b) or sector(b) not in cells:
@@ -136,7 +258,7 @@ def propose(atlas, observations, body):
             raise ValueError('Atlas nie zna ciągłego dojścia z wybranego pola.')
         if not route:
             return dict(path=[a], transitions=0)
-        return simulated(atlas, observations, [(a,None), *route])
+        return simulated(atlas, observations, [(a,None), *route],excluded)
 
     first_seen = Counter()
     for d in info['drafts']:
@@ -145,18 +267,18 @@ def propose(atlas, observations, body):
                 if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
                     first_seen[tuple(mark['point'])] += mark['count']
     seeds = [tuple(p) for d in atlas.drafts() if d['id'] in area['drafts'] for p in d['points']]
-    return circuit(atlas, observations, ground, cells, first_seen, seeds)
+    return circuit(atlas, observations, ground, cells, first_seen, seeds,anchor=anchor)
 
 
-def manual_circuit(atlas, observations, area):
-    cells=set(map(tuple,area['cells']))
+def manual_circuit(atlas, observations, area, *, excluded=frozenset(),anchor=None):
+    cells=set(map(tuple,area['cells']))-excluded
     counts=Counter()
     for mark in area['sightings']:
         if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
             counts[tuple(mark['point'])]+=mark['count']
     rows=atlas.with_recorded_ropes(observations)
-    return circuit(atlas,rows,GroundMap(atlas,rows),
-                   cells,counts,[tuple(area['seed'])],choose_region=True)
+    return circuit(atlas,rows,GroundMap(atlas,rows,excluded),
+                   cells,counts,[tuple(area['seed'])],choose_region=True,anchor=anchor)
 
 
 def round_trip_regions(graph, reverse):
@@ -192,18 +314,27 @@ def round_trip_regions(graph, reverse):
         yield region
 
 
-def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_region=False):
+def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_region=False,anchor=None):
     # Keep the approach from town outside the circuit, even if it is shorter.
     ordinary = {(x,y,z) for sx,sy,z in sorted(cells) for x in range(sx,sx+SIDE)
                 for y in range(sy,sy+SIDE) if ground.clear((x,y,z))}
     if not ordinary:
         raise ValueError('W granicach expowiska brakuje zapisanych przechodnich pól.')
     start = next((p for p in seeds if p in ordinary), min(ordinary))
+    if anchor is not None:
+        nearby=(p for p in ordinary if p[2]==anchor[2])
+        kept=min(nearby,key=lambda p:((p[0]-anchor[0])**2+(p[1]-anchor[1])**2,p),default=None)
+        if kept is not None:
+            start,choose_region=kept,False
+        else:
+            choose_region=True
     # An explicit action may land on the gate itself. Only its directed edge
     # permits entering it. The shared simulator checks it again before saving.
     # Use the two player positions for the boundary. A ladder or rope tile
     # clicked from inside the sector can be just beyond its border.
-    nodes = ordinary | {q for p,links in ground.links.items() for q in links
+    webs = {(x,y,z) for sx,sy,z in cells for x in range(sx,sx+SIDE) for y in range(sy,sy+SIDE)
+            if (x,y,z) not in ordinary and ground.web((x,y,z))}
+    nodes = ordinary | webs | {q for p,links in ground.links.items() for q in links
                          if sector(p) in cells and sector(q) in cells}
     graph, reverse = {}, defaultdict(list)
     for p in sorted(nodes):
@@ -255,9 +386,24 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
         walk.extend(leg)
         here = walk[-1][0]
         targets.difference_update(p for p,_ in leg)
-    result = simulated(atlas,observations,walk)
+    protected={i for i,(p,_) in enumerate(walk) if goals.get(p,0)>0}
+    for i,(_,link) in enumerate(walk):
+        if link:protected.update((i-1,i))
+    path,kept=shorten_sweeps([p for p,_ in walk],ground.clear,protected=protected)
+    result=None
+    if len(path)<len(walk) and len(set(path))>1:
+        actions={kept[i]:link for i,(_,link) in enumerate(walk) if link}
+        try:
+            trial=simulated(atlas,observations,[(p,actions.get(i)) for i,p in enumerate(path)],ground.excluded)
+            visited={sector(p) for p in trial['path']}
+            if set(by_sector)<=visited<=cells:
+                result=trial
+        except ValueError:
+            pass  # An ambiguous shortcut leaves the original verified walk available.
+    if result is None:
+        result=simulated(atlas,observations,walk,ground.excluded)
     visited = {sector(p) for p in result['path']}
     if visited-cells or set(by_sector)-visited:
         raise ValueError('Symulacja zmieniła pokrycie obszaru. Sprawdź granice expowiska.')
-    return dict(**result, entrance=start, covered=len(visited), total=len(cells),
+    return dict(**result, entrance=start, covered=len(visited), total=len(cells),excluded=sorted(ground.excluded),
                 missing=sorted(cells-visited), sightings=sum(first_seen.values()))

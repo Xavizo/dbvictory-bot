@@ -68,6 +68,20 @@ def test_default_loop_has_real_return_path_and_repeats_whole_route(state,tmp_pat
     assert [p[0] for p in sent]==[0x66]*3+[0x68]*3+[0x66]*2
 
 
+def test_redundant_return_is_skipped_but_labels_and_unique_rooms_are_kept(state,tmp_path):
+    a,b,c,d=([x,10,7] for x in (10,11,12,13))
+    controller,_,_=setup(state,tmp_path,points=[a,c,a,c,d])
+    controller.route_draft['labels']=['','Sala','','','']
+    assert not controller.skip_repeated_sweep()
+    controller.route_draft['labels']=['']*5
+    assert controller.skip_repeated_sweep()
+    assert controller.path[controller.index:]==[a,b,c,d]
+    assert not controller.skip_repeated_sweep()
+    controller.index=0
+    controller.edges=[dict(origin=b,exit=c)]
+    assert not controller.skip_repeated_sweep()
+
+
 def test_live_diagonal_ignores_side_occupants_but_respects_destination(state,tmp_path):
     c,cells,_=setup(state,tmp_path,points=[[10,10,7],[12,12,7]])
     next(v for v in cells if (v['x'],v['y'])==(11,10)).update(occupants=1,occupant_types={'monster':1})

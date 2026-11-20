@@ -515,6 +515,31 @@ class AdaptiveCavebot:
     def checkpoint_limit(self,default):
         return min(default,next((r['index']+1 for r in self.checkpoints if r['index']>self.index),default))
 
+    def skip_repeated_sweep(self):
+        """A→B→A→B covers exactly the same tiles as A→B, including the return corridor."""
+        i=self.index
+        if self.combat_only or i<self.loop_start:
+            return False
+        for width in range(1,min(16,(len(self.path)-1-i)//3)+1):
+            end=i+2*width
+            if self.path[end]!=self.path[i]:
+                continue
+            outbound=self.path[i:i+width+1]
+            if (self.path[i+width:end+1]!=outbound[::-1] or self.path[end:end+width+1]!=outbound
+                    or any(p[2]!=outbound[0][2] for p in outbound)):
+                continue
+            labels=(self.route_draft or {}).get('labels') or ()
+            if any(i<r['index']<=end and r['waypoint']<len(labels) and labels[r['waypoint']]
+                   for r in self.checkpoints):
+                continue
+            if any(e['origin'] in outbound or e['exit'] in outbound for e in self.edges):
+                continue
+            self.index=end
+            self.mark_waypoint()
+            self.save_session_cursor()
+            return True
+        return False
+
     async def reconnect_route_step(self, origin, target, closing=False):
         """Fill a gap with ordinary steps, each still checked on the live map."""
         if origin[2] != target[2]:
@@ -577,6 +602,8 @@ class AdaptiveCavebot:
         if key!=self._blockage_key or now-self._blockage_at>=5:
             self._blockage_key=key;self._blockage_at=now;self.logs.append(f'Pole {tuple(target)}: {cause}.')
             log.info('V2 movement wait: %s',detail)
+            history=getattr(self.state.game_state,'movement_history',None)
+            if history:history.web_blocked(pos,target,cell,cause)
         self.blockage=detail
         self.reason=f'Pole {tuple(target)}: {cause}. Czekam; '+('walka aktywna.' if self.combat.config['enabled'] else 'ruch będzie ponowiony.')
 
@@ -1157,6 +1184,7 @@ class AdaptiveCavebot:
                     self.reason='Powrót do trasy: czekam na wolne pole; walka aktywna.'
                     await asyncio.sleep(.05)
                 continue
+            self.skip_repeated_sweep()
             self.tolerate_waypoint(sample)
             at_transition=self.route_boundary(sample)
             if self.combat_only:self.path=[pos];self.index=0
@@ -1213,6 +1241,11 @@ class AdaptiveCavebot:
                     # a tool/door operation whose outcome is uncertain.
                     # Once a transition started, an observation gap is an
                     # uncertain operation, not permission to use the tool again.
+                    if edge['action']=='clear_web':
+                        history=getattr(self.state.game_state,'movement_history',None)
+                        if history:
+                            tile=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
+                            history.web_blocked(pos,target,tile,str(exc))
                     if not self.combat.config['enabled']:raise ValueError(str(exc)) from exc
                     self.navigation_hold=str(exc);self.logs.append('Ruch: '+str(exc));continue
                 finally:self._route_command=False;self._route_boundary=False
@@ -1242,10 +1275,10 @@ class AdaptiveCavebot:
                         if local:
                             self.replace_path(self.index+1,j,local[1:]);target=self.path[self.index+1];found=True;break
                     if not found:
+                        self.describe_blockage(sample,target)
                         if (tuple(target) not in self.blocked and not self.combat.config['enabled']
                                 and not any(t.get('occupants',0) for t in sample['cells'])):
                             raise ValueError('Brak widocznego obejścia przeszkody; sprawdź trasę.')
-                        self.describe_blockage(sample,target)
                         await asyncio.sleep(.1);continue
                 self._route_command=True;self._route_boundary=at_transition
                 self.save_session_cursor(pending=target)

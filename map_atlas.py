@@ -16,7 +16,7 @@ import uuid
 
 from transition_learning import position,gate_entry_record
 from cavebot_combat import validate_combat
-from navigation_tools import WEB_ITEM_IDS, cuttable_web, tool_kind, web_edge
+from navigation_tools import WEB_ITEM_IDS, cuttable_web, has_cut_web, tool_kind, web_edge
 from recorded_rope import recorded_rope_edges
 
 CACHE_TILES=4096
@@ -272,6 +272,8 @@ def decode_tile(row, web_definitions=None):
         or not isinstance(cell.get("items"),list) or len(cell["items"])>16):
         raise ValueError("Nieprawidłowe pole w atlasie.")
     if web_definitions:
+        if has_cut_web(cell['items'],web_definitions):
+            cell['web_cut'] = True
         features = cell.get('navigation', [])
         for item in cell['items']:
             iid = item['id']
@@ -372,6 +374,8 @@ class MapAtlas:
                 key=(cell["x"],cell["y"],cell["z"])
                 safe={k:cell[k] for k in ("x","y","z","kind")}
                 safe["items"]=[{"id":i["id"],"flags":list(i.get("flags",[])),"stack":i["stack"]} for i in cell["items"][:16]]
+                if cell.get('web_cut') or has_cut_web(safe['items'],self.web_definitions):
+                    safe['web_cut']=True
                 safe["navigation"]=[{k:f[k] for k in ("kind","item_id","stack","source","activation_hint","door_state_hint","behavior_hint",
                     "direction_hint","observation_count","required_level","requirement_source","closing_policy","lock_hint","note") if k in f} for f in cell.get("navigation",[])[:16]]
                 safe["transitions"]=[{k:r[k] for k in ("id","exit","action","direction","count") if k in r} for r in cell.get("transitions",[])[:32]]

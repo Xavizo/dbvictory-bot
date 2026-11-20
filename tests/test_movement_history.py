@@ -64,6 +64,18 @@ def test_manual_walk_cancel_groups_five_minutes_and_correct_tail(session):
     assert h.poll() is None
 
 
+def test_stalled_web_report_records_layers_once_without_a_walk_request(session):
+    now,h=session
+    tile={'items':[dict(id=486,stack=0,flags=['ground']),dict(id=183,stack=1,flags=['not_walkable'])]}
+    h.web_blocked(A,B,tile,'przeszkoda terenowa')
+    h.web_blocked(A,B,tile,'przeszkoda terenowa')
+    now[0]=31
+    data=h.poll()
+    assert data['trigger']=='web_obstruction'
+    assert [r['event'] for r in data['events']]==['web_obstruction']
+    assert data['events'][0]['items'][1]==(183,1,('not_walkable',))
+
+
 def test_timeout_with_repeated_requests_and_delayed_manual_save(session):
     now,h = session
     h.frame(frame())

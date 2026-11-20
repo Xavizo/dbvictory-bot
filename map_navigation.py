@@ -53,6 +53,9 @@ def load_confirmed_types(path=CATALOGUE_PATH, asset_sha256=ASSET_SHA256):
                 result[int(item_id)].update(activation_hint="rope_or_fly_up", direction_hint="up")
             if entry["kind"] == "web":
                 result[int(item_id)]["activation_hint"] = "aio"
+                cut_id = entry.get("cut_id")
+                if type(cut_id) is int and 100 <= cut_id <= 65535:
+                    result[int(item_id)]["cut_id"] = cut_id
             if entry["kind"] == "covered_hole":
                 result[int(item_id)].update(activation_hint="shovel", direction_hint="down")
         locations = document.get("locations",{})
