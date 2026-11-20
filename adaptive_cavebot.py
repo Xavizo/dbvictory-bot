@@ -556,23 +556,69 @@ class AdaptiveCavebot:
         return False
 
     async def reconnect_route_step(self, origin, target, closing=False):
-        """Fill a gap with ordinary steps, each still checked on the live map."""
+        """Restore a broken leg using the route's already approved crossings."""
+        start = origin
+        destination = target
+        end_index = self.index + 1
+        doors = [e for e in self.edges if not closing and origin[2] == target[2]
+                 and e.get('action') == 'use_then_step' and e.get('entry') == target]
+        if doors:
+            # The doorway is an intermediate tile. Route to the next real
+            # checkpoint, letting the normal executor check/open the door.
+            checkpoint = next((r for r in self.checkpoints if r['index'] > self.index), None)
+            points = (self.route_draft or {}).get('points', [])
+            if not checkpoint or not 0 <= checkpoint['waypoint'] < len(points):
+                return False
+            end_index = checkpoint['index']
+            destination = points[checkpoint['waypoint']]
+            if (end_index >= len(self.path) or end_index - self.index > 12
+                    or self.path[end_index] != destination or distance(origin, destination) > 8
+                    or destination == target or self.index < self.loop_start < end_index):
+                return False
+            leg = self.path[self.index:end_index + 1]
+            protected = {(tuple(e['origin']), tuple(e['exit'])) for e in self.edges if e not in doors}
+            if any(a[2] != b[2] or (tuple(a),tuple(b)) in protected for a,b in zip(leg,leg[1:])):
+                return False
+            required_doors = [(a, b) for a, b in zip(leg, leg[1:])
+                              if any(e['origin'] == a and e['exit'] == b for e in doors)]
         if origin[2] != target[2]:
-            return False
+            # A displaced character can leave an older saved cursor one tile
+            # beyond the landing. Only restore the crossing for this draft leg.
+            points = (self.route_draft or {}).get('points', [])
+            upcoming = next((r['waypoint'] for r in self.checkpoints if r['index'] > self.index), None)
+            if closing or upcoming is None or not 0 < upcoming < len(points):
+                return False
+            approach, landing = points[upcoming - 1:upcoming + 1]
+            if (approach != origin or not 0 < distance(landing, target) <= 2
+                    or not any(e['origin'] == origin and e['exit'] == landing for e in self.edges)):
+                return False
+            start = landing
         monitor = self.state.passive_map_monitor
         index = self.index
         generation, motion = self.generation, self.motion_generation
         observations = deepcopy(list(monitor.learner.records.values())) if monitor.learner else []
-        plan = await asyncio.to_thread(monitor.atlas.plan, [origin, target], observations)
+        plan = await asyncio.to_thread(monitor.atlas.plan, [start, destination], observations)
         if (self.status != 'running' or self.generation != generation or self.motion_generation != motion
                 or self.index != index or self.path[index:index + 1] != [origin]
                 or list(self.state.game_state.position) != origin):
             return False
         bridge = plan['path']
-        if (not plan['complete'] or plan['transitions'] or plan['avoid_tiles'] or len(bridge) < 2
-                or bridge[0] != origin or bridge[-1] != target
-                or any(distance(a, b) != 1 for a, b in zip(bridge, bridge[1:]))):
+        actions = plan['transitions']
+        if (not plan['complete'] or plan['avoid_tiles'] or len(bridge) < 2
+                or bridge[0] != start or bridge[-1] != destination):
             return False
+        if (any(e not in doors for e in actions)
+                or doors and (len(bridge) > 13 or len(actions) > 1)):
+            return False
+        if doors and required_doors and required_doors != [(e['origin'], e['exit']) for e in actions]:
+            return False
+        crossings = {(tuple(e['origin']), tuple(e['exit'])) for e in actions}
+        if any(distance(a,b) != 1 and (tuple(a),tuple(b)) not in crossings for a,b in zip(bridge,bridge[1:])):
+            return False
+        if start != origin:
+            if len(bridge) > 4:
+                return False
+            bridge = [origin, *bridge]
         if closing:
             if index != len(self.path) - 1 or self.path[self.loop_start] != target:
                 return False
@@ -580,8 +626,13 @@ class AdaptiveCavebot:
         else:
             if self.path[index + 1:index + 2] != [target]:
                 return False
-            self.replace_path(index + 1, index + 1, bridge[1:])
-        self.logs.append(f'Uzupełniono odcinek {tuple(origin)} → {tuple(target)}: {len(bridge)-1} kroków.')
+            self.replace_path(index + 1, end_index, bridge[1:])
+            if start != origin:
+                for checkpoint in self.checkpoints:
+                    if checkpoint['index'] == index + len(bridge) - 1 and checkpoint['waypoint'] == upcoming:
+                        checkpoint['index'] = index + 1
+                self.checkpoints.sort(key=lambda row: (row['index'], row['waypoint']))
+        self.logs.append(f'Uzupełniono odcinek {tuple(origin)} → {tuple(destination)}: {len(bridge)-1} kroków.')
         return True
 
     def vary_leg(self,sample):
@@ -694,6 +745,57 @@ class AdaptiveCavebot:
         if not walkable(tile) or tile.get('navigation') or tile.get('stairs'):
             return None
         return target
+
+    async def recover_position(self, sample):
+        previous = self.index - 1
+        if self.loop and self.index == self.loop_start and len(self.path) > 1 and self.path[-1] == self.path[self.index]:
+            previous = len(self.path) - 2
+        landing = self.path[self.index]
+        if previous < 0 or not any(e['origin'] == self.path[previous] and e['exit'] == landing for e in self.edges):
+            return self.recover_local(sample)
+        self.guard()
+        pos = list(self.state.game_state.position)
+        if distance(pos, landing) > 6:
+            raise ValueError('Recovery: poza lokalnym zasięgiem lub inne piętro — sprawdź drogę powrotną.')
+        if sample.get('center') != pos or pos == landing:
+            return pos == landing
+        # Keep the landing in the route. Walk only a temporary, ordinary
+        # approach, or credit a following tile already reached on this leg.
+        limit = self.checkpoint_limit(min(len(self.path), self.index + 9))
+        if self.index < self.loop_start:
+            limit = min(limit, self.loop_start + 1)
+        now = time.monotonic()
+        self.blocked = {p: expires for p, expires in self.blocked.items() if expires > now}
+        unsafe = set(self.blocked)
+        unsafe.update(tuple(e['entry']) for e in self.edges if e.get('entry') and e.get('action') == 'step')
+        best = None
+        for j in range(self.index, limit):
+            target = self.path[j]
+            if j > self.index and (distance(self.path[j-1], target) != 1 or
+                    any(e['origin'] == self.path[j-1] and e['exit'] == target for e in self.edges)):
+                break
+            if pos == target:
+                self.index = j
+                self.mark_waypoint()
+                self.save_session_cursor()
+                return True
+            local = detour(sample['cells'], pos, target, unsafe)
+            if local and len(local) <= 13 and (best is None or len(local) < len(best)):
+                best = local
+        if not best:
+            return False
+        self._route_command = True
+        try:
+            arrived = await self.step(best[1])
+        except MovementDeferred:
+            return False
+        finally:
+            self._route_command = False
+        if not arrived:
+            self.blocked[tuple(best[1])] = time.monotonic() + 1
+        else:
+            self.recovery_count += 1
+        return arrived
 
     def recover_local(self,sample):
         """Rejoin the current ordinary leg; local contention waits without stopping combat."""
@@ -1235,7 +1337,7 @@ class AdaptiveCavebot:
                     # intent uses this same executor, never a competing walker.
                     await self.domains.consume_movement(sample,False)
                     await asyncio.sleep(.01);continue
-                if not self.recover_local(sample):
+                if not await self.recover_position(sample):
                     self.domains.movement_state="waiting"
                     self.reason='Powrót do trasy: czekam na wolne pole; walka aktywna.'
                     await asyncio.sleep(.05)
@@ -1254,7 +1356,7 @@ class AdaptiveCavebot:
                 await asyncio.sleep(.05);continue
             pos=list(self.state.game_state.position)
             if pos!=self.path[self.index]:
-                self.recover_local(await self.fresh_map());continue
+                await self.recover_position(await self.fresh_map());continue
             if self.index>=len(self.path)-1:
                 if self.loop and pos != self.path[self.loop_start]:
                     anchor = self.path[self.loop_start]
