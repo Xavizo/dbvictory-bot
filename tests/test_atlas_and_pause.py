@@ -169,6 +169,27 @@ def test_atlas_api_is_authenticated_scoped_and_preview_only(state,monkeypatch,tm
         status,data=request("POST","/api/map/drafts",draft)
         assert status==200 and data["drafts"][0]["points"]==plan["points"]
         assert request("GET","/api/map/drafts")[1]["drafts"][0]["name"]=="Two floors"
+        # Even during a long proposal the single-threaded dashboard keeps
+        # servicing other requests. Another tab cannot queue unbounded work.
+        route_url = "/api/map/grounds/route"
+        query = {"scope":atlas.scope,"ground":"test"}
+        release = threading.Event()
+        def slow_proposal(*_):
+            assert release.wait(3)
+            return {"covered":1}
+        monkeypatch.setattr("hunt_routes.propose",slow_proposal)
+        assert request("POST",route_url,query,authenticated=False)[0]==401
+        assert request("POST",route_url,dict(query,scope="other"))[0]==400
+        status,job=request("POST",route_url,query)
+        assert status==202
+        poll=dict(scope=atlas.scope,ticket=job["ticket"])
+        assert request("POST",route_url,poll)[0]==202
+        assert request("POST",route_url,query)[0]==409
+        assert request("GET","/api/map/drafts")[0]==200
+        release.set()
+        http.route_jobs[job["ticket"]][1].result(timeout=2)
+        assert request("POST",route_url,poll)==(200,{"covered":1})
+        assert request("POST",route_url,poll)[0]==400
         assert not state._action_tasks and not state.playback_active and state.game_proxy is None
     finally:
         http.shutdown();http.server_close();thread.join(timeout=2)

@@ -5,10 +5,24 @@ import {authenticatedFetch} from "@/lib/auth";
 
 export type Position = [number, number, number];
 export type GroundLayer = {cells:Position[]; marks:{position:Position;title:string;exact:boolean}[]; side:number;
+  route?:Position[]; approach?:Position[]; missing?:Position[]; planApproach?:(p:Position)=>void;
   editing:boolean; toggle:(p:Position)=>void; focus:{floor:number;cells:Position[]}|null};
 type Sector = {x:number; y:number; terrain?:string; atlas?:string};
 type Floor = {floor:number; sectors:Sector[]};
 type Camera = {x:number; y:number; width:number; height:number};
+
+function RouteLine({path,floor,color,dashed=false}:{path?:Position[];floor:number;color:string;dashed?:boolean}){
+  const line=useMemo(()=>{
+    let previous:Position|undefined;
+    return (path??[]).map(p=>{
+      const join=previous?.[2]===floor&&Math.max(Math.abs(previous[0]-p[0]),Math.abs(previous[1]-p[1]))<=1;
+      previous=p;
+      return p[2]===floor?(join?"L":"M")+(p[0]+.5)+" "+(p[1]+.5):"";
+    }).join(" ");
+  },[path,floor]);
+  return line?<path d={line} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke"
+    strokeDasharray={dashed?"5 3":undefined} strokeLinejoin="round" pointerEvents="none"/>:null;
+}
 
 const Sectors = memo(function Sectors({sectors, overlay}:{sectors:Sector[]; overlay:boolean}) {
   return <>{sectors.map(s => <g key={s.x+","+s.y}>
@@ -83,6 +97,7 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar}:{init
       <button disabled={!view} aria-label="Oddal mapę świata" onClick={()=>zoom(2)}>−</button>
       <button disabled={!camera} onClick={()=>setCamera(null)}>Całe piętro</button>
       {selection&&!ground?.editing&&<button onClick={()=>onOpen(selection)}>Otwórz pole ({selection.join(", ")})</button>}
+      {selection&&ground?.planApproach&&<button onClick={()=>ground.planApproach?.(selection)}>Dojście stąd</button>}
     </div>
     {error?<div role="status">{error} <button onClick={()=>setRetry(v=>v+1)}>Ponów</button></div>
       :!result?<p role="status">Wczytywanie minimapy…</p>:!view?<p>Brak zapisanych pól na tym piętrze.</p>:
@@ -103,6 +118,12 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar}:{init
       {ground&&<g>{ground.marks.filter(m=>m.position[2]===floor).map(m=>
         <circle key={m.position.join(',')} cx={m.position[0]+(m.exact ? 0.5 : side/2)} cy={m.position[1]+(m.exact ? 0.5 : side/2)}
           r={m.exact?1:side/4} fill="#eee6ff" stroke="#4f2872" strokeWidth=".5"><title>{m.title}</title></circle>)}</g>}
+      {ground?.missing?.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}
+        fill="#cf5050" fillOpacity=".35" stroke="#f48b8b" strokeWidth=".4"><title>Brak potwierdzonej pętli przez ten sektor</title></rect>)}
+      <RouteLine path={ground?.route} floor={floor} color="#59f1bc"/>
+      <RouteLine path={ground?.approach} floor={floor} color="#73bfff" dashed/>
+      {ground?.route?.[0]?.[2]===floor&&<circle cx={ground.route[0][0]+.5} cy={ground.route[0][1]+.5} r="1.2"
+        fill="#173a34" stroke="#59f1bc" strokeWidth=".4"><title>Początek pętli expienia</title></circle>}
       {grid&&<rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#world-sector-grid)"/>}
       {selection&&<circle cx={selection[0]+.5} cy={selection[1]+.5} r={Math.max(.8,view.width/190)} fill="none" stroke="white" strokeWidth={2} vectorEffect="non-scaling-stroke"/>}
     </svg>}

@@ -1,5 +1,12 @@
 [
   {
+    "version": "v1.12.0",
+    "changes": [
+      {"title":"Atlas proponuje pętlę przez expowisko","detail":"Sprawdź pokrycie sektorów na każdym piętrze i zapisz zasymulowaną trasę jako nowy szkic. Miejsca pierwszych wykryć potworów pomagają wybrać pola do odwiedzenia."},
+      {"title":"Wyznacz dojście do początku pętli","detail":"Po wybraniu pola na mapie świata kliknij „Dojście stąd”. Niebieska linia pokazuje dojście po znanych polach i przejściach."}
+    ]
+  },
+  {
     "version": "v1.11.0",
     "changes": [
       {"title":"Blokady ruchu mają własny raport","detail":"Diagnostyka zachowuje 5 minut przed blokadą i 30 sekund od ostatniej nieudanej próby. Podczas ręcznej gry i Cavebota możesz też samodzielnie zapisać ostatnie 5 minut."}

@@ -12,9 +12,11 @@ import sqlite3
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, parse_qs
+from uuid import uuid4
 from dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
 from cavebot_combat import validate_combat
 from map_atlas import database_busy
@@ -181,6 +183,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._movement_history(save=True)
         if self.path == "/api/map/grounds":
             return self._hunt_areas(save=True)
+        if self.path == "/api/map/grounds/route":
+            return self._hunt_areas(route=True)
         if self.path == "/api/profiles":
             try:
                 if not 0<int(self.headers.get("Content-Length",0))<=65536:raise ValueError("Profil jest zbyt duży.")
@@ -331,13 +335,46 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _hunt_areas(self, save=False):
+    def _hunt_areas(self, save=False, route=False):
         import sqlite3
         from hunt_areas import catalogue, save_area
         atlas = getattr(getattr(_state, 'passive_map_monitor', None), 'atlas', None)
         if atlas is None:
             return self._json_response({'error':'Atlas czeka na pierwszy odczyt.'},503)
         try:
+            if route:
+                from hunt_routes import propose
+                if not 0 < int(self.headers.get('Content-Length',0)) <= 2048:
+                    raise ValueError('Nieprawidłowe dane propozycji.')
+                body = self._read_body()
+                if not isinstance(body, dict) or body.get('scope') != atlas.scope:
+                    raise ValueError('Zmieniono atlas. Wczytaj obszary ponownie.')
+                # The panel has one HTTP thread. A city-wide path search must
+                # leave it free to process stop, healing and other controls.
+                if not hasattr(self.server, 'route_jobs'):
+                    self.server.route_jobs = {}
+                    self.server.route_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='atlas-route')
+                jobs = self.server.route_jobs
+                if 'ticket' in body:
+                    ticket = body['ticket']
+                    job = jobs.get(ticket) if isinstance(ticket,str) else None
+                    if job is None or job[0] is not atlas:
+                        raise ValueError('Propozycja wygasła. Przelicz trasę ponownie.')
+                    if job[1].done():
+                        try:
+                            return self._json_response(job[1].result())
+                        finally:
+                            jobs.pop(ticket)
+                    return self._json_response({'ticket':ticket},202)
+                if any(not job.done() for _,job in jobs.values()):
+                    return self._json_response({'error':'Atlas wyznacza inną trasę. Spróbuj ponownie za chwilę.'},409)
+                while len(jobs) >= 4:
+                    jobs.pop(next(iter(jobs)))
+                learner = getattr(_state.passive_map_monitor, 'learner', None)
+                rows = list(learner.records.values()) if learner else []
+                ticket = uuid4().hex
+                jobs[ticket] = atlas,self.server.route_worker.submit(propose,atlas,rows,body)
+                return self._json_response({'ticket':ticket},202)
             if save:
                 if not 0 < int(self.headers.get('Content-Length',0)) <= 2*1024*1024:
                     raise ValueError('Nieprawidłowy rozmiar danych obszaru.')
