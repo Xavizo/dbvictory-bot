@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.11.0",
+    "changes": [
+      {"title":"Blokady ruchu mają własny raport","detail":"Diagnostyka zachowuje 5 minut przed blokadą i 30 sekund od ostatniej nieudanej próby. Podczas ręcznej gry i Cavebota możesz też samodzielnie zapisać ostatnie 5 minut."}
+    ]
+  },
+  {
     "version": "v1.10.3",
     "changes": [
       {"title":"Szkice i mapa pozostają dostępne po chwilowej blokadzie zapisu","detail":"Atlas zachowuje nowe pola w pamięci i ponawia zapis. Możesz ponownie otworzyć zapisany szkic i przygotować jego trasę po zwolnieniu bazy."}

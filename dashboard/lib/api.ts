@@ -298,6 +298,13 @@ export const pauseAutomation = () => control("/api/automation/pause");
 export const resumeAutomation = () => control("/api/automation/resume");
 export const emergencyStop = () => control("/api/emergency-stop");
 export const unlockAutomation = () => control("/api/automation/unlock");
+export type MovementHistoryStatus = {active:boolean;capturing:boolean;available:boolean;latest:string|null;error:string|null;unwritten_reports:number};
+export async function movementHistory(save=false,signal?:AbortSignal):Promise<MovementHistoryStatus>{
+  const response=await authenticatedFetch(API_BASE+"/api/movement-history",{method:save?"POST":"GET",signal});
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
 export const setPotionDiagnostics = (enabled: boolean) => control("/api/potions/diagnostics", { enabled });
 export interface MapAnnotationInput {
   scope:string; operation:"save" | "remove"; position:[number,number,number]; item_id:number;

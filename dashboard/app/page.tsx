@@ -2,6 +2,7 @@
 
 import { useBot } from "@/lib/useBot";
 import RouteReplayPanel from "./RouteReplayPanel";
+import MovementHistoryPanel from "./MovementHistoryPanel";
 import CavebotReports from "./CavebotReports";
 import SpeedUpPanel from "./SpeedUpPanel";
 import ProfilePicker from "./ProfilePicker";
@@ -1143,6 +1144,7 @@ export default function Dashboard() {
       </div>
       <div className="diagnostic-grid two-columns"><div className="diagnostic-card"><span>Pakiety z serwera</span><strong>{(state?.packets_from_server ?? 0).toLocaleString("pl-PL")}</strong></div><div className="diagnostic-card"><span>Pakiety z klienta</span><strong>{(state?.packets_from_client ?? 0).toLocaleString("pl-PL")}</strong></div></div>
       <RouteReplayPanel state={state} online={mcpConnected}/>
+      {view==="diagnostics"&&<MovementHistoryPanel online={mcpConnected}/>}
       {state?.proxy_sequence && <div className="diagnostic-section"><button className="secondary-button" onClick={()=>setShowProxySeq(!showProxySeq)}>{showProxySeq ? "Ukryj etapy połączenia" : "Pokaż etapy połączenia"}</button>{showProxySeq && <ConnectionSequence seq={state.proxy_sequence} onClose={()=>setShowProxySeq(false)}/>}</div>}
       {state?.connected && state.player && <PlayerStats player={state.player}/>}
       <div className="diagnostic-section"><div className="section-caption"><div><h2>Lista stworzeń z DLL</h2><p>To osobny odczyt diagnostyczny. Typy postaci na pasywnej mapie pochodzą z pól klienta.</p></div></div><CreatureList creatures={state?.creatures ?? []}/></div>

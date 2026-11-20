@@ -899,6 +899,12 @@ def _stop_dashboard() -> None:
 atexit.register(_stop_dashboard)
 
 
+@atexit.register
+def _flush_movement_report():
+    history = getattr(state.game_state, "movement_history", None)
+    if history:history.close(wait=True)
+
+
 def _check_process_running(name: str) -> bool:
     """Check if a process with the given name is running (Windows)."""
     try:
@@ -1104,6 +1110,8 @@ async def _reset_bot() -> str:
 
     state._adaptive_prepare_token=None
     # 1. Stop all running actions
+    history = getattr(state.game_state, "movement_history", None)
+    if history:history.close()
     for name in list(state._action_tasks):
         _stop_action(name)
     if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Sesja została zresetowana.")
@@ -1449,9 +1457,14 @@ async def start_bot() -> str:
 
     def on_login_success(keys):
         if getattr(state,"packet_observer",None):state.packet_observer.invalidate()
+        previous = getattr(state.game_state, "movement_history", None)
+        if previous:previous.close()
         # New identity/stats/conditions for every login, including reconnects.
         state.game_state = GameState()
         login_state = state.game_state
+        from movement_history import MovementHistory
+        login_state.movement_history = MovementHistory()
+        login_state.movement_history.start_worker()
         login_state.client_state_required = observer
         login_state.session_id = getattr(state.game_proxy,'session_generation',0)
         monitor = getattr(state, "passive_map_monitor", None)
@@ -1499,6 +1512,8 @@ async def start_bot() -> str:
 
     def packet_observation_gap(reason):
         gs = state.game_state
+        history = getattr(gs, "movement_history", None)
+        if history:history.observation_gap(reason)
         gs.client_walk_requests.clear()
         gs.packet_position_trusted = False
         gs.pets.invalidate_pending_look()
@@ -1517,6 +1532,8 @@ async def start_bot() -> str:
 
     def on_disconnect():
         if getattr(state,"packet_observer",None):state.packet_observer.invalidate()
+        history = getattr(state.game_state, "movement_history", None)
+        if history:history.close()
         state._adaptive_prepare_token=None
         state.potion_diagnostics.invalidate_inventory()
         monitor = getattr(state, "passive_map_monitor", None)

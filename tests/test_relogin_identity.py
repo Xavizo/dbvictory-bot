@@ -148,6 +148,9 @@ def test_login_callback_replaces_old_state_and_old_delayed_start_cannot_run():
         await pending[0];assert starts==[]
         await pending[1];assert starts==[1]
         assert state.settings is settings and settings['actions']['speed_up']['enabled']
+        assert not first.movement_history.status()["active"]
+        assert state.game_state.movement_history.status()["active"]
+        state.game_state.movement_history.close(wait=True)
     asyncio.run(exercise())
 
 

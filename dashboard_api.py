@@ -118,6 +118,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json_response(center.snapshot())
         if self.path == "/api/state":
             return self._handle_get_state()
+        if self.path == "/api/movement-history":
+            return self._movement_history()
         if urlsplit(self.path).path == "/api/cavebot/reports":
             from cavebot_history import read_reports
             import math
@@ -175,6 +177,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._authorize():
             return
+        if self.path == "/api/movement-history":
+            return self._movement_history(save=True)
         if self.path == "/api/map/grounds":
             return self._hunt_areas(save=True)
         if self.path == "/api/profiles":
@@ -343,6 +347,20 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json_response({'error':str(exc)},400)
         except (OSError, sqlite3.Error):
             return self._json_response({'error':'Atlas jest chwilowo niedostępny.'},503)
+
+    def _movement_history(self, save=False):
+        history = getattr(getattr(_state, "game_state", None), "movement_history", None)
+        if history is None:
+            if save:return self._json_response({"error":"Historia ruchu czeka na zalogowanie postaci."},503)
+            return self._json_response(dict(active=False,capturing=False,available=False,latest=None,error=None,unwritten_reports=0))
+        if save:
+            if self.headers.get("Content-Length","0") != "0":
+                return self._json_response({"error":"Zapis nie przyjmuje parametrów."},400)
+            try:
+                history.manual_save()
+            except ValueError as exc:return self._json_response({"error":str(exc)},400)
+            except OSError:return self._json_response({"error":"Nie udało się zapisać raportu na dysku."},500)
+        return self._json_response(history.status())
 
     def _handle_atlas(self):
         monitor=getattr(_state,"passive_map_monitor",None)

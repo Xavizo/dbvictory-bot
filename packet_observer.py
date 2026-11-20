@@ -111,6 +111,9 @@ def log_walk_cancels(live, scan):
     for _, kind, event in scan.state.server_events:
         if kind != 'cancel_walk':
             continue
+        history = getattr(live, "movement_history", None)
+        if history:
+            history.cancelled(event["pos"], event["direction"], scan.received_at)
         # A later local input may already exist by the time the worker publishes.
         recent = next((r for r in reversed(live.client_walk_requests)
                        if 0 <= scan.received_perf-r[0] <= 1.5), None)

@@ -49,8 +49,11 @@ class WalkTiming:
     target: tuple
     position_ms: float = 0.
     map_ms: float | None = None
+    history: object = None
 
     def report(self, outcome):
+        if self.history and self.map_ms is not None:
+            self.history.route_result("route_map", outcome, self.target, self.map_ms)
         log.info("Walk timing step=%d target=%s position_ms=%.1f map_ms=%s outcome=%s",
                  self.number, self.target, self.position_ms,
                  "-" if self.map_ms is None else f"{self.map_ms:.1f}", outcome)
@@ -843,6 +846,12 @@ class AdaptiveCavebot:
         self._finish_walk_timing("no_following_map")
         self._walk_number += 1
         timing = WalkTiming(self._walk_number, tuple(target))
+        history = getattr(getattr(self.state, "game_state", None), "movement_history", None)
+        timing.history = history
+        if history:
+            monitor = getattr(self.state, "passive_map_monitor", None)
+            sample = getattr(monitor, "_result", None)
+            history.request("cavebot", origin, target, sample if sample and 0 <= time.time()-sample.get("captured_at",0)<.8 else None)
         # Delivery has returned. Measure the executor's actual confirmation
         # wait, including an already available position, on Windows QPC.
         started = perf_counter()
@@ -862,6 +871,8 @@ class AdaptiveCavebot:
             if recover:
                 self._uncertain_walk_origin = tuple(origin) if outcome in {"position_unconfirmed", "position_interrupted"} else None
             timing.position_ms = (perf_counter() - started) * 1000
+            if history:
+                history.route_result("route_position", outcome, target, timing.position_ms)
             if outcome == "position_confirmed":
                 self._map_after_walk = timing
             else:

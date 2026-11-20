@@ -293,6 +293,9 @@ async def run(bot):
                 try:
                     gs.client_snapshot = player_reader.snapshot()
                     gs.client_state_error = None
+                    history = getattr(gs, "movement_history", None)
+                    if history:
+                        history.player_position(gs.client_snapshot["position"])
                 except Exception as exc:
                     # Existing samples expire after 500 ms; packet cache cannot override them.
                     gs.client_state_error = type(exc).__name__

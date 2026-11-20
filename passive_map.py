@@ -333,6 +333,12 @@ class PassiveMapMonitor:
             request = command if command and command['kind'] == 'step' else {}
             self.state.game_state.client_walk_requests.append((time.perf_counter(), ClientOpcode(opcode).name,
                                                                request.get('origin'), request.get('entry')))
+            history = getattr(self.state.game_state, "movement_history", None)
+            if history:
+                if opcode in WALKS or opcode in (ClientOpcode.NEW_WALK, ClientOpcode.AUTO_WALK):
+                    history.request("client", request.get("origin") or origin, request.get("entry"), result if origin else None)
+                else:
+                    history.stop_request()
         if self.learner is not None:
             self.learner.enqueue(command)
 
@@ -394,6 +400,9 @@ class PassiveMapMonitor:
         # Navigation needs the annotated live cells as soon as they are ready.
         # Atlas persistence uses the same immutable frame, on the reader thread.
         self._result = {**result, "asset": asset}
+        history = getattr(game_state, "movement_history", None)
+        if history:
+            history.frame(result, getattr(self.state, "packet_observer", None))
         route = getattr(self.state, 'adaptive_cavebot', None)
         reporter = getattr(route, 'reporter', None)
         if (reporter is not None and getattr(route, 'status', None) == 'running'
