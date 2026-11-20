@@ -330,11 +330,18 @@ class PassiveMapMonitor:
         from transition_learning import WALKS, decode_command
         movement = opcode in WALKS or opcode in (ClientOpcode.NEW_WALK, ClientOpcode.AUTO_WALK,
                                                  ClientOpcode.STOP_WALK, ClientOpcode.FOLLOW, ClientOpcode.LOGOUT)
-        if self.learner is None and not movement:
+        if self.learner is None and not movement and opcode != ClientOpcode.USE_ITEM_EX:
             return
         result = self._result
         origin = result.get("center") if 0 <= time.time()-result.get("captured_at",0)<0.8 else None
         command = decode_command(opcode,reader,origin)
+        if (origin and command and command.get('kind') == 'use_with' and command.get('tool_id') in (8899, 8900)):
+            history = getattr(self.state.game_state, 'movement_history', None)
+            if history:
+                from transition_learning import cell_at
+                target = command['entry']
+                history.web_tool('client', target, command['tool_id'], command.get('item_id'),
+                                 command.get('stack'), cell_at(result, target))
         if movement:
             request = command if command and command['kind'] == 'step' else {}
             self.state.game_state.client_walk_requests.append((time.perf_counter(), ClientOpcode(opcode).name,

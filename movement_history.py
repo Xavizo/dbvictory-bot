@@ -47,6 +47,7 @@ class MovementHistory:
         self.coverage = None
         self.last_gap = None
         self.last_web_blockage = None
+        self.web_watch = None
         self.completed = deque()
         self.unwritten_reports = 0
         self.closed = False
@@ -146,6 +147,17 @@ class MovementHistory:
                 return
             now = self.clock()
             self.last_frame = now
+            if self.web_watch:
+                target, started, wall_started = self.web_watch
+                if now-started > AFTER_SECONDS:
+                    self.web_watch = None
+                elif sample.get('captured_at', 0) >= wall_started:
+                    cell = next((c for c in sample.get('cells', ()) if (c['x'], c['y'], c['z']) == target), None)
+                    if cell and cell.get('kind') not in ('unknown', None):
+                        ids = [i['id'] for i in cell.get('items', ())]
+                        if 189 in ids and 183 not in ids and 182 not in ids:
+                            self._event(now, 'web_cut_observed', target=target, elapsed_ms=round((now-started)*1000))
+                            self.web_watch = None
             pos = tuple(sample["center"])
             pending = self.pending
             # Map annotation can finish after a newer movement request was issued.
@@ -170,6 +182,20 @@ class MovementHistory:
                 if counts != self.coverage:
                     self._event(now,"observer_totals",dropped=counts[0],partial=counts[1],failures=counts[2])
                     self.coverage = counts
+
+    def web_tool(self, source, target, tool, target_id, target_layer, cell):
+        """Compare semantic tool selections on a known web, including clicks on the ground beneath it."""
+        if tool not in (8899, 8900) or not any(i.get('id') in (182, 183) for i in (cell or {}).get('items', ())):
+            return
+        with self.lock:
+            if self.closed:
+                return
+            now = self.clock()
+            target = tuple(target)
+            self._event(now, 'web_tool_use', source=source, target=target, tool_id=tool,
+                        target_item=target_id, target_layer=target_layer)
+            self.web_watch = (target, now, time.time())
+            self._trigger(now, 'web_tool_use')
 
     def web_blocked(self,origin,target,cell,reason):
         items=tuple((i['id'],i.get('stack'),tuple(i.get('flags',()))) for i in (cell or {}).get('items',()))

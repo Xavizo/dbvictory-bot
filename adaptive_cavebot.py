@@ -936,7 +936,11 @@ class AdaptiveCavebot:
             def valid():
                 return (list(self.state.game_state.position) == edge['origin'] and ready()
                         and tool_location(reader.snapshot(), [tool]) == location)
-            await self.send(build_use_item_ex_packet(*where,tool,stack,*edge['entry'],item['stack'],target_item_id=item['id']),valid)
+            sent = await self.send(build_use_item_ex_packet(*where,tool,stack,*edge['entry'],item['stack'],target_item_id=item['id']),valid)
+            if sent and edge.get('action') == 'clear_web':
+                history = getattr(self.state.game_state, 'movement_history', None)
+                if history:
+                    history.web_tool('cavebot', edge['entry'], tool, item['id'], item['stack'], {'items':[item]})
         finally:
             source.close()
 

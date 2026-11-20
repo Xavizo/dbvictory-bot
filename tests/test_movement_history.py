@@ -64,6 +64,29 @@ def test_manual_walk_cancel_groups_five_minutes_and_correct_tail(session):
     assert h.poll() is None
 
 
+def test_web_report_compares_manual_ground_click_with_planned_web_and_observed_change(session):
+    from protocol import build_use_item_ex_packet
+    now,h=session
+    before=frame()
+    tile=before['cells'][0]
+    tile['items']=[{'id':486,'stack':0},{'id':183,'stack':1}]
+    monitor=PassiveMapMonitor(NS(connected=True,game_state=NS(movement_history=h)))
+    monitor._result=before
+    h.web_tool('cavebot',B,8900,183,1,tile)
+    use=build_use_item_ex_packet(65535,10,0,8900,0,*B,0,target_item_id=486)
+    monitor.record_client_packet(ClientOpcode.USE_ITEM_EX,PacketReader(use[1:]))
+    tile['items'][-1]['id']=189
+    h.frame(before)
+    assert h.web_watch  # Snapshot captured before the tool selection.
+    h.frame({**before,'captured_at':time.time()+.1})
+    assert h.web_watch is None
+    now[0]=31
+    report=h.poll()
+    uses=[e for e in report['events'] if e['event']=='web_tool_use']
+    assert [(e['source'],e['target_item'],e['target_layer']) for e in uses]==[('cavebot',183,1),('client',486,0)]
+    assert sum(e['event']=='web_cut_observed' for e in report['events'])==1
+
+
 def test_stalled_web_report_records_layers_once_without_a_walk_request(session):
     now,h=session
     tile={'items':[dict(id=486,stack=0,flags=['ground']),dict(id=183,stack=1,flags=['not_walkable'])]}
