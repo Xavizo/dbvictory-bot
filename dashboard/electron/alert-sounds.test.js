@@ -97,12 +97,30 @@ test('adaptive hunt readiness notifies once per recording and respects mute',asy
   rec.name='third';await poll();assert.equal(count,2);
   sounds.stop();
 });
-test('audio uses only fixed local WAVs, hidden process, escaped path, and no overlapping children',()=>{
+test('both notification kinds use the same hidden Windows helper; busy or stopped signals stay silent',()=>{
  const calls=[];let done,killed=0;
- const audio=createNotificationAudio({fallback:()=>{},platform:'win32',directory:"C:\\test's app",systemRoot:'C:\\Windows',run:(exe,args,opts,cb)=>{calls.push({exe,args,opts});done=cb;return {kill(){killed++;}};}});
+ const directory="C:\\test's app";
+ const audio=createNotificationAudio({fallback:()=>{},platform:'win32',directory,run:(exe,args,opts,cb)=>{calls.push({exe,args,opts});done=cb;return {kill(){killed++;}};}});
  assert.equal(audio.play('message'),true);assert.equal(audio.play('player'),false);
- assert.equal(calls[0].opts.windowsHide,true);assert.ok(calls[0].args.includes('Hidden'));
- const script=Buffer.from(calls[0].args.at(-1),'base64').toString('utf16le');assert.match(script,/test''s app/);assert.match(script,/message\.wav/);
- done();audio.play('untrusted command');assert.match(Buffer.from(calls[1].args.at(-1),'base64').toString('utf16le'),/player\.wav/);
+ assert.equal(calls[0].opts.windowsHide,true);
+ assert.deepEqual(calls[0].args,['-I','-B',require('node:path').join(directory,'windows_alert.py'),'message']);
+ assert.match(calls[0].exe,/pythonw\.exe$/);
+ done();audio.play('untrusted command');assert.equal(calls[1].args.at(-1),'player');
  audio.stop();assert.equal(killed,1);assert.equal(audio.play('message'),false);
+});
+
+test('a fresh alert shows its preview; an expired unread alert only shows its count',()=>{
+ const fs=require('node:fs'),ts=require('typescript'),React=require('react');
+ const {renderToStaticMarkup}=require('react-dom/server');
+ const source=fs.readFileSync(require.resolve('../app/AlertBell.tsx'),'utf8');
+ const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,
+   target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+ const mod={exports:{}};
+ new Function('exports','require',js)(mod.exports,name=>name==='@/lib/api'?{}:require(name));
+ const render=age=>renderToStaticMarkup(React.createElement(mod.exports.default,{
+   connected:true,onRefresh(){},alerts:snapshot([event(1,{at:Date.now()/1000-age,sender:'Gracz',text:'Test'})],{unread:1})}));
+ assert.match(render(0),/class="alert-peek"/);
+ const after=render(5);
+ assert.doesNotMatch(after,/class="alert-peek"/);
+ assert.match(after,/class="alert-count">1</);
 });

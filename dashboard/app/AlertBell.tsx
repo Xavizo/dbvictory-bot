@@ -5,6 +5,28 @@ import {acknowledgeAlerts, configureAlerts, setAlertsPaused, type AlertConfig, t
 
 const labels:Record<AlertKind,string>={private:"Wiadomość prywatna",default:"Czat Default",player:"Pojawienie się gracza"};
 const kinds:AlertKind[]=["private","default","player"];
+type AlertEvent = AlertState["events"][number];
+
+function AlertPreview({event, onOpen}:{event:AlertEvent;onOpen:()=>void}) {
+  const expiresAt = event.at * 1000 + 4000;
+  const [visible, setVisible] = useState(() => expiresAt > Date.now());
+  useEffect(() => {
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      setVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setVisible(false), remaining);
+    return () => window.clearTimeout(timer);
+  }, [expiresAt]);
+
+  if (!visible) return null;
+  return <button className="alert-peek" onClick={onOpen}>
+    <span role="status"><b>{labels[event.kind]}</b> · {event.sender}</span>
+    <small>{event.text}</small>
+  </button>;
+}
+
 export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertState|null;connected:boolean;onRefresh:()=>void|Promise<void>}) {
   const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [config,setConfig]=useState<AlertConfig|null>(null);
@@ -75,18 +97,20 @@ export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertSta
         <path d={paused?"M4 2.5 13 8l-9 5.5z":"M3 2h3.5v12H3zm6.5 0H13v12H9.5z"}/>
       </svg><span>{paused?"Wznów":"Wstrzymaj"}</span>
     </button>}
-    {!open&&!paused&&unread>0&&latest&&latest.id>through&&<button className="alert-peek" onClick={()=>setOpen(true)}><span role="status"><b>{labels[latest.kind]}</b> · {latest.sender}</span><small>{latest.text}</small></button>}
+    {!open&&!paused&&unread>0&&latest&&latest.id>through&&<AlertPreview
+      key={`${alerts?.session}-${latest.id}`} event={latest} onOpen={()=>setOpen(true)}/>}
+
     {open&&<section id="alert-panel" className="alert-panel" aria-label="Alerty">
       <header><strong>Alerty</strong><span>{paused?"Wstrzymane":alerts?.cavebot_active?"Cavebot działa":"Cavebot zatrzymany"}</span><button aria-label="Zamknij alerty" className="alert-close" onClick={()=>setOpen(false)}>×</button></header>
       {!alerts||!config?<p>Alerty wymagają nowej sesji silnika.</p>:<>
-        <div className="alert-setting-head"><span>Zdarzenie</span><span>Dźwięk</span><span>Kiedy</span></div>
+        <div className="alert-setting-head"><span>Zdarzenie</span><span>Sygnał</span><span>Kiedy</span></div>
         {kinds.map(kind=><div key={kind} className="alert-setting">
           <label><input type="checkbox" checked={config[kind].enabled} disabled={busy||!connected} onChange={e=>void change(kind,{enabled:e.target.checked})}/>{labels[kind]}</label>
-          <label className="alert-sound-toggle"><input type="checkbox" aria-label={`Dźwięk: ${labels[kind]}`} checked={config[kind].sound} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{sound:e.target.checked})}/></label>
+          <label className="alert-sound-toggle"><input type="checkbox" aria-label={`Dźwięk i miganie ikony: ${labels[kind]}`} checked={config[kind].sound} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{sound:e.target.checked})}/></label>
           <select aria-label={`Kiedy: ${labels[kind]}`} value={config[kind].scope} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{scope:e.target.value as "always"|"cavebot"})}><option value="always">Zawsze</option><option value="cavebot">Przy V2</option></select>
         </div>)}
-        <p className="alert-hint">Gracz: sygnał co 5 s do zniknięcia z mapy. Czat: osobny sygnał przy każdej wiadomości. Dźwięki działają też w zasobniku.</p>
-        <div className="alert-tools"><button disabled={paused} onClick={async()=>{setError("");try{if(!window.dbvAlerts)throw new Error("Uruchom ponownie panel, aby wczytać obsługę dźwięku.");await window.dbvAlerts.testSound();}catch(e){setError(String(e));}}}>♪ Test dźwięku</button><button disabled={busy||!connected||!unread} onClick={()=>void read()}>Oznacz jako przeczytane</button></div>
+        <p className="alert-hint">Dźwięk i ikona gry sygnalizują każdą wiadomość. Przy widocznym graczu sygnał powtarza się co 5 s.</p>
+        <div className="alert-tools"><button disabled={paused} onClick={async()=>{setError("");try{if(!window.dbvAlerts)throw new Error("Uruchom ponownie panel, aby wczytać obsługę dźwięku.");await window.dbvAlerts.testSound();}catch(e){setError(String(e));}}}>♪ Test sygnału</button><button disabled={busy||!connected||!unread} onClick={()=>void read()}>Oznacz jako przeczytane</button></div>
         {error&&<p role="alert" className="alert-error">{error}</p>}
         <div className="alert-history" aria-label="Historia alertów">{[...alerts.events].reverse().map(e=><article key={`${alerts.session}-${e.id}`}><div><b>{labels[e.kind]}</b><time>{new Date(e.at*1000).toLocaleTimeString("pl-PL")}</time></div><strong>{e.sender}</strong>{e.position&&<span className="alert-coordinates"> ({e.position.join(", ")})</span>}<p>{e.text}</p></article>)}{!alerts.events.length&&<p className="alert-empty">Brak zdarzeń w tej sesji.</p>}</div>
         <footer>{!connected?"Brak połączenia z botem.":!alerts.map_fresh?"Gracze: czekam na świeżą mapę.":"Gracze: pasywny odczyt aktywny."} <span title="Czytamy rozpoznane komunikaty czatu. Nie skanujemy zawartości mapy w poszukiwaniu tekstu.">Czat: {alerts.chat_received?`${alerts.chat_received} rozpoznanych komunikatów.`:"oczekiwanie na komunikat."}</span></footer>

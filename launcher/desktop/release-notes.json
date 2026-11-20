@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.16.0",
+    "changes":[
+      {"title":"Miganie ikony gry przy alertach","detail":"Ikona DBVictory miga razem z dźwiękiem. Przy widocznym graczu sygnał powtarza się co 5 sekund. Chmurka znika po 4 sekundach, a alert pozostaje w historii."}
+    ]
+  },
+  {
     "version":"v1.15.2",
     "changes":[
       {"title":"Porównanie użycia AiO na pajęczynie","detail":"Raport zapisuje ID narzędzia, wskazany obiekt i warstwę przy ręcznej próbie oraz próbie Cavebota. Osobne zdarzenie potwierdza zaobserwowaną zmianę pola na przeciętą pajęczynę 189."}
