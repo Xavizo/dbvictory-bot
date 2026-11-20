@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.16.1",
+    "changes":[
+      {"title":"Częstszy sygnał obecności gracza","detail":"Dźwięk i miganie ikony gry powtarzają się co 1,5 sekundy, dopóki gracz jest widoczny."}
+    ]
+  },
+  {
     "version":"v1.16.0",
     "changes":[
       {"title":"Miganie ikony gry przy alertach","detail":"Ikona DBVictory miga razem z dźwiękiem. Przy widocznym graczu sygnał powtarza się co 5 sekund. Chmurka znika po 4 sekundach, a alert pozostaje w historii."}

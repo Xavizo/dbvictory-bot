@@ -8,12 +8,13 @@ const event=(id,extra={})=>({id,kind:'private',at:100,sound:true,...extra});
 test('player repeats while visible, stops on departure, and ignores history acknowledgement',()=>{
  let now=100000,sounds=[];const c=createSoundConsumer(k=>sounds.push(k),()=>now);
  c.consume(snapshot(),[12]);assert.deepEqual(sounds,['player']);
- now+=4000;c.consume(snapshot(),[12]);assert.equal(sounds.length,1);
- now+=1000;c.consume(snapshot([],{unread:0}),[12]);assert.equal(sounds.length,2);
- now+=5000;c.consume(snapshot(),[]);assert.equal(sounds.length,2);
- c.consume(snapshot(),[13]);assert.equal(sounds.length,3);
- now+=5000;c.consume(snapshot([],{cavebot_active:false}),[13]);assert.equal(sounds.length,3);
- c.consume(snapshot([],{config:{...config,player:{...config.player,sound:false}}}),[13]);assert.equal(sounds.length,3);
+ now+=1499;c.consume(snapshot(),[12]);assert.equal(sounds.length,1);
+ now+=1;c.consume(snapshot([],{unread:0}),[12]);assert.equal(sounds.length,2);
+ now+=1500;c.consume(snapshot(),[12]);assert.equal(sounds.length,3);
+ now+=1500;c.consume(snapshot(),[]);assert.equal(sounds.length,3);
+ c.consume(snapshot(),[13]);assert.equal(sounds.length,4);
+ now+=1500;c.consume(snapshot([],{cavebot_active:false}),[13]);assert.equal(sounds.length,4);
+ c.consume(snapshot([],{config:{...config,player:{...config.player,sound:false}}}),[13]);assert.equal(sounds.length,4);
 });
 test('each new chat message has one distinct sound, including backend-coalesced messages',()=>{
  let now=100000,sounds=[];const c=createSoundConsumer(k=>sounds.push(k),()=>now);

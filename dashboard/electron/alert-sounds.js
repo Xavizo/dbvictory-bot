@@ -34,7 +34,7 @@ function createSoundConsumer(playSound, now=Date.now) {
       queue=queue.filter(e=>e.id>silencedThrough&&e.expires>=now()&&allowed(state,e.kind));
       if(queue.length&&now()-lastMessage>=700){if(playSound('message')!==false){queue.shift();lastMessage=now();}return;}
       if(!players.length||!allowed(state,'player')){lastPlayer=-Infinity;return;}
-      if(now()-lastPlayer>=5000&&now()-lastMessage>=700&&playSound('player')!==false)lastPlayer=now();
+      if(now()-lastPlayer>=1500&&now()-lastMessage>=700&&playSound('player')!==false)lastPlayer=now();
     },
     testSound(){if(now()-lastTest<1000)return false;lastTest=now();playSound('player');return true;},
   };
