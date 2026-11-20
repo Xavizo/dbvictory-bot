@@ -14,14 +14,14 @@ import type {DraftTag} from "@/lib/cavebotModel";
 import {tileStyles,navigationStyles,petStyle,cutWebStyle} from "@/lib/mapVisuals";
 import {NavigationDetails,TileContextMenu,copyCellText,type TileMenuPosition} from "./PassiveMapPanel";
 import {transitionActions} from "./TransitionLearningPanel";
-import {transitionMarkers,transitionApproaches,endpointMarkers,routeExecutionIssues,MAX_ATLAS_RADIUS} from "@/lib/atlasModel";
+import {transitionMarkers,transitionApproaches,endpointMarkers,routeExecutionIssues,MAX_ATLAS_RADIUS,editableFloorLinks,nearbyTransitions,replaceFloorLink} from "@/lib/atlasModel";
 import type {TransitionAction} from "@/lib/api";
 type Pos=[number,number,number];
 type Draft={navigation_revision?:string;id:string;name:string;points:Pos[];labels?:string[];tags?:DraftTag[];links?:RouteLink[];loop?:boolean;updated:number};
 type Atlas={route_transitions?:RouteTransition[];scope:string;center:Pos;radius:number;cells:PassiveMapCell[];floors:number[];total:number;limit:number|null;error?:string};
 type Plan={avoid_tiles?:Pos[];return_mode?:string;return_error?:string|null;loop_closed:boolean;links:RouteLink[];scope:string;path:Pos[];points:Pos[];original:Pos[];complete:boolean;preview_only:boolean;warning:string;requires_action_review?:boolean;requires_path_review?:boolean;ignored_recorded_actions?:boolean;unmatched_recorded_actions?:number;recording_source?:string;
   adaptive_evidence?:{areas:number;total_areas?:number;samples:number;total_samples:number;xp:number;covered?:number;sectors?:number;species?:{name:string;seen:number;target_xp:number;nearby_xp:number;last_seen:Pos}[]};
-  transitions:{origin:Pos;entry:Pos;exit:Pos;action:string;item_id?:number;tool_id?:number;prepared_item_id?:number}[];
+  transitions:{id?:string;origin:Pos;entry:Pos;exit:Pos;action:string;item_id?:number;tool_id?:number;prepared_item_id?:number}[];
   legs?:{from_index:number;to_index:number;start:number;end:number}[];
   recorded_actions?:{type:string;item_id?:number;player_pos?:Pos;x?:number;y?:number;z?:number;to_x?:number;to_y?:number;to_z?:number;matched_transition?:number|null}[];
   gaps:{segment:number;from:Pos;to:Pos;reason:string}[]};
@@ -30,6 +30,27 @@ async function request(path:string,body?:unknown) {
   const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error ?? `HTTP ${response.status}`),{status:response.status});return data;
 }
 const pointText=(p:Pos)=>`(${p.join(", ")})`;
+function TransitionAlternatives({current,scope,busy,onChoose}:{current:Plan["transitions"][number];scope:string;busy:boolean;onChoose:(edge:RouteTransition)=>void}){
+  const [choices,setChoices]=useState<RouteTransition[]|null>(null),[error,setError]=useState("");
+  useEffect(()=>{
+    let closed=false;
+    const [x,y,z]=current.entry;
+    setChoices(null);setError("");
+    request(`/api/map/atlas?x=${x}&y=${y}&z=${z}&radius=5`).then((region:Atlas)=>{
+      if(closed)return;
+      if(region.scope!==scope || region.error)throw Error(region.error||"Profil atlasu zmienił się podczas odczytu.");
+      setChoices(nearbyTransitions(region.route_transitions??[],current));
+    }).catch(e=>{if(!closed)setError(e.message);});
+    return ()=>{closed=true;};
+  },[current,scope]);
+  return <div className="atlas-alternatives">
+    {error?<small role="alert">{error}</small>:choices===null?<small role="status">Szukam przejść…</small>:!choices.length?
+      <small>W promieniu 5 pól brak innego potwierdzonego przejścia na piętro {current.exit[2]}.</small>:
+      choices.map(edge=><button type="button" key={edge.id} disabled={busy} onClick={()=>onChoose(edge)}>
+        Użyj {pointText(edge.entry)}<small>{transitionActions[edge.action as TransitionAction]} · wyjście {pointText(edge.exit)}</small>
+      </button>)}
+  </div>;
+}
 const huntMilestones = [
   "Zdobądź XP w pierwszym miejscu.",
   "Odwiedź kolejną salę lub wróć po następną grupę.",
@@ -90,6 +111,8 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   const displayPath=!active||!mapOpen||objectView?[]:recorder?.active?recorder.observed_path?.map(p=>p.pos) ?? []:workingPlan?workingPlan.path:points;
   const segments=routeSegments(displayPath);
   const [hiddenSegments,setHiddenSegments]=useState<number[]>([]);
+  const [replacement,setReplacement]=useState<{plan:Plan;row:number}|null>(null);
+  const editableLinks=plan && active && mapOpen && sidebar && !browseOnly?editableFloorLinks(plan):[];
   const pointStages=routeSegments(points).flatMap((s,i)=>s.points.map(()=>i));
   const transferStages=plan?transitionStages(plan.path,plan.transitions):[];
   const executionIssues=workingPlan?routeExecutionIssues(workingPlan):[];
@@ -183,15 +206,20 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[active,history,atlas,loop]);
   function openTransition(p:Pos){const cell=cells.find(c=>c.x===p[0] && c.y===p[1] && c.z===p[2]);
     if(cell?.navigation?.some(f=>f.kind!=="web") || atlas?.route_transitions?.some(t=>t.entry.every((n,i)=>n===p[i]))){setTransitionSpot(p);return true;}return false;}
-  async function useTransition(edge:RouteTransition){if(!scope || !compatible||busy)return;
+  async function useTransition(edge:RouteTransition,replace?:RouteLink){if(!scope || !compatible||busy)return;
     const id=++generation.current;setBusy(true);setError("");
-    try {const {points:next,links:chosen,sourceIndices}=selectTransition(points,links,edge,editSegment);
+    try {const {points:next,links:chosen,sourceIndices,from_index}=replace?replaceFloorLink(points,links,replace,edge):selectTransition(points,links,edge,editSegment);
       if(next.length>2048)throw Error("Limit 2048 punktów — usuń punkt przed dodaniem przejścia.");
       const result:Plan=await request("/api/map/plan",{scope,points:next,links:chosen,loop});if(id!==generation.current)return;
+      if(replace && !result.complete){
+        const gap=result.gaps.find(g=>!plan?.gaps.some(old=>pointText(old.from)===pointText(g.from) && pointText(old.to)===pointText(g.to) && old.reason===g.reason));
+        if(gap || !editableFloorLinks(result).some(l=>l?.from_index===from_index && l.id===edge.id))
+          throw Error("Nie udało się połączyć trasy przez wybrane przejście. "+(gap?.reason??"Sprawdź sąsiednie waypointy."));
+      }
       if(!result.complete)setError("Pozostały odcinek do sprawdzenia: "+(result.gaps[0]?.reason??"sprawdź mapę"));
       const nextLabels=sourceIndices.map(i=>i===null?"":labels[i]??"");
-      setRecording("");setSimulation(null);setHistory(h=>rememberEdit(h,points,center,labels,links));setLabels(remapLabels(next,result.points,nextLabels));setLastOptimization(null);setPoints(result.points);setLinks(result.links??[]);setPlan(result);setCopied(false);setSimPlaying(false);setSimIndex(null);setTransitionSpot(null);setDraw(true);setPanMode(false);setSelected(edge.entry);setEditSegment(undefined);
-      setTransitionExit(edge.exit);setTransitionNotice(`Przejście przypisane w szkicu: ${edge.entry[2]} → ${edge.exit[2]}. Widok pozostaje bez zmian.`);
+      setRecording("");setSimulation(null);setHistory(h=>rememberEdit(h,points,center,labels,links));setLabels(remapLabels(next,result.points,nextLabels));setLastOptimization(null);setPoints(result.points);setLinks(result.links??[]);setPlan(result);setCopied(false);setSimPlaying(false);setSimIndex(null);setTransitionSpot(null);if(!replace){setDraw(true);setPanMode(false);}setSelected(edge.entry);setEditSegment(undefined);
+      setReplacement(null);setTransitionExit(edge.exit);setTransitionNotice(replace?`Zmieniono wejście na ${pointText(edge.entry)}. Zapisz szkic lub cofnij zmianę.`:`Przejście przypisane w szkicu: ${edge.entry[2]} → ${edge.exit[2]}. Widok pozostaje bez zmian.`);
     }catch(e){if(id===generation.current)setError(e instanceof Error?e.message:String(e));}finally{if(id===generation.current)setBusy(false);}
   }
   function cancelPointer(){const before=editOrigin.current;editOrigin.current=null;stroke.current=[];pan.current=null;anchorDrag.current=null;
@@ -413,7 +441,14 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
       {plan && <><h3>{plan.complete && !plan.requires_action_review&&!executionIssues.length?"Propozycja gotowa":"Plan do sprawdzenia"}</h3><p>{plan.path.length} pól · {plan.transitions.length} przejść · {plan.points.length} punktów szkicu</p><p className="atlas-help">{plan.warning}</p>
         {simIndex!==null && <p role="status" className="atlas-simulation">Symulacja · {simIndex+1}/{plan.path.length} · {sim?.current && pointText(sim.current)}<small>{sim?.transition?`${transitionActions[sim.transition.action as TransitionAction]} → ${pointText(sim.transition.exit)}`:sim?.next?"Krok po znanym polu":plan.complete?"Koniec propozycji":"Zatrzymano przed luką w trasie"}</small></p>}
         <small>Symulacja porusza wyłącznie znacznikiem. Nie sprawdza działania serwera ani dostępności bramki dla postaci.</small>
-        {plan.transitions.map((t,i)=><button key={i} className="atlas-transition" onClick={()=>setCenter([...t.entry])}>T{i+1} · {pointText(t.entry)} → {pointText(t.exit)}<small>{transitionActions[t.action as TransitionAction]}{t.tool_id ? ` · narzędzie ${t.tool_id}`:""}{t.item_id?` · obiekt ${t.item_id}`:""}</small></button>)}
+        {plan.transitions.map((t,i)=>{
+          const link=editableLinks[i],open=replacement?.plan===plan && replacement.row===i;
+          return <div key={i} className="atlas-transition-row">
+            <button className="atlas-transition" onClick={()=>focusIssue(t.entry)}>T{i+1} · {pointText(t.entry)} → {pointText(t.exit)}<small>{transitionActions[t.action as TransitionAction]}{t.tool_id ? ` · narzędzie ${t.tool_id}`:""}{t.item_id?` · obiekt ${t.item_id}`:""}</small></button>
+            {link && scope && !optimization && !recorder?.active && <button disabled={busy||!compatible} aria-expanded={open} aria-label={`Zmień przejście T${i+1}`} onClick={()=>setReplacement(open?null:{plan,row:i})}>{open?"Anuluj":"Zmień"}</button>}
+            {open && link && scope && !optimization && !recorder?.active && <TransitionAlternatives current={t} scope={scope} busy={busy} onChoose={edge=>useTransition(edge,link)}/>}
+          </div>;
+        })}
         {plan.gaps.map((g,i)=><button key={i} className="atlas-gap" onClick={()=>focusGap(g)}>{g.reason}: {pointText(g.from)} → {pointText(g.to)}</button>)}
         {!!plan.recorded_actions?.length && <details><summary>Czynności z nagrania ({plan.recorded_actions.length})</summary>{plan.recorded_actions.map((a,i)=><p key={i}>{a.type} · ID {a.item_id ?? "?"} · {a.player_pos?.join(", ")} · {a.matched_transition!=null?`Przejście T${a.matched_transition+1} — potwierdzone`:"Do sprawdzenia"}</p>)}</details>}
         <details><summary>Dane planu</summary><button onClick={async()=>{try{if(!window.dbvMap)throw new Error();await window.dbvMap.copyPlan(JSON.stringify(plan,null,2));setCopied(true);}catch{setError("Nie udało się skopiować planu.");}}}>{copied?"Skopiowano plan JSON":"Kopiuj plan JSON"}</button></details>

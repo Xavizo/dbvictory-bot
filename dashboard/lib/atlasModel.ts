@@ -41,6 +41,57 @@ export function transitionDestination(entry:Pos,rows:{entry:Pos;exit:Pos}[]) {
   const exits=[...new Set(rows.filter(r=>positionKey(r.entry)===positionKey(entry)).map(r=>r.exit[2]))];
   return exits.length===1&&exits[0]!==entry[2]?`${exits[0]<entry[2]?'↑':'↓'} ${exits[0]}`:'';
 }
+
+// Each change of floor occupies one path step. Only forward, explicitly linked
+// legs belong to the sketch; return legs and automatically opened doors do not.
+export function editableFloorLinks(plan:{
+  path:Pos[]; links:RouteLink[]; legs?:{from_index:number;to_index:number;start:number;end:number}[];
+  transitions:{id?:string;origin:Pos;exit:Pos}[];
+}) {
+  const links=new Map(plan.links.map(link=>[link.from_index,link]));
+  const legs=new Map(plan.legs?.filter(leg=>leg.to_index===leg.from_index+1 && leg.end===leg.start+1)
+    .map(leg=>[leg.start,leg]));
+  let step=0;
+  return plan.transitions.map(t=>{
+    if(t.origin[2]===t.exit[2])return undefined;
+    while(step+1<plan.path.length && plan.path[step][2]===plan.path[step+1][2])step++;
+    const start=step++;
+    const leg=legs.get(start),link=leg && links.get(leg.from_index);
+    if(!link || link.id!==t.id || !plan.path[start+1])return undefined;
+    return positionKey(plan.path[start])===positionKey(t.origin) && positionKey(plan.path[start+1])===positionKey(t.exit)?link:undefined;
+  });
+}
+
+export function nearbyTransitions(rows:RouteTransition[],current:{origin:Pos;entry:Pos;exit:Pos}) {
+  const distance=(p:Pos)=>Math.max(Math.abs(p[0]-current.entry[0]),Math.abs(p[1]-current.entry[1]));
+  const entries=new Map<string,Pos>();
+  for(const row of rows){
+    if(row.entry[2]===current.entry[2] && row.exit[2]===current.exit[2] && distance(row.entry)<=5 &&
+      (positionKey(row.entry)!==positionKey(current.entry)||positionKey(row.exit)!==positionKey(current.exit)))
+      entries.set(positionKey(row.entry),row.entry);
+  }
+  return [...entries.values()].flatMap(entry=>transitionChoices(rows,entry,current.origin))
+    .filter(row=>row.exit[2]===current.exit[2] && (positionKey(row.entry)!==positionKey(current.entry)||positionKey(row.exit)!==positionKey(current.exit)))
+    .sort((a,b)=>distance(a.entry)-distance(b.entry)||(b.count??0)-(a.count??0));
+}
+
+export function replaceFloorLink(points:Pos[],links:RouteLink[],selected:RouteLink,edge:RouteTransition){
+  const i=selected.from_index;
+  if(!points[i+1] || !links.some(l=>l.from_index===i && l.id===selected.id) ||
+     edge.origin[2]!==points[i][2] || edge.entry[2]!==points[i][2] || edge.exit[2]!==points[i+1][2] || edge.entry[2]===edge.exit[2])
+    throw Error('To przejście nie pasuje do wybranego odcinka szkicu.');
+  // Shared anchors still belong to the adjacent transition or the closed loop.
+  const closed=isRouteClosed(points);
+  const keepStart=positionKey(points[i])!==positionKey(edge.origin) && (links.some(l=>l.from_index===i-1)||(closed && i===0));
+  const keepEnd=positionKey(points[i+1])!==positionKey(edge.exit) && (links.some(l=>l.from_index===i+1)||(closed && i+1===points.length-1));
+  const next=[...points.slice(0,i),...(keepStart?[points[i]]:[]),edge.origin,edge.exit,...(keepEnd?[points[i+1]]:[]),...points.slice(i+2)];
+  const sourceIndices:(number|null)[]=points.map((_,index)=>index);
+  sourceIndices.splice(i,2,...(keepStart?[i,null]:[i]),...(keepEnd?[null,i+1]:[i+1]));
+  const shift=next.length-points.length;
+  const chosen=links.map(l=>l.from_index===i?{id:edge.id,from_index:i+Number(keepStart)}:
+    {...l,from_index:l.from_index>i?l.from_index+shift:l.from_index});
+  return {points:next,links:chosen,sourceIndices,from_index:i+Number(keepStart)};
+}
 export const stepFloor=(z:number,delta:number)=>Math.max(0,Math.min(15,z+delta));
 export function atlasWheel(deltaY:number,ctrl:boolean,shift:boolean,deltaX=0) {
   // Chromium can translate Shift + mouse wheel into a horizontal wheel event.

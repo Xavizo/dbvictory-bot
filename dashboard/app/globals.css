@@ -352,4 +352,9 @@ section[aria-label="Widok cavebota"],section[aria-label="Widok diagnostyki"] {di
 .hunt-section h3 { margin:4px 0 8px }.hunt-results summary { cursor:pointer }
 .global-atlas-dialog .atlas-primary,.global-atlas-dialog .map-exclusions [aria-pressed=true] { background:#25463e;color:#d3fff0;border-color:#538e7c }
 .map-exclusions { margin:8px 0 }.map-exclusions small { flex-basis:100%;margin:1px 0 }
+.atlas-transition-row {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px}
+.atlas-transition-row > .atlas-transition {grid-column:1/-1}
+.atlas-transition-row:has(>button[aria-expanded]) > .atlas-transition {grid-column:1}
+.atlas-alternatives {grid-column:1/-1;display:grid;gap:4px;padding:5px 0 6px 7px;border-left:2px solid #719d88}
+.atlas-alternatives button {text-align:left}
 @media(max-width:670px){.world-atlas-tools{gap:4px}.world-map-navigation{margin-left:0;gap:3px}.hunt-area-panel{padding:8px}}

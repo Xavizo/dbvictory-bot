@@ -8,6 +8,33 @@ new Function('exports', ts.transpileModule(fs.readFileSync(require.resolve('../l
   {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(model.exports);
 const {atlasCenter,visibleAtlasCells,routeLines,simulationStep,atlasViewport,panCenter,routeSegments,stepFloor,atlasWheel,segmentLane,moveAnchor}=model.exports;
 const cell=(x,y,z,kind='clear')=>({x,y,z,kind,items:[],navigation:[]});
+test('replace only the selected visit to the Gotrunks stairs and keep the other floor crossings',()=>{
+  const {editableFloorLinks,nearbyTransitions,replaceFloorLink}=model.exports;
+  const old={origin:[1039,1300,4],entry:[1038,1301,4],exit:[1037,1301,3],id:'south',action:'step'};
+  const north={...old,entry:[1038,1300,4],exit:[1037,1300,3],id:'north'};
+  const down={...old,id:'down',origin:old.exit,entry:[1038,1301,3],exit:old.origin};
+  const points=[[1041,1298,4],old.origin,old.exit,old.origin,old.exit,[1039,1299,3]];
+  const links=[{from_index:1,id:'south'},{from_index:2,id:'down'},{from_index:3,id:'south'}];
+  const legs=points.slice(1).map((_,i)=>({from_index:i,to_index:i+1,start:i,end:i+1}));
+  const plan={legs,path:points,links,transitions:[old,down,old]};
+  assert.deepEqual(editableFloorLinks(plan),links);
+  assert.deepEqual(nearbyTransitions([old,north,down,{...north,id:'far',entry:[1000,1299,4]}],old),[north]);
+  const edit=replaceFloorLink(points,links,editableFloorLinks(plan)[2],north);
+  assert.deepEqual(edit.points,[...points.slice(0,4),north.exit,points[5]]);
+  assert.deepEqual(edit.links,[links[0],links[1],{from_index:3,id:'north'}]);
+  assert.deepEqual(edit.sourceIndices,[0,1,2,3,4,5]);
+  assert.throws(()=>replaceFloorLink(points,links,links[2],down));
+  assert.deepEqual(editableFloorLinks({...plan,legs:[...legs,{from_index:5,to_index:4,start:5,end:6}],
+    path:[...points,old.origin],transitions:[...plan.transitions,{...down,origin:points[5]}]}),[...links,undefined]);
+});
+test('replacement preserves shared endpoints, labels, and the seam of a closed sketch',()=>{
+  const a=[10,10,4],b=[10,10,3],c=[10,10,2],from=[11,10,4],to=[11,10,3];
+  const links=[{from_index:0,id:'old'},{from_index:1,id:'next'}];
+  const result=model.exports.replaceFloorLink([a,b,c,a],links,links[0],{id:'other',origin:from,entry:[12,10,4],exit:to});
+  assert.deepEqual(result.points,[a,from,to,b,c,a]);
+  assert.deepEqual(result.links,[{from_index:1,id:'other'},{from_index:3,id:'next'}]);
+  assert.deepEqual(result.sourceIndices,[0,null,null,1,2,3]);
+});
 test('explicit transition survives insertion and undo but moving an endpoint revokes it',()=>{
   const {remapLinks,rememberEdit}=model.exports;
   const points=[[10,10,7],[20,20,6],[21,20,6]],links=[{from_index:0,id:'stairs'}];
@@ -851,6 +878,42 @@ for(const mismatch of [false,true])test(`recorded-link repair preserves sketch e
     assert.ok(render().some(n=>n.props.className==='restore-recorded-transitions'));
   }
   assert.ok(requests.every(r=>r.url.endsWith('/plan')||r.url.endsWith('/drafts')),'no gameplay endpoint');
+});
+
+test('change a staircase through its row, reject an unreachable exit, then preview and undo without saving',async()=>{
+  const host=hookHost(),requests=[];
+  const old={id:'south',origin:[1039,1300,4],entry:[1038,1301,4],exit:[1037,1301,3],action:'step'};
+  const north={...old,id:'north',entry:[1038,1300,4],exit:[1037,1300,3]};
+  const original=[[1041,1298,4],old.origin,old.exit,[1039,1299,3]];
+  let blocked=true;
+  const Panel=component('../app/AtlasPanel.tsx',{
+    react:host.react,'@/lib/atlasModel':model.exports,'@/lib/atlasLoading':component('../lib/atlasLoading.ts'),
+    '@/lib/auth':{authenticatedFetch:async(url,options)=>{
+      assert.ok(url.endsWith('/plan'));const body=JSON.parse(options.body);requests.push(body);
+      const points=body.points??original,links=body.links??[{from_index:1,id:'south'}];
+      const current=links[0].id==='north'?north:old;
+      const gaps=current===north && blocked?[{from:north.exit,to:original[3],segment:2,reason:'Brak dojścia'}]:[];
+      return {ok:true,json:async()=>({scope:'scope',original,points,links,path:points,complete:!gaps.length,gaps,
+        transitions:[current],legs:[{from_index:1,to_index:2,start:1,end:2}]})};
+    }},'@/lib/cavebotModel':component('../lib/cavebotModel.ts'),'@/lib/mapVisuals':{tileStyles:{},navigationStyles:{}},
+    './PassiveMapPanel':{},'./TransitionLearningPanel':{transitionActions:{}},'./AtlasRouteOverview':{default:()=>null},
+    './MapTools':component('../app/MapTools.tsx'),'next/dynamic':{default:()=>()=>null},
+  }).default;
+  const props={active:true,onRefresh:()=>{},initialPosition:old.entry,state:{passive_map:{annotation_scope:'scope',cells:[]},cavebot:{recordings:[{name:'source'}]}}};
+  const render=()=>elements(host.render(Panel,props));
+  render().find(n=>n.props['aria-label']==='Nagranie do planowania').props.onChange({target:{value:'source'}});
+  await render().find(n=>n.props.children==='Wczytaj nagranie').props.onClick();
+  const picker=()=>render().find(n=>n.type?.name==='TransitionAlternatives');
+  render().find(n=>n.props['aria-label']==='Zmień przejście T1').props.onClick();
+  await picker().props.onChoose(north);
+  assert.ok(render().some(n=>n.props.role==='alert'&&String(n.props.children).includes('Brak dojścia')));
+  assert.equal(picker().props.current.id,'south');
+  blocked=false;await picker().props.onChoose(north);
+  assert.deepEqual(requests.at(-1).points,[original[0],old.origin,north.exit,original[3]]);
+  assert.equal(picker(),undefined);
+  render().find(n=>n.props.label==='Cofnij zmianę · Ctrl + Z').props.onClick();
+  await new Promise(r=>setImmediate(r));assert.deepEqual(requests.at(-1).points,original);
+  assert.deepEqual(requests.at(-1).links,[{from_index:1,id:'south'}]);
 });
 
 test('choosing a hole repairs the selected leg, preserves the viewport and opens the exit only on request',async()=>{
