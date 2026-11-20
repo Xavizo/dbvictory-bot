@@ -99,6 +99,7 @@ def _evidence(db, ident, tables, sightings):
 
 
 def catalogue(atlas):
+    from hunt_sightings import merge_witnesses
     areas, aliases = read_saved(atlas)
     drafts = {}
     linked = {i for a in areas for i in a['drafts']}
@@ -107,7 +108,7 @@ def catalogue(atlas):
     for d in atlas.drafts()+archived:
         aliases[d['navigation_revision']] = d['id']
         drafts[d['id']] = dict(id=d['id'],name=d['name'],archived=d['id'] in archived_ids,laps=0,duration_ms=0,blocked_ms=0,
-                               xp=0,xp_ms=0,senzu=0,senzu_ms=0,latest=None,sighting_laps=0,sightings=Counter())
+                               xp=0,xp_ms=0,senzu=0,senzu_ms=0,latest=None,sighting_laps=0,sightings=Counter(),witnesses=[])
     path = atlas.path.with_name('cavebot-reports-' + atlas.path.name)
     if path.exists():
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=1)) as db:
@@ -133,6 +134,10 @@ def catalogue(atlas):
                         for row in sightings:
                             key = (tuple(row['point']), tuple(row['observer_cell']), row['name'])
                             d['sightings'][key] += row['count']
+                        groups = [dict(points=row['together'],name=row['name'],observer_cell=row['observer_cell'])
+                                  for row in sightings if row.get('together')]
+                        if groups:
+                            d['witnesses'] = merge_witnesses([*d['witnesses'],*groups])
                     if d['latest'] is None:
                         d['latest'] = dict(id=ident, started=s['started_at'], **_evidence(db,ident,tables,sightings))
     for d in drafts.values():

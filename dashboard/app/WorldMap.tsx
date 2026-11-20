@@ -4,7 +4,7 @@ import type {PointerEvent as ReactPointerEvent, ReactNode} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 
 export type Position = [number, number, number];
-export type GroundLayer = {cells:Position[]; marks:{position:Position;title:string;exact:boolean}[]; side:number;
+export type GroundLayer = {cells:Position[]; marks:{position:Position;title:string;exact:boolean;radius?:number;live?:boolean;uncertain?:boolean;minimum?:number}[]; side:number;
   route?:Position[]; approach?:Position[]; missing?:Position[]; planApproach?:(p:Position)=>void;
   editing:boolean; toggle:(p:Position)=>void; focus:{floor:number;cells:Position[]}|null};
 type Sector = {x:number; y:number; terrain?:string; atlas?:string};
@@ -116,15 +116,19 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar}:{init
       {ground&&<g fill="#ffbc61" fillOpacity=".31" stroke="#ffd497" strokeWidth=".2">{ground.cells.filter(p=>p[2]===floor).map(([x,y])=>
         <rect key={x+','+y} x={x} y={y} width={side} height={side}/>)}</g>}
       {ground&&<g>{ground.marks.filter(m=>m.position[2]===floor).map(m=>
-        <circle key={m.position.join(',')} cx={m.position[0]+(m.exact ? 0.5 : side/2)} cy={m.position[1]+(m.exact ? 0.5 : side/2)}
-          r={m.exact?1:side/4} fill="#eee6ff" stroke="#4f2872" strokeWidth=".5"><title>{m.title}</title></circle>)}</g>}
+        <g key={m.position.join(',')} transform={`translate(${m.position[0]+(m.exact ? .5 : side/2)} ${m.position[1]+(m.exact ? .5 : side/2)})`}>
+          <title>{m.title}</title>
+          {m.radius!==undefined&&<circle r={Math.max(1.4,m.radius+.5)} fill="#a780ee" fillOpacity=".16" stroke="#eadbff" strokeOpacity=".68" strokeWidth="1" strokeDasharray={m.uncertain?"2 3":undefined} vectorEffect="non-scaling-stroke"/>}
+          <circle r={m.radius!==undefined ? .66 : m.exact ? 1 : side/4} fill={m.live?"#5df0bd":"#eee6ff"} stroke={m.live?"#144937":"#4f2872"} strokeWidth=".4"/>
+          {m.minimum&&<text x=".95" y="-.5" fontSize="1.7" fill="white" stroke="#30203c" strokeWidth=".32" paintOrder="stroke">{m.minimum}+</text>}
+        </g>)}</g>}
       {ground?.missing?.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}
         fill="#cf5050" fillOpacity=".35" stroke="#f48b8b" strokeWidth=".4"><title>Brak potwierdzonej pętli przez ten sektor</title></rect>)}
       <RouteLine path={ground?.route} floor={floor} color="#59f1bc"/>
       <RouteLine path={ground?.approach} floor={floor} color="#73bfff" dashed/>
       {ground?.route?.[0]?.[2]===floor&&<circle cx={ground.route[0][0]+.5} cy={ground.route[0][1]+.5} r="1.2"
         fill="#173a34" stroke="#59f1bc" strokeWidth=".4"><title>Początek pętli expienia</title></circle>}
-      {grid&&<rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#world-sector-grid)"/>}
+      {grid&&<rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#world-sector-grid)" pointerEvents="none"/>}
       {selection&&<circle cx={selection[0]+.5} cy={selection[1]+.5} r={Math.max(.8,view.width/190)} fill="none" stroke="white" strokeWidth={2} vectorEffect="non-scaling-stroke"/>}
     </svg>}
   </section>;

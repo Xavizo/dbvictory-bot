@@ -265,6 +265,10 @@ class PassiveMapMonitor:
         self.annotations = None
         self.atlas = None
         self._learning_error = None
+        self._manual_play = False
+        self._visit = self._visit_writer = None
+        self._visit_epoch = 0
+        self._visit_key = None
 
     def start(self):
         self._thread.start()
@@ -343,6 +347,7 @@ class PassiveMapMonitor:
             self.learner.enqueue(command)
 
     def reset_learning_session(self):
+        self._visit_epoch += 1
         self._result = {"status":"waiting","message":"Czekam na połączenie z grą.","cells":[]}
         self.invalidate_packet_evidence()
 
@@ -385,6 +390,7 @@ class PassiveMapMonitor:
             result = {**result,"cells":self.annotations.annotate(result["cells"])}
             result = {**result,"cells":self.learner.annotate(result["cells"])}
             learning = not (automated or dead)
+            self._manual_play = learning
             self.learner.observe(result,active=learning)
             self._learning_error = None
             if learning:
@@ -414,6 +420,34 @@ class PassiveMapMonitor:
                 self.atlas.observe(result)
             except Exception:
                 self._learning_error = "Zapis atlasu chwilowo niedostępny."
+        try:
+            manual = (self._manual_play and not self._learning_error and self.atlas is not None
+                      and result.get('status')=='ready' and 'pet_map_generation' in result
+                      and getattr(route,'status',None)!='running')
+            if manual:
+                key = (game_state,self.atlas,self._visit_epoch)
+                if self._visit_key != key:
+                    self._end_manual_visit()
+                    from manual_hunts import DiscoveryWriter, ManualVisits
+                    if self._visit_writer is None:
+                        self._visit_writer = DiscoveryWriter()
+                    atlas, learner = self.atlas, self.learner
+                    def submit(visit, final):
+                        rows = list(learner.records.values()) if learner else []
+                        self._visit_writer.submit(atlas,visit,final,rows)
+                    self._visit = ManualVisits(game_state,submit)
+                    self._visit_key = key
+                self._visit.observe(result)
+            elif self._visit is not None:
+                self._end_manual_visit()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('Błąd pasywnego rozpoznawania expowiska')
+
+    def _end_manual_visit(self):
+        if self._visit is not None:
+            self._visit.finish()
+            self._visit = self._visit_key = None
 
     def _run(self):
         source = None
@@ -424,6 +458,7 @@ class PassiveMapMonitor:
                 self._refresh.clear()
                 try:
                     if not self.state.connected:
+                        self._end_manual_visit()
                         if self.learner:
                             self.learner.reset()
                             self.learner.observe(None)
@@ -474,3 +509,6 @@ class PassiveMapMonitor:
         finally:
             if source:
                 source.close()
+            self._end_manual_visit()
+            if self._visit_writer is not None:
+                self._visit_writer.close()

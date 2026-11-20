@@ -1,8 +1,37 @@
 """First identified map tile of each wild creature in a route run."""
-from collections import Counter
+from collections import Counter, defaultdict
 from threading import Lock
 
 from hunt_areas import sector
+
+
+def fresh_monster_name(game, cid, captured):
+    creature = game.creatures.get(cid, {})
+    name = creature.get('name')
+    if (name and name != '?' and creature.get('source') == 'dll'
+            and abs(creature.get('t', 0) - captured) <= .6):
+        return name
+    return None
+
+
+def merge_witnesses(groups):
+    """One actual frame per species, origin and 8×8 region. Never sum frames."""
+    best = {}
+    for group in groups:
+        points = group['points']
+        key = group['name'], tuple(group['observer_cell']), sector(points[0])
+        if key not in best or len(points) > len(best[key]['points']):
+            best[key] = group
+    return list(best.values())
+
+
+def concurrent_firsts(rows):
+    frames = defaultdict(list)
+    for point, origin, name, captured in rows:
+        if name:
+            frames[captured, name, origin, sector(point)].append(point)
+    return merge_witnesses(dict(name=name, observer_cell=origin, points=sorted(points))
+                           for (_,name,origin,_),points in frames.items() if len(points)>1)
 
 
 class FirstSightings:
@@ -38,15 +67,13 @@ class FirstSightings:
                     if cid not in self.seen:
                         self.seen.add(cid)
                         if in_lap:
-                            self.rows[cid] = (point, sector(center), None)
+                            self.rows[cid] = (point, sector(center), None, captured)
                     row = self.rows.get(cid)
                     if row is None or row[2]:
                         continue
-                    creature = self.game.creatures.get(cid, {})
-                    name = creature.get('name')
-                    if (name and name != '?' and creature.get('source') == 'dll'
-                            and abs(creature.get('t', 0) - captured) <= .6):
-                        self.rows[cid] = (row[0], row[1], name)
+                    name = fresh_monster_name(self.game, cid, captured)
+                    if name:
+                        self.rows[cid] = (row[0], row[1], name, row[3])
 
     def end_lap(self, next_start=None):
         with self.lock:
@@ -55,6 +82,11 @@ class FirstSightings:
             sampled, self.sampled = self.sampled, False
         if not sampled:
             return None
-        counts = Counter(row for cid, row in rows.items() if row[2] and not self.game.pets.is_pet(cid))
-        return [dict(point=point, observer_cell=origin, name=name, count=count)
-                for (point, origin, name), count in sorted(counts.items())]
+        confirmed = [row for cid, row in rows.items() if row[2] and not self.game.pets.is_pet(cid)]
+        counts = Counter(row[:3] for row in confirmed)
+        marks = {key:dict(point=key[0], observer_cell=key[1], name=key[2], count=count)
+                 for key,count in sorted(counts.items())}
+        for group in concurrent_firsts(confirmed):
+            key = group['points'][0], group['observer_cell'], group['name']
+            marks[key]['together'] = group['points']
+        return list(marks.values())

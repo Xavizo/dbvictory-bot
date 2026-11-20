@@ -1,5 +1,13 @@
 [
   {
+    "version": "v1.13.0",
+    "changes": [
+      {"title":"Atlas rozpoznaje expowiska podczas ręcznej gry","detail":"Bez włączania nagrywania atlas łączy wizyty w tych samych sektorach z XP i zapamiętuje pierwsze miejsca spotkania potworów."},
+      {"title":"Sprawdzone pętle trafiają do sekcji Expowiska","detail":"Zobacz propozycję po powrocie do sal lub kolejnej wizycie. Atlas sprawdza trasę w tle i wskazuje brakujące połączenia. Szkic zapisujesz sam."},
+      {"title":"Zobacz przybliżone spawny i liczbę widocznych potworów","detail":"Atlas grupuje pobliskie pierwsze wykrycia według gatunku i piętra. Widok na żywo zlicza potwory na aktualnie widocznych polach expowiska."}
+    ]
+  },
+  {
     "version": "v1.12.0",
     "changes": [
       {"title":"Atlas proponuje pętlę przez expowisko","detail":"Sprawdź pokrycie sektorów na każdym piętrze i zapisz zasymulowaną trasę jako nowy szkic. Miejsca pierwszych wykryć potworów pomagają wybrać pola do odwiedzenia."},

@@ -99,15 +99,22 @@ def simulated(atlas, observations, walk):
 def propose(atlas, observations, body):
     if not isinstance(body,dict) or body.get('scope') != atlas.scope:
         raise ValueError('Zmieniono atlas. Wczytaj obszary ponownie.')
-    info = catalogue(atlas)
     key = body.get('ground')
     if not isinstance(key,str):
         raise ValueError('Wybierz expowisko.')
+    info = catalogue(atlas) if not key.startswith('manual:') else None
     if key.startswith('draft:'):
         source = next((d for d in info['drafts'] if d['id']==key[6:] and not d['archived']), None)
         if not source or not source['latest']:
             raise ValueError('Do propozycji ze szkicu potrzebny jest pełny obieg.')
         area = dict(cells=source['latest']['cells'], drafts=[source['id']])
+    elif key.startswith('manual:'):
+        from manual_hunts import discoveries
+        area = next(iter(discoveries(atlas,key)),None)
+        if not area:
+            raise ValueError('Wykryte expowisko zmieniło się. Wczytaj obszary ponownie.')
+        if 'approach' not in body:
+            return manual_circuit(atlas,observations,area)
     else:
         area = next((a for a in info['areas'] if a['id']==key), None)
         if not area:
@@ -137,6 +144,17 @@ def propose(atlas, observations, body):
                     first_seen[tuple(mark['point'])] += mark['count']
     seeds = [tuple(p) for d in atlas.drafts() if d['id'] in area['drafts'] for p in d['points']]
     return circuit(atlas, observations, ground, cells, first_seen, seeds)
+
+
+def manual_circuit(atlas, observations, area):
+    cells=set(map(tuple,area['cells']))
+    counts=Counter()
+    for mark in area['sightings']:
+        if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
+            counts[tuple(mark['point'])]+=mark['count']
+    rows=atlas.with_recorded_ropes(observations)
+    return circuit(atlas,rows,GroundMap(atlas,rows),
+                   cells,counts,[tuple(area['seed'])])
 
 
 def circuit(atlas, observations, ground, cells, first_seen, seeds):

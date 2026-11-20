@@ -145,6 +145,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_atlas()
         if self.path == "/api/map/grounds":
             return self._hunt_areas()
+        if urlsplit(self.path).path == "/api/map/discoveries":
+            return self._hunt_areas(discovered=True)
         if urlsplit(self.path).path == "/api/map/world":
             import sqlite3
             import zlib
@@ -335,13 +337,24 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _hunt_areas(self, save=False, route=False):
+    def _hunt_areas(self, save=False, route=False, discovered=False):
         import sqlite3
         from hunt_areas import catalogue, save_area
         atlas = getattr(getattr(_state, 'passive_map_monitor', None), 'atlas', None)
         if atlas is None:
             return self._json_response({'error':'Atlas czeka na pierwszy odczyt.'},503)
         try:
+            if discovered:
+                from manual_hunts import discoveries, storage
+                try:
+                    stat = storage(atlas).stat()
+                    revision = f'{stat.st_mtime_ns:x}-{stat.st_size:x}'
+                except FileNotFoundError:
+                    revision = 'empty'
+                body = {'scope':atlas.scope,'revision':revision}
+                if parse_qs(urlsplit(self.path).query).get('since')!=[revision]:
+                    body['discoveries']=discoveries(atlas)
+                return self._json_response(body)
             if route:
                 from hunt_routes import propose
                 if not 0 < int(self.headers.get('Content-Length',0)) <= 2048:

@@ -90,6 +90,7 @@ def test_first_sighting_keeps_original_tile_through_lure_death_and_lap_boundary(
         marks = draft['sightings']
         assert marks == [dict(kind='first_seen', cell=(672,400,7), at_monster=True, point=first,
                               observer_cell=(664,400,7), name='Vegeta', count=2)]
+        assert draft['witnesses'] == [dict(name='Vegeta',observer_cell=[664,400,7],points=[list(first),list(first)])]
         assert any(m['kind']=='death' and m['cell']==(664,400,7) for m in entry['observations'])
         # Another lap and temporary disappearance do not move the original marker.
         publish([])

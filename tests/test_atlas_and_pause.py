@@ -155,6 +155,10 @@ def test_atlas_api_is_authenticated_scoped_and_preview_only(state,monkeypatch,tm
         finally:conn.close()
     try:
         assert request("GET","/api/map/atlas?x=10&y=10&z=7",authenticated=False)[0]==401
+        assert request("GET","/api/map/discoveries",authenticated=False)[0]==401
+        status, discovery=request("GET","/api/map/discoveries")
+        assert status==200 and discovery["discoveries"]==[] and discovery["scope"]==atlas.scope
+        assert "discoveries" not in request("GET","/api/map/discoveries?since="+discovery["revision"])[1]
         assert request("GET","/api/map/atlas?x=10&y=10&z=7",origin="https://evil.example")[0]==403
         status,data=request("GET","/api/map/atlas?x=10&y=10&z=7")
         assert status==200 and data["total"]==2

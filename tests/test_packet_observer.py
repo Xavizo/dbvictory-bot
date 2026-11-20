@@ -175,7 +175,7 @@ def test_delayed_potion_response_cannot_confirm_a_newer_use():
 
 def test_packet_gap_preserves_native_map_but_invalidates_learning_correlations():
     from passive_map import PassiveMapMonitor
-    monitor=PassiveMapMonitor.__new__(PassiveMapMonitor)
+    monitor=PassiveMapMonitor(NS())
     result={'status':'ready','cells':[{'x':10,'y':20,'z':7}],'captured_at':time.time()}
     monitor._result=result;monitor.learner=Mock()
     monitor.invalidate_packet_evidence()
