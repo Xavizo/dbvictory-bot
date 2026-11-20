@@ -362,7 +362,7 @@ def build_move_item_packet(from_pos: tuple, item_id: int, from_stack: int, to_po
 def build_use_item_ex_packet(
     from_x: int, from_y: int, from_z: int,
     item_id: int, stack_pos: int,
-    to_x: int, to_y: int, to_z: int, to_stack_pos: int,
+    to_x: int, to_y: int, to_z: int, to_stack_pos: int, *, target_item_id: int | None = None,
 ) -> bytes:
     """Build a use item extended packet (0x83). E.g. use rope on hole, use shovel on ground."""
     pw = PacketWriter()
@@ -371,6 +371,8 @@ def build_use_item_ex_packet(
     pw.write_u16(item_id)
     pw.write_u8(stack_pos)
     pw.write_position(to_x, to_y, to_z)
+    if target_item_id is not None:
+        pw.write_u16(target_item_id)
     pw.write_u8(to_stack_pos)
     return pw.data
 

@@ -485,7 +485,11 @@ test('deleting all saved points remains dirty; an empty new sketch is clean',()=
 function hookHost(){
   const values=[];let cursor=0;
   const React=require('react');
-  const host={...React,useEffect:()=>{},useLayoutEffect:()=>{},useState:initial=>{
+  const host={...React,useEffect:()=>{},useLayoutEffect:()=>{},useMemo:(compute,deps)=>{
+    const i=cursor++,previous=values[i];
+    if(!previous||deps.some((value,k)=>!Object.is(value,previous.deps[k])))values[i]={deps,value:compute()};
+    return values[i].value;
+  },useState:initial=>{
     const i=cursor++;if(!(i in values))values[i]=typeof initial==='function'?initial():initial;
     return [values[i],v=>{values[i]=typeof v==='function'?v(values[i]):v;}];
   },useRef:initial=>{const i=cursor++;if(!(i in values))values[i]={current:initial};return values[i];}};
@@ -878,6 +882,43 @@ for(const mismatch of [false,true])test(`recorded-link repair preserves sketch e
     assert.ok(render().some(n=>n.props.className==='restore-recorded-transitions'));
   }
   assert.ok(requests.every(r=>r.url.endsWith('/plan')||r.url.endsWith('/drafts')),'no gameplay endpoint');
+});
+
+test('dragging an anchor previews locally, plans once on drop, and cancels without losing the plan',async()=>{
+  const host=hookHost(),requests=[];
+  const original=[[99,100,7],[100,100,7],[101,100,7]];
+  const Panel=component('../app/AtlasPanel.tsx',{
+    react:host.react,'@/lib/atlasModel':model.exports,'@/lib/atlasLoading':component('../lib/atlasLoading.ts'),
+    '@/lib/auth':{authenticatedFetch:async(url,options)=>{
+      assert.ok(url.endsWith('/plan'));const body=JSON.parse(options.body);requests.push(body);
+      const points=body.points??original;
+      return {ok:true,json:async()=>({scope:'scope',original,points,links:[],path:points,complete:true,gaps:[],transitions:[]})};
+    }},'@/lib/cavebotModel':component('../lib/cavebotModel.ts'),'@/lib/mapVisuals':{tileStyles:{},navigationStyles:{}},
+    './PassiveMapPanel':{},'./TransitionLearningPanel':{transitionActions:{}},'./AtlasRouteOverview':{default:()=>null},
+    './MapTools':component('../app/MapTools.tsx'),'next/dynamic':{default:()=>()=>null},
+  }).default;
+  const props={active:true,onRefresh:()=>{},state:{passive_map:{center:original[1],annotation_scope:'scope',cells:[]},cavebot:{recordings:[{name:'source'}]}}};
+  const render=()=>elements(host.render(Panel,props));
+  render().find(n=>n.props['aria-label']==='Nagranie do planowania').props.onChange({target:{value:'source'}});
+  await render().find(n=>n.props.children==='Wczytaj nagranie').props.onClick();
+  render().find(n=>n.props.label==='Edytuj waypointy').props.onClick();
+  const svg=()=>render().find(n=>n.type==='svg').props;
+  const target={getBoundingClientRect:()=>({left:0,right:700,top:0,bottom:450,width:700,height:450}),
+    setPointerCapture(){},hasPointerCapture(){return true;},releasePointerCapture(){}};
+  svg().ref.current=target;
+  const event={button:0,clientX:350,clientY:226,pointerId:1,currentTarget:target};
+  svg().onPointerDown(event);svg().onPointerMove({...event,clientX:351});svg().onPointerUp(event);
+  assert.equal(requests.length,1,'click on an ordinary waypoint is a no-op');
+  const moved={...event,clientY:255};
+  svg().onPointerDown(event);svg().onPointerMove(moved);
+  assert.ok(render().some(n=>n.props['aria-label']==='Podgląd przesuwanego waypointu'));
+  assert.ok(render().some(n=>n.props.title==='Idź'&&n.props.children==='100, 100, 7'));
+  svg().onPointerCancel();assert.equal(requests.length,1);
+  svg().onPointerDown(event);svg().onPointerMove(moved);svg().onPointerUp(moved);
+  await new Promise(r=>setImmediate(r));
+  assert.deepEqual(requests.map(r=>r.points),[undefined,[original[0],[100,101,7],original[2]]]);
+  render().find(n=>n.props.label==='Cofnij zmianę · Ctrl + Z').props.onClick();
+  assert.deepEqual(requests.at(-1).points,original);
 });
 
 test('change a staircase through its row, reject an unreachable exit, then preview and undo without saving',async()=>{

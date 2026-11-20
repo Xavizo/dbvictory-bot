@@ -204,6 +204,12 @@ def navigation_edges(tiles,observations):
             door_pairs.setdefault(tuple(r['entry']),set()).add((change['closed_id'],change['open_id']))
             if change.get('kind')=='door' and change.get('behavior') in {'open_then_step','stays_open','manual_close'}:
                 normal_doors.setdefault(tuple(r['entry']),set()).add((change['closed_id'],change['open_id']))
+    if isinstance(tiles,PagedTiles):
+        # Learned entrances are sparse across many floors. Loading a whole tile
+        # page for each one dominates the cost of editing an existing route.
+        entries={tuple(r['entry']) for r in observations if r.get('entry') and r.get('evidence')=='observed'}
+        entries.update((x+dx,y+dy,z) for x,y,z in normal_doors for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)))
+        tiles.prefetch(entries)
     for r in observations:
         if r.get('object_change'):
             r=gate_entry_record(r)
@@ -289,6 +295,17 @@ class PagedTiles:
     def __init__(self,path,recent=(),web_definitions=None):
         self.path=path;self.recent=dict(recent);self.pages=OrderedDict()
         self.web_definitions=web_definitions
+    def prefetch(self,positions):
+        missing=list(positions-self.recent.keys())
+        if not missing:return
+        with closing(sqlite3.connect(self.path.as_uri()+"?mode=ro",uri=True,timeout=.5)) as db:
+            for start in range(0,len(missing),250):
+                batch=missing[start:start+250]
+                values=','.join(['(?,?,?)']*len(batch))
+                rows=db.execute(f"""WITH wanted(x,y,z) AS (VALUES {values})
+                    SELECT t.x,t.y,t.z,t.data,t.seen FROM wanted JOIN tiles t USING(x,y,z)""",
+                    [v for pos in batch for v in pos])
+                self.recent.update(decode_tile(row,self.web_definitions) for row in rows)
     def get(self,key,default=None):
         key=tuple(key)
         if key in self.recent:return self.recent[key]

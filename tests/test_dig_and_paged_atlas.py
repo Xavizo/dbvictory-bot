@@ -92,6 +92,18 @@ def test_atlas_retains_old_regions_after_memory_eviction_and_reopen(tmp_path,mon
     assert loaded.total==20 and loaded.view(10,10,7)['cells'][0]['kind']=='blocked'
 
 
+def test_sparse_entrance_prefetch_keeps_recent_overrides_and_paged_fallback(tmp_path):
+    atlas=MapAtlas(tmp_path,'f'*64)
+    atlas.observe(dict(status='ready',cells=[cell(10,10),cell(500,500),cell(501,500)]))
+    atlas.tiles.clear()
+    reader=atlas._paged_tiles()
+    reader.recent[(10,10,7)]=cell(10,10,kind='blocked')
+    reader.prefetch({(10,10,7),(500,500,7),(300,300,7)})
+    assert reader[(10,10,7)]['kind']=='blocked' and reader[(500,500,7)]['kind']=='clear'
+    assert not reader.pages
+    assert reader.get((300,300,7)) is None and reader[(501,500,7)]['kind']=='clear'
+
+
 def test_previous_100000_tile_boundary_no_longer_discards_new_fields(tmp_path):
     a=MapAtlas(tmp_path,'f'*64)
     with sqlite3.connect(a.path) as db:

@@ -17,6 +17,9 @@ from navigation_tools import WEB_ITEM_IDS, cuttable_web, supported_transition, t
 class MovementDeferred(ValueError):
     """No ordinary step sent: retry from a fresh map while combat stays alive."""
 
+class WebCutUnconfirmed(ValueError):
+    """The tool request was sent; await an observable change before stepping."""
+
 class InputsUnavailable(ValueError):
     """Temporary observer gap; wait without changing the user's enable flags."""
 
@@ -63,6 +66,10 @@ def walkable(cell):
     return bool(cell and cell.get("kind")=="clear" and
                 cell.get("occupants",0)<=cell.get("occupant_types",{}).get("self",0) and
                 all(f["kind"] in {"rope_spot","ladder"} for f in cell.get("navigation",[])))
+
+def web_passable(tile):
+    return (walkable(tile) and not tile.get('navigation') and not tile.get('transitions')
+            and not any(i['id'] in WEB_ITEM_IDS for i in tile['items']))
 
 def step_clear(cells,origin,target,blocked=(),door=False):
     tiles={(c['x'],c['y'],c['z']):c for c in cells}
@@ -171,6 +178,7 @@ class AdaptiveCavebot:
         self._saved_plan = None
         self._unresolved_destination = None
         self.navigation_hold=None
+        self._held_web=None
         self.variation_until=0;self.blockage=None;self._blockage_key=None;self._blockage_at=0
         self.manual_until=0;self.motion_generation=0;self.recovery_next_at=0;self._route_command=False;self._route_boundary=False;self._route_attempt=None
         self._walk_number = 0
@@ -291,7 +299,7 @@ class AdaptiveCavebot:
     def stop(self,reason="Zatrzymano trasę.",*,preserve_progress=False):
         if self.status == 'running':
             self._observe_report('lifecycle','stop',reason)
-        self.generation+=1;self.status="idle";self.reason=reason;self.navigation_hold=None
+        self.generation+=1;self.status="idle";self.reason=reason;self.navigation_hold=None;self._held_web=None
         if not preserve_progress:
             self.path=[];self.edges=[];self.index=0;self.checkpoints=[];self.last_waypoint=None;self.route_draft=None
             journal = getattr(self.state.game_state, "engine_journal", None)
@@ -310,7 +318,7 @@ class AdaptiveCavebot:
             self.index+=1;self.mark_waypoint()
         elif pos!=self.path[self.index]:
             raise ValueError('Pozycja zmieniła się. Zatrzymaj i uruchom ponownie; walka pozostaje aktywna.')
-        self.navigation_hold=None;self.reason='Ponownie sprawdzam przejście.'
+        self.navigation_hold=None;self._held_web=None;self.reason='Ponownie sprawdzam przejście.'
 
     def guard(self,combat=False):
         st=self.state;gs=st.game_state
@@ -921,7 +929,7 @@ class AdaptiveCavebot:
             def valid():
                 return (list(self.state.game_state.position) == edge['origin'] and ready()
                         and tool_location(reader.snapshot(), [tool]) == location)
-            await self.send(build_use_item_ex_packet(*where,tool,stack,*edge['entry'],item['stack']),valid)
+            await self.send(build_use_item_ex_packet(*where,tool,stack,*edge['entry'],item['stack'],target_item_id=item['id']),valid)
         finally:
             source.close()
 
@@ -931,16 +939,13 @@ class AdaptiveCavebot:
         target = edge['entry']
         def read_tile(current):
             return next((c for c in current['cells'] if [c['x'],c['y'],c['z']] == target), None)
-        def clear(tile):
-            return (walkable(tile) and not tile.get('navigation') and not tile.get('transitions')
-                    and not any(i['id'] in WEB_ITEM_IDS for i in tile['items']))
         def vacant(tile):
             return tile and not tile.get('occupants', 0)
 
         tile = read_tile(sample)
         if tile and not vacant(tile):
             raise MovementDeferred('Pole pajęczyny jest zajęte.')
-        if not clear(tile):
+        if not web_passable(tile):
             obj = cuttable_web(tile)
             if obj is None:
                 raise ValueError('Pole pajęczyny nie ma potwierdzonej warstwy do przecięcia.')
@@ -951,14 +956,14 @@ class AdaptiveCavebot:
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
                 tile = read_tile(await self.fresh_map())
-                if clear(tile):
+                if web_passable(tile):
                     break
                 await asyncio.sleep(.03)
             else:
-                raise ValueError('Po użyciu AiO mapa nie potwierdziła wolnego pola pajęczyny.')
+                raise WebCutUnconfirmed('Po użyciu AiO mapa nie potwierdziła wolnego pola pajęczyny.')
         if list(self.state.game_state.position) != edge['origin']:
             raise MovementDeferred('Pozycja zmieniła się przy pajęczynie; ponownie sprawdzam trasę.')
-        if not await self.step(target, validate=lambda:clear(read_tile(self.map_now()))):
+        if not await self.step(target, validate=lambda:web_passable(read_tile(self.map_now()))):
             raise MovementDeferred('Czekam na potwierdzenie kroku przez pole pajęczyny.')
 
     async def dig_transition(self,edge,sample):
@@ -1021,7 +1026,7 @@ class AdaptiveCavebot:
                 return (list(self.state.game_state.position)==origin and fresh['items']==tile['items']
                         and tool_location(reader.snapshot(),[tool])==location)
             self.reason=f'Przejście rope/AiO: {tuple(entry)} → {tuple(dest)}.'
-            await self.send(build_use_item_ex_packet(*where,tool,stack,*entry,obj['stack']),ready_to_use)
+            await self.send(build_use_item_ex_packet(*where,tool,stack,*entry,obj['stack'],target_item_id=obj['id']),ready_to_use)
             if not await self.wait_position(dest,origin,4):
                 raise ValueError('Rope/AiO nie potwierdziło wyjścia; wstrzymano trasę bez ponawiania użycia.')
         finally:
@@ -1155,6 +1160,12 @@ class AdaptiveCavebot:
             self.reason='Dojście do najbliższego osiągalnego waypointu.' if self.index<self.loop_start else 'Nawigacja po trasie.'
             sample=await self.fresh_map();pos=list(self.state.game_state.position)
             if self.navigation_hold:
+                if (self._held_web and sample.get('center')==pos and self.index+1<len(self.path)
+                        and self._held_web==(pos,self.path[self.index+1])):
+                    tile=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==self._held_web[1]),None)
+                    if web_passable(tile):
+                        self.retry_navigation()
+                        continue
                 if (self.index+1 < len(self.path) and self.path[self.index] != pos
                         and self.path[self.index+1] == pos and sample.get('center') == pos
                         and any(edge['origin'] == self.path[self.index] and edge['exit'] == pos
@@ -1247,6 +1258,7 @@ class AdaptiveCavebot:
                             tile=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
                             history.web_blocked(pos,target,tile,str(exc))
                     if not self.combat.config['enabled']:raise ValueError(str(exc)) from exc
+                    self._held_web=(list(pos),list(target)) if isinstance(exc,WebCutUnconfirmed) else None
                     self.navigation_hold=str(exc);self.logs.append('Ruch: '+str(exc));continue
                 finally:self._route_command=False;self._route_boundary=False
             else:

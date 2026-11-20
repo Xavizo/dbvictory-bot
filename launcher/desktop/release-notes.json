@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.14.2",
+    "changes":[
+      {"title":"AiO na pajęczynie","detail":"Przy użyciu AiO bot wskazuje konkretną warstwę i ID pajęczyny. Po opóźnionym potwierdzeniu wolnego pola może wznowić wstrzymany ruch."},
+      {"title":"Sprawniejsza edycja długich szkiców","detail":"Przeciąganie pokazuje podgląd waypointu. Trasa przelicza się po jego upuszczeniu, a planer pobiera z atlasu tylko potrzebne pola przejść."}
+    ]
+  },
+  {
     "version":"v1.14.1",
     "changes":[
       {"title":"Zmień schody w zapisanym szkicu","detail":"Przy wybranym przejściu kliknij Zmień i wskaż pobliskie wejście na to samo piętro. Atlas przeliczy trasę, zanim zapiszesz zmianę."}

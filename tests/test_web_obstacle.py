@@ -80,6 +80,7 @@ def test_route_web_sequence(state,tmp_path,monkeypatch,tool,mode,iid):
         controller.last_command = 0
         if payload[0] == 0x83:
             assert tool in (8899, 8900) and int.from_bytes(payload[6:8],"little") == tool
+            assert payload[14:] == iid.to_bytes(2,"little") + bytes([1])
             if mode != "no_ack":
                 cut(tile)
             if mode == "blocked_after":
@@ -105,6 +106,34 @@ def test_occupied_web_defers_before_using_tool(state,tmp_path):
     tile["occupants"] = 1
     with pytest.raises(MovementDeferred, match="zajęte"):
         asyncio.run(controller.clear_web(web_edge(ORIGIN,WEB,183), {"cells":[tile]}))
+
+
+def test_late_web_clear_releases_hold_without_resending_tool(state,tmp_path):
+    from types import SimpleNamespace
+    tile=web_tile()
+    controller,_,_=setup(state,tmp_path,[cell(*ORIGIN),tile],[ORIGIN,WEB])
+    controller.domains=SimpleNamespace(movement_state="running")
+    controller.status="running"
+    controller.navigation_hold="Czekam na wolne pole pajęczyny."
+    controller._held_web=(ORIGIN,WEB)
+    async def change_tile():
+        while controller.domains.movement_state!="held":
+            await asyncio.sleep(.01)
+        cut(tile)
+        tile["occupants"]=1
+        await asyncio.sleep(.12)
+        assert controller.navigation_hold and controller.index==0
+        tile["occupants"]=0
+    retry=controller.retry_navigation
+    def resumed():
+        retry()
+        assert controller.index==0 and controller._held_web is None
+        controller.status="complete"
+    controller.retry_navigation=resumed
+    async def scenario():
+        await asyncio.wait_for(asyncio.gather(controller._navigation_loop(),change_tile()),2)
+    asyncio.run(scenario())
+    assert state.game_proxy._inject_queue.empty()
 
 
 def test_cut_recipe_is_same_floor_and_aio_only():
