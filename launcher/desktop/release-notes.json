@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.16.2",
+    "changes":[
+      {"title":"Zamykanie chmurki alertu","detail":"Chmurka czeka na kliknięcie ×. Zamknięty podgląd nie wraca przy kolejnym sygnale tego samego alertu. Wpis pozostaje w historii."}
+    ]
+  },
+  {
     "version":"v1.16.1",
     "changes":[
       {"title":"Częstszy sygnał obecności gracza","detail":"Dźwięk i miganie ikony gry powtarzają się co 1,5 sekundy, dopóki gracz jest widoczny."}

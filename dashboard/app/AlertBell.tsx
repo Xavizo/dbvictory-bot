@@ -7,30 +7,27 @@ const labels:Record<AlertKind,string>={private:"Wiadomość prywatna",default:"C
 const kinds:AlertKind[]=["private","default","player"];
 type AlertEvent = AlertState["events"][number];
 
-function AlertPreview({event, onOpen}:{event:AlertEvent;onOpen:()=>void}) {
-  const expiresAt = event.at * 1000 + 4000;
-  const [visible, setVisible] = useState(() => expiresAt > Date.now());
-  useEffect(() => {
-    const remaining = expiresAt - Date.now();
-    if (remaining <= 0) {
-      setVisible(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setVisible(false), remaining);
-    return () => window.clearTimeout(timer);
-  }, [expiresAt]);
+const DISMISSED_PREVIEW_KEY = "dbv.alerts.dismissedPreview";
 
-  if (!visible) return null;
-  return <button className="alert-peek" onClick={onOpen}>
-    <span role="status"><b>{labels[event.kind]}</b> · {event.sender}</span>
-    <small>{event.text}</small>
-  </button>;
+function AlertPreview({event, onOpen, onDismiss}:{event:AlertEvent;onOpen:()=>void;onDismiss:()=>void}) {
+  return <div className="alert-peek">
+    <button type="button" className="alert-peek-open" onClick={onOpen}>
+      <span role="status"><b>{labels[event.kind]}</b> · {event.sender}</span>
+      <small>{event.text}</small>
+    </button>
+    <button type="button" className="alert-peek-dismiss" aria-label="Zamknij podgląd alertu"
+      title="Zamknij podgląd alertu" onClick={onDismiss}>×</button>
+  </div>;
 }
 
 export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertState|null;connected:boolean;onRefresh:()=>void|Promise<void>}) {
   const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [config,setConfig]=useState<AlertConfig|null>(null);
   const [localPause,setLocalPause]=useState<{paused:boolean;session:string|null;through:number}|null>(null);
+  const [dismissedPreview,setDismissedPreview]=useState<string|null>(() => {
+    if (typeof window === "undefined") return null;
+    try { return window.sessionStorage.getItem(DISMISSED_PREVIEW_KEY); } catch { return null; }
+  });
   const lastMuted=useRef<{session:string;through:number}|null>(null);
   const ref=useRef<HTMLDivElement>(null);
   const legacy=!!alerts&&typeof alerts.paused!=="boolean";
@@ -81,6 +78,13 @@ export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertSta
     }
   }
   const latest=alerts?.events.at(-1);
+  const previewKey=alerts && latest ? `${alerts.session}:${latest.id}` : null;
+  function dismissPreview() {
+    if (!previewKey) return;
+    setDismissedPreview(previewKey);
+    try { window.sessionStorage.setItem(DISMISSED_PREVIEW_KEY,previewKey); } catch { /* Keep the in-memory dismissal. */ }
+    ref.current?.querySelector<HTMLButtonElement>(".alert-bell")?.focus({preventScroll:true});
+  }
   const through=legacy&&alerts?Math.max(localPause?.session===alerts.session?localPause.through:0,
     lastMuted.current?.session===alerts.session?lastMuted.current.through:0):alerts?.silenced_through??0;
   const unread=legacy&&alerts?Math.min(alerts.unread,alerts.events.filter(e=>e.id>through).length):alerts?.unread??0;
@@ -97,8 +101,8 @@ export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertSta
         <path d={paused?"M4 2.5 13 8l-9 5.5z":"M3 2h3.5v12H3zm6.5 0H13v12H9.5z"}/>
       </svg><span>{paused?"Wznów":"Wstrzymaj"}</span>
     </button>}
-    {!open&&!paused&&unread>0&&latest&&latest.id>through&&<AlertPreview
-      key={`${alerts?.session}-${latest.id}`} event={latest} onOpen={()=>setOpen(true)}/>}
+    {!open&&!paused&&unread>0&&latest&&latest.id>through&&previewKey!==dismissedPreview&&
+      <AlertPreview event={latest} onOpen={()=>setOpen(true)} onDismiss={dismissPreview}/>}
 
     {open&&<section id="alert-panel" className="alert-panel" aria-label="Alerty">
       <header><strong>Alerty</strong><span>{paused?"Wstrzymane":alerts?.cavebot_active?"Cavebot działa":"Cavebot zatrzymany"}</span><button aria-label="Zamknij alerty" className="alert-close" onClick={()=>setOpen(false)}>×</button></header>

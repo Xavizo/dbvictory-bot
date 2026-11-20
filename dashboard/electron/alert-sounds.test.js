@@ -110,7 +110,7 @@ test('both notification kinds use the same hidden Windows helper; busy or stoppe
  audio.stop();assert.equal(killed,1);assert.equal(audio.play('message'),false);
 });
 
-test('a fresh alert shows its preview; an expired unread alert only shows its count',()=>{
+test('an unread preview stays dismissible even after four seconds; a read alert has no preview',()=>{
  const fs=require('node:fs'),ts=require('typescript'),React=require('react');
  const {renderToStaticMarkup}=require('react-dom/server');
  const source=fs.readFileSync(require.resolve('../app/AlertBell.tsx'),'utf8');
@@ -118,10 +118,12 @@ test('a fresh alert shows its preview; an expired unread alert only shows its co
    target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  const mod={exports:{}};
  new Function('exports','require',js)(mod.exports,name=>name==='@/lib/api'?{}:require(name));
- const render=age=>renderToStaticMarkup(React.createElement(mod.exports.default,{
-   connected:true,onRefresh(){},alerts:snapshot([event(1,{at:Date.now()/1000-age,sender:'Gracz',text:'Test'})],{unread:1})}));
+ const render=(age,unread=1)=>renderToStaticMarkup(React.createElement(mod.exports.default,{
+   connected:true,onRefresh(){},alerts:snapshot([event(1,{at:Date.now()/1000-age,sender:'Gracz',text:'Test'})],{unread})}));
  assert.match(render(0),/class="alert-peek"/);
  const after=render(5);
- assert.doesNotMatch(after,/class="alert-peek"/);
+ assert.match(after,/class="alert-peek"/);
+ assert.match(after,/aria-label="Zamknij podgląd alertu"/);
+ assert.doesNotMatch(render(5,0),/class="alert-peek"/);
  assert.match(after,/class="alert-count">1</);
 });
