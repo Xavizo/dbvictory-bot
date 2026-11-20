@@ -319,12 +319,22 @@ class PassiveMapMonitor:
                 reader.read_u16()
                 self.state.game_state.pets.look(pos, reader.read_u8())
             return
-        if self.learner is None or not self.state.connected:
+        if not self.state.connected:
             return
-        from transition_learning import decode_command
+        from transition_learning import WALKS, decode_command
+        movement = opcode in WALKS or opcode in (ClientOpcode.NEW_WALK, ClientOpcode.AUTO_WALK,
+                                                 ClientOpcode.STOP_WALK, ClientOpcode.FOLLOW, ClientOpcode.LOGOUT)
+        if self.learner is None and not movement:
+            return
         result = self._result
-        origin = result.get("center") if time.time()-result.get("captured_at",0)<0.8 else None
-        self.learner.enqueue(decode_command(opcode,reader,origin))
+        origin = result.get("center") if 0 <= time.time()-result.get("captured_at",0)<0.8 else None
+        command = decode_command(opcode,reader,origin)
+        if movement:
+            request = command if command and command['kind'] == 'step' else {}
+            self.state.game_state.client_walk_requests.append((time.perf_counter(), ClientOpcode(opcode).name,
+                                                               request.get('origin'), request.get('entry')))
+        if self.learner is not None:
+            self.learner.enqueue(command)
 
     def reset_learning_session(self):
         self._result = {"status":"waiting","message":"Czekam na połączenie z grą.","cells":[]}

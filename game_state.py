@@ -116,6 +116,8 @@ class GameState:
         # Timestamp of last CANCEL_WALK from server
         self.cancel_walk_time: float = 0
         self.last_walk_cancel: tuple[float, tuple[int, int, int]] | None = None
+        # Local diagnostic context only. The server does not identify the rejected command.
+        self.client_walk_requests = deque(maxlen=12)
         # Last client walk delta for cancel_walk revert
         self._last_walk_delta: tuple[int, int] = (0, 0)
 
@@ -180,8 +182,8 @@ def parse_server_packet(opcode: int, reader, gs: GameState) -> None:
         log.debug(f"parse_server_packet error opcode 0x{opcode:02X}: {e}")
 
 
-def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None) -> None:
-    """Scan full decrypted packet for ALL known opcodes.
+def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None) -> bool:
+    """Return whether sequential parsing consumed the entire frame.
 
     OT packets bundle multiple messages. We iterate sequentially:
     for messages we fully consume, we advance and keep going.
@@ -198,14 +200,17 @@ def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None)
     found_icons = False
     map_anchor = None
     gs._map_update_seen = False
+    complete = True
     while pos < len(data):
         opcode = data[pos]
         pos += 1
         try:
             new_pos = _parse_at(opcode, data, pos, gs, received_at=received_at)
         except Exception:
+            complete = False
             break
         if new_pos < 0:
+            complete = False
             if gs._map_update_seen:
                 map_anchor = gs.position
             break
@@ -252,6 +257,7 @@ def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None)
             cid: info for cid, info in gs.creatures.items()
             if info.get("source") == "dll" or now - info.get("t", 0) <= MAX_CREATURE_AGE
         }
+    return complete
 
 
 def _search_for_floor_position(data: bytes, start: int, gs: GameState, anchor) -> None:
@@ -831,7 +837,8 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
         if received_at is not None:
             gs.last_walk_cancel = (received_at, tuple(gs.position))
         gs.server_events.append((now, "cancel_walk", {"direction": direction, "pos": list(gs.position)}))
-        log.info(f"CANCEL_WALK direction={direction} → reverted pos to {gs.position}")
+        if not getattr(gs, '_packet_snapshot_detached', False):
+            log.info("CANCEL_WALK direction=%s observed_pos=%s", direction, gs.position)
         return pos + _pcw_size
 
     # NOTE: FLOOR_CHANGE_UP (0xBE) / FLOOR_CHANGE_DOWN (0xBF) are standard OT

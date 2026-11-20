@@ -8,11 +8,14 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
+import logging
 import struct
 import time
 
 from crypto import adler32_checksum, xtea_decrypt
 from game_state import GameState, scan_packet
+
+log = logging.getLogger(__name__)
 
 SCALARS = (
     "player_id", "client_player_id", "hp", "max_hp", "mana", "max_mana",
@@ -55,6 +58,7 @@ class DetachedScan:
     potion_messages: list = field(default_factory=list)
     received_at: float | None = None
     received_perf: float | None = None
+    sequential_complete: bool = True
 
 
 def detach_state(live, target_id):
@@ -84,7 +88,7 @@ def parse_detached(raw, keys, scan):
     plain = decrypt_game_packet(raw, keys)
     if plain is None:
         return None
-    scan_packet(plain, scan.state, received_at=scan.received_perf)
+    scan.sequential_complete = scan_packet(plain, scan.state, received_at=scan.received_perf)
     if len(scan.messages)+len(scan.potion_messages)+len(scan.state.kill_log)-len(scan.kills)>256:
         raise ValueError("observation_result_limit")
     return scan
@@ -101,6 +105,20 @@ def publish_server_feedback(live, scan, diagnostics):
         if usage is not None:
             usage.observe_message(kind, text, kwargs.get("batch_id"), scan.received_at)
     diagnostics.observe_stats(live)
+
+
+def log_walk_cancels(live, scan):
+    for _, kind, event in scan.state.server_events:
+        if kind != 'cancel_walk':
+            continue
+        # A later local input may already exist by the time the worker publishes.
+        recent = next((r for r in reversed(live.client_walk_requests)
+                       if 0 <= scan.received_perf-r[0] <= 1.5), None)
+        log.info("CANCEL_WALK direction=%s observed_pos=%s last_client_move=%s "
+                 "requested_from=%s requested_to=%s request_age_ms=%s",
+                 event['direction'], event['pos'], recent[1] if recent else None,
+                 recent[2] if recent else None, recent[3] if recent else None,
+                 round((scan.received_perf-recent[0])*1000) if recent else None)
 
 
 def apply_scan(live, scan):
@@ -176,7 +194,10 @@ class PacketObserver:
         self.generation = 0
         self.closed = False
         self.processing = False
-        self.accepted = self.applied = self.dropped = self.failures = 0
+        self.offered = self.accepted = self.applied = self.dropped = self.failures = 0
+        self.partial = 0
+        self.next_coverage_log = time.monotonic()+60
+        self.next_gap_log = 0.
         self.last_lag_ms = self.max_lag_ms = 0
         self.last_problem = None
         self.last_problem_at = None
@@ -198,6 +219,10 @@ class PacketObserver:
     def _gap(self, reason):
         self.invalidate()
         self.last_problem, self.last_problem_at = reason, time.monotonic()
+        if self.last_problem_at >= self.next_gap_log:
+            self.next_gap_log = self.last_problem_at + 10
+            # On overload this method runs in the relay tap. Defer file logging.
+            asyncio.get_running_loop().call_soon(log.warning, "Server observation gap: %s", reason)
         # Synchronous, local-only callback; never sends a command or closes sockets.
         try:
             self.on_gap(reason)
@@ -208,6 +233,7 @@ class PacketObserver:
         """Non-awaiting relay tap. Overflow drops analysis copies, never traffic."""
         if self.closed or not self.is_connected() or session != self.get_session():
             return False
+        self.offered += 1
         if self.task.done():
             self.dropped += 1
             self._gap("worker_stopped")
@@ -258,8 +284,11 @@ class PacketObserver:
                 if lag > self.max_age or result is None:
                     self.dropped += 1; self._gap("stale" if lag > self.max_age else "decode_failed"); continue
                 kills = apply_scan(item.state, result)
+                if not result.sequential_complete:
+                    self.partial += 1
                 try:
                     self.on_result(item.state, result, kills)
+                    log_walk_cancels(item.state, result)
                 except Exception:
                     # Optional diagnostics must not invalidate correctly parsed
                     # state, flush pending frames, or stop other automation.
@@ -269,13 +298,25 @@ class PacketObserver:
                 self.applied += 1
                 self.last_applied = time.monotonic()
             except asyncio.CancelledError:
+                self.dropped += 1
                 raise
             except Exception:
+                self.dropped += 1
                 self.failures += 1
                 self._gap("analysis_failed")
             finally:
                 self.processing = False
                 self.queue.task_done()
+                now = time.monotonic()
+                if now >= self.next_coverage_log:
+                    self._log_coverage()
+                    self.next_coverage_log = now+60
+
+    def _log_coverage(self):
+        log.info("Server observation totals: offered=%d accepted=%d applied=%d partial_among_applied=%d "
+                 "dropped=%d failures=%d pending=%d last_problem=%s",
+                 self.offered, self.accepted, self.applied, self.partial, self.dropped, self.failures,
+                 self.queue.qsize(), self.last_problem)
 
     async def close(self):
         self.closed = True
@@ -283,13 +324,14 @@ class PacketObserver:
         self.task.cancel()
         await asyncio.gather(self.task, return_exceptions=True)
         self.pool.shutdown(wait=False, cancel_futures=True)
+        self._log_coverage()
 
     def snapshot(self):
         degraded = self.last_problem_at is not None and time.monotonic()-self.last_problem_at < 5
         return {"status": "closed" if self.closed else "error" if self.task.done() else "degraded" if degraded else "active",
                 "pending": self.queue.qsize(), "pending_bytes": self.queued_bytes, "processing": self.processing,
-                "capacity": self.queue.maxsize, "accepted": self.accepted, "applied": self.applied,
-                "dropped": self.dropped, "failures": self.failures,
+                "capacity": self.queue.maxsize, "offered": self.offered, "accepted": self.accepted, "applied": self.applied,
+                "dropped": self.dropped, "failures": self.failures, "partial_among_applied": self.partial,
                 "lag_ms": self.last_lag_ms, "max_lag_ms": self.max_lag_ms,
                 "last_problem": self.last_problem,
                 "last_applied_age_seconds": round(time.monotonic()-self.last_applied, 2) if self.last_applied else None}

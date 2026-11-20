@@ -243,6 +243,56 @@ def test_ordered_publication_and_no_secret_metadata():
     asyncio.run(exercise())
 
 
+def test_walk_log_uses_only_client_inputs_before_reply_without_a_running_route(caplog, monkeypatch):
+    from passive_map import PassiveMapMonitor
+    from protocol import ClientOpcode as Op, PacketReader
+    from packet_observer import log_walk_cancels
+
+    caplog.set_level('INFO', logger='packet_observer')
+    gs = GameState()
+    gs.position = (550,310,7)
+    monitor = PassiveMapMonitor(NS(connected=True, game_state=gs))
+    monitor._result = dict(center=list(gs.position), captured_at=time.time())
+    now = 30.
+    monkeypatch.setattr('passive_map.time', NS(time=time.time, perf_counter=lambda: now))
+    monitor.record_client_packet(Op.WALK_EAST, PacketReader(b''))
+    now += .2
+    monitor.record_client_packet(Op.WALK_NORTH, PacketReader(b''))
+    scan = detach_state(gs, 0)
+    scan.received_perf = 30.1
+    parse_detached(frame(b'\xb5\x03'), KEYS, scan)
+    log_walk_cancels(gs, scan)
+    assert 'last_client_move=WALK_EAST requested_from=[550, 310, 7] requested_to=[551, 310, 7] request_age_ms=100' in caplog.messages[-1]
+    assert 'observed_pos=[550, 310, 7]' in caplog.messages[-1]
+    now = 31.
+    monitor.record_client_packet(Op.AUTO_WALK, PacketReader(bytes([2,1,1])))
+    scan.received_perf = now+.1
+    log_walk_cancels(gs, scan)
+    assert 'last_client_move=AUTO_WALK requested_from=None requested_to=None' in caplog.messages[-1]
+    scan.received_perf += 3
+    log_walk_cancels(gs, scan)
+    assert 'last_client_move=None' in caplog.messages[-1]
+
+
+def test_log_distinguishes_skipped_copy_from_partly_parsed_frame(caplog):
+    caplog.set_level('INFO', logger='packet_observer')
+    async def exercise():
+        st, obs, applied, gaps = harness()
+        try:
+            obs.offer(b'xx', KEYS, st.session)
+            await obs.queue.join()
+            obs.offer(frame(b'\xb5\x02'), KEYS, st.session)
+            obs.offer(frame(b'\xb5\x02\xff'), KEYS, st.session)  # Unknown final message.
+            await obs.queue.join()
+            assert obs.snapshot()['partial_among_applied'] == 1
+            assert len(applied) == 2 and gaps == ['decode_failed']
+        finally:
+            await obs.close()
+        assert 'Server observation gap: decode_failed' in caplog.messages
+        assert any('offered=3 accepted=3 applied=2 partial_among_applied=1 dropped=1' in m for m in caplog.messages)
+    asyncio.run(exercise())
+
+
 def test_optional_subscriber_failure_does_not_discard_following_packets():
     async def exercise():
         st,obs,applied,gaps=harness()
@@ -319,6 +369,7 @@ def test_session_or_lifetime_change_prevents_late_publication(change):
             else:await obs.close()
             release.set();await asyncio.wait_for(obs.queue.join(),2)
             assert not applied and old.hp==0 and st.gs.hp==0
+            assert obs.offered == obs.dropped == 1
         finally:release.set();await obs.close()
     asyncio.run(exercise())
 
@@ -372,5 +423,6 @@ def test_byte_limit_and_malformed_frames_invalidate_only_observation():
             obs.offer(frame(b'\x1d'),KEYS,1)
             await asyncio.wait_for(obs.queue.join(),2)
             assert obs.applied==1
+            assert obs.offered == obs.applied + obs.dropped == 3
         finally:await obs.close()
     asyncio.run(exercise())

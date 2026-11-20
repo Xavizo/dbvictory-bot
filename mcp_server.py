@@ -1499,6 +1499,7 @@ async def start_bot() -> str:
 
     def packet_observation_gap(reason):
         gs = state.game_state
+        gs.client_walk_requests.clear()
         gs.packet_position_trusted = False
         gs.pets.invalidate_pending_look()
         usage = getattr(gs, "senzu_usage", None)
