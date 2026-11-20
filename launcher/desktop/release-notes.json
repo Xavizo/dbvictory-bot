@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.15.1",
+    "changes":[
+      {"title":"Ciało na pajęczynie lub zasypanej dziurze","detail":"Cavebot odsuwa rozpoznane ciało 8506 na pobliskie wolne pole i ponownie sprawdza warstwy przed użyciem narzędzia. Przy zajętym wejściu czeka na odejście postaci."}
+    ]
+  },
+  {
     "version":"v1.15.0",
     "changes":[
       {"title":"Edycja szkicu w trakcie gry","detail":"Zapisz zmiany, gdy Cavebot idzie po trasie. Bieżący przebieg można pauzować i wznowić, a zmienione waypointy wczyta następny start."},

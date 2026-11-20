@@ -150,6 +150,79 @@ def test_unknown_or_conflicting_web_layer():
     assert cuttable_web(tile) is None
 
 
+@pytest.mark.parametrize('kind',['web','pile'])
+def test_body_cleared_then_fresh_tool_target_and_step(state,tmp_path,monkeypatch,kind):
+    from test_dig_and_paged_atlas import edge as dig_edge
+    from protocol import ClientOpcode
+    from adaptive_cavebot import MovementDeferred
+    import struct
+
+    edge = web_edge(ORIGIN, WEB) if kind=='web' else dig_edge(8900)
+    entry = edge['entry']
+    tile = web_tile() if kind=='web' else cell(*entry,item=edge['item_id'])
+    origin = cell(*edge['origin'])
+    drop = cell(11,9)
+    drop['items'][0]['flags']=['ground']
+    cells = [origin, tile, drop]
+    if kind=='pile':
+        cells.append(cell(*edge['exit']))
+    controller,_,_=setup(state,tmp_path,cells,[edge['origin'],edge['exit']],[edge] if kind=='pile' else [])
+    fake_tools(monkeypatch,(8900,))
+    controller.status='running'
+    body=dict(id=8506,stack=1,flags=['container','force_use'])
+    if kind=='web':
+        tile['items'][1]['stack']=2
+        tile['navigation'][0]['stack']=2
+    tile['items'].insert(1,body)
+    sent=[]
+    async def dispatch(payload, guard=None):
+        assert guard()
+        sent.append(payload[0]); controller.last_command=0
+        if payload[0]==ClientOpcode.MOVE_THING:
+            assert struct.unpack('<HHBHBHHBB',payload[1:])==(*entry,8506,1,11,9,7,1)
+        elif payload[0]==ClientOpcode.USE_ITEM_EX:
+            assert payload[14:]==edge['item_id'].to_bytes(2,'little')+bytes([1 if kind=='web' else 0])
+            if kind=='web':cut(tile)
+            else:tile['items'][0]['id']=edge['prepared_item_id']
+        else:
+            state.game_state.position=tuple(edge['exit'])
+    state.game_proxy.inject_to_server=dispatch
+    async def act():
+        tile.update(occupants=1,occupant_types={'player':1})
+        with pytest.raises(MovementDeferred,match='zajęte'):
+            await controller.transition(edge,controller.map_now())
+        assert sent==[]
+        tile.update(occupants=0,occupant_types={})
+        for _ in range(2):
+            with pytest.raises(MovementDeferred):
+                await controller.transition(edge,controller.map_now())
+        assert sent==[ClientOpcode.MOVE_THING]
+        tile['items'].remove(body)
+        drop['items'].append(body)
+        if kind=='web':
+            tile['items'][1]['stack']=1
+            tile['navigation'][0]['stack']=1
+        await controller.transition(edge,controller.map_now())
+    asyncio.run(act())
+    assert len(sent)==3 and sent[1]==ClientOpcode.USE_ITEM_EX and list(state.game_state.position)==edge['exit']
+
+
+def test_unidentified_containers_are_not_moved_and_occupied_destinations_wait(state,tmp_path):
+    from navigation_tools import covering_body
+    from adaptive_cavebot import MovementDeferred
+    tile=web_tile()
+    controller,_,_=setup(state,tmp_path,[cell(*ORIGIN),tile],[ORIGIN,WEB])
+    tile['items'].append(dict(id=4040,stack=2,flags=['container','force_use']))
+    assert covering_body(tile) is None
+    tile['items'][-1]['id']=8506
+    occupied=cell(11,9)
+    occupied['items'][0]['flags']=['ground']
+    occupied.update(occupants=1,occupant_types={'player':1})
+    with pytest.raises(MovementDeferred,match='Brak wolnego pola'):
+        asyncio.run(controller.uncover_tool_target(web_edge(ORIGIN,WEB),dict(cells=[occupied,tile]),tile))
+    assert state.game_proxy._inject_queue.empty()
+
+
 def test_hunt_handles_intact_and_cut_web_on_ordinary_ground(tmp_path):
     from hunt_routes import GroundMap,manual_circuit
     from navigation_tools import has_cut_web

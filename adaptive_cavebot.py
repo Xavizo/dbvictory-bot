@@ -10,9 +10,9 @@ from copy import copy,deepcopy
 from route_identity import navigation_revision,same_route
 from collections import deque
 from cavebot_combat import CombatRuntime,validate_combat
-from protocol import Direction,ClientOpcode,build_walk_packet,build_use_item_packet,build_use_item_ex_packet
+from protocol import Direction,ClientOpcode,build_walk_packet,build_use_item_packet,build_use_item_ex_packet,build_move_item_packet
 from combat_wave import TURN_OPCODES
-from navigation_tools import WEB_ITEM_IDS, cuttable_web, supported_transition, transition_tools, web_edge
+from navigation_tools import WEB_ITEM_IDS, covering_body, cuttable_web, supported_transition, transition_tools, web_edge
 
 class MovementDeferred(ValueError):
     """No ordinary step sent: retry from a fresh map while combat stays alive."""
@@ -179,6 +179,7 @@ class AdaptiveCavebot:
         self._unresolved_destination = None
         self.navigation_hold=None
         self._held_web=None
+        self._pending_body_move=None
         self.variation_until=0;self.blockage=None;self._blockage_key=None;self._blockage_at=0
         self.manual_until=0;self.motion_generation=0;self.recovery_next_at=0;self._route_command=False;self._route_boundary=False;self._route_attempt=None
         self._walk_number = 0
@@ -299,7 +300,7 @@ class AdaptiveCavebot:
     def stop(self,reason="Zatrzymano trasę.",*,preserve_progress=False):
         if self.status == 'running':
             self._observe_report('lifecycle','stop',reason)
-        self.generation+=1;self.status="idle";self.reason=reason;self.navigation_hold=None;self._held_web=None
+        self.generation+=1;self.status="idle";self.reason=reason;self.navigation_hold=None;self._held_web=None;self._pending_body_move=None
         if not preserve_progress:
             self.path=[];self.edges=[];self.index=0;self.checkpoints=[];self.last_waypoint=None;self.route_draft=None
             journal = getattr(self.state.game_state, "engine_journal", None)
@@ -939,6 +940,36 @@ class AdaptiveCavebot:
         finally:
             source.close()
 
+    async def uncover_tool_target(self, edge, sample, tile):
+        target, origin = edge['entry'], edge['origin']
+        body = covering_body(tile)
+        if not body:
+            self._pending_body_move = None
+            return
+        if self._pending_body_move == target:
+            raise MovementDeferred('Czekam na potwierdzenie odsunięcia ciała z pola narzędzia.')
+
+        def drop_site(c):
+            p = [c['x'], c['y'], c['z']]
+            return (distance(p, target) == 1 and distance(p, origin) <= 1
+                    and walkable(c) and not c.get('stairs') and not c.get('navigation')
+                    and not c.get('transitions') and not c.get('server_blocking')
+                    and len(c['items']) == 1 and 'ground' in c['items'][0]['flags'])
+
+        sites = [c for c in sample['cells'] if drop_site(c)]
+        if not sites:
+            raise MovementDeferred('Brak wolnego pola na odsunięcie ciała.')
+        drop = min(([c['x'],c['y'],c['z']] for c in sites), key=lambda p: (p == origin, p))
+        def still_valid():
+            cells = self.map_now()['cells']
+            src = next((c for c in cells if [c['x'],c['y'],c['z']] == target), None)
+            return (list(self.state.game_state.position) == origin and src and not src.get('occupants')
+                    and src['items'] == tile['items'] and covering_body(src) == body
+                    and any([c['x'],c['y'],c['z']] == drop and drop_site(c) for c in cells))
+        if await self.send(build_move_item_packet(target, body['id'], body['stack'], drop, 1), still_valid):
+            self._pending_body_move = list(target)
+        raise MovementDeferred('Sprawdzam pole po odsunięciu ciała.')
+
     async def clear_web(self, edge, sample):
         if not supported_transition(edge) or list(self.state.game_state.position) != edge['origin']:
             raise ValueError('Sprawdź pole podejścia do pajęczyny.')
@@ -955,9 +986,10 @@ class AdaptiveCavebot:
             obj = cuttable_web(tile)
             if obj is None:
                 raise ValueError('Pole pajęczyny nie ma potwierdzonej warstwy do przecięcia.')
+            await self.uncover_tool_target(edge, sample, tile)
             def ready():
                 current = read_tile(self.map_now())
-                return vacant(current) and cuttable_web(current) == obj
+                return vacant(current) and not covering_body(current) and cuttable_web(current) == obj
             await self.use_route_tool(edge, obj, ready, 'Brak AiO 8899 lub 8900 w ekwipunku lub otwartym plecaku.')
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
@@ -979,17 +1011,20 @@ class AdaptiveCavebot:
         if origin!=edge['origin']:raise ValueError('Podejście do dziury zmieniło się.')
         def read_hole(current):
             tile=next((c for c in current['cells'] if [c['x'],c['y'],c['z']]==entry),None)
-            if not tile or tile.get('occupants',0)>tile.get('occupant_types',{}).get('self',0):
-                raise ValueError('Brak odczytu dziury lub pole jest zajęte.')
+            if not tile:
+                raise InputsUnavailable('Brak aktualnego odczytu dziury.')
             ids={i['id'] for i in tile['items']}
             if (closed in ids)==(opened in ids):raise ValueError('Stan dziury nie pasuje do wyuczonego przejścia.')
             return tile,opened in ids
         tile,is_open=read_hole(sample)
+        if tile.get('occupants',0)>tile.get('occupant_types',{}).get('self',0):
+            raise MovementDeferred('Pole dziury jest zajęte. Czekam na zwolnienie przejścia.')
         if not is_open:
+            await self.uncover_tool_target(edge, sample, tile)
             obj=next(i for i in tile['items'] if i['id']==closed)
             def ready_to_dig():
                 current,open_now=read_hole(self.map_now())
-                return not open_now and current['items']==tile['items']
+                return not open_now and not current.get('occupants') and current['items']==tile['items']
             await self.use_route_tool(edge,obj,ready_to_dig,
                 'Brak łopaty 3457 lub AiO 8899/8900 w ekwipunku i otwartych plecakach. Załóż narzędzie albo otwórz jego plecak.')
             deadline=time.monotonic()+2
@@ -999,8 +1034,8 @@ class AdaptiveCavebot:
                 await asyncio.sleep(.03)
             if not is_open:raise ValueError('Dziura nie potwierdziła odkopania; wstrzymano trasę bez ponawiania.')
         def ready_to_enter():
-            sample=self.map_now();_,opened_now=read_hole(sample)
-            return opened_now
+            current,opened_now=read_hole(self.map_now())
+            return opened_now and not current.get('occupants')
         await self.send(build_walk_packet(OFFSETS[entry[0]-origin[0],entry[1]-origin[1]]),ready_to_enter)
         if not await self._confirm_walk(dest,origin,4,entry):raise ValueError('Zejście nie potwierdziło wyjścia; wstrzymano trasę.')
 
@@ -1311,5 +1346,5 @@ class AdaptiveCavebot:
                     self.describe_blockage(await self.fresh_map(),target,cancelled=cancelled)
                     if self.failures>=3:self.reason='Brak potwierdzenia kroku — sprawdzam obejście; walka aktywna.'
                     continue
-            self.index+=1;self.mark_waypoint();self.failures=0;self.blockage=None
+            self.index+=1;self.mark_waypoint();self.failures=0;self.blockage=None;self._pending_body_move=None
             self.save_session_cursor()

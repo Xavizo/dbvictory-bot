@@ -7,6 +7,13 @@ WEB_ITEM_IDS = frozenset({182, 183})
 AIO_TOOLS = (8899, 8900)
 
 
+def covering_body(tile):
+    # Observed on DBVictory. Ordinary containers share these flags.
+    return next((item for item in (tile or {}).get('items', ())
+                 if item['id'] == 8506 and 'container' in item['flags']
+                 and 'not_moveable' not in item['flags'] and 0 <= item['stack'] < 255), None)
+
+
 def has_cut_web(items, definitions):
     # Only the verified 183 -> 189 pair is known for the current client assets.
     cut_id = (definitions or {}).get(183, {}).get('cut_id')

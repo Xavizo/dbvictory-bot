@@ -58,13 +58,12 @@ def test_alternative_tool_requires_matching_observed_preparation_and_exit(state,
     assert not mapping.get((10,10,7))
 
 
-@pytest.mark.parametrize('failure',['missing_tool','wrong_object','occupied','no_open_ack'])
+@pytest.mark.parametrize('failure',['missing_tool','wrong_object','no_open_ack'])
 def test_failed_dig_pauses_without_walking_or_repeated_use(state,tmp_path,monkeypatch,failure):
     e=edge();hole=cell(10,9,item=593,navigation=[dict(kind='covered_hole')])
     c,_,_=setup(state,tmp_path,[cell(10,10),hole,cell(10,9,8)],[e['origin'],e['exit']],[e])
     fake_tools(monkeypatch,() if failure=='missing_tool' else (3457,));sent=[]
     if failure=='wrong_object':hole['items'][0]['id']=999
-    if failure=='occupied':hole['occupants']=1
     async def inject(payload,guard=None):assert guard();sent.append(payload)
     state.game_proxy.inject_to_server=inject;asyncio.run(c.run())
     assert c.status=='paused' and [p[0] for p in sent]==([0x83] if failure=='no_open_ack' else [])
