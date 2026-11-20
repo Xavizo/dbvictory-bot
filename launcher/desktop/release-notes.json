@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.15.0",
+    "changes":[
+      {"title":"Edycja szkicu w trakcie gry","detail":"Zapisz zmiany, gdy Cavebot idzie po trasie. Bieżący przebieg można pauzować i wznowić, a zmienione waypointy wczyta następny start."},
+      {"title":"Powrót po walce","detail":"Gdy stwór zajmuje pole sprzed walki, Cavebot szuka dostępnego miejsca na bieżącym odcinku trasy."}
+    ]
+  },
+  {
     "version":"v1.14.2",
     "changes":[
       {"title":"AiO na pajęczynie","detail":"Przy użyciu AiO bot wskazuje konkretną warstwę i ID pajęczyny. Po opóźnionym potwierdzeniu wolnego pola może wznowić wstrzymany ruch."},

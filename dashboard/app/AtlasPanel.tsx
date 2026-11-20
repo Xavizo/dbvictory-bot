@@ -323,7 +323,12 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
             <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?"na żywo":"zapis historyczny"} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}${c.live && c.pet_names?.length ? " · Pet: "+c.pet_names.join(", ") : ""}`}</title></g>;}),[cells,floorTransitions,center[0],center[1],ox,oy,viewport.width,grid.columns]);
   const objectPositions=new Set(cells.filter(c=>c.navigation?.length).map(c=>[c.x,c.y,c.z].join(",")));
   const onFloor=segments.map((s,i)=>({...s,index:i})).filter(s=>s.floor===center[2]&&!hiddenSegments.includes(s.index));
-  const progress=visibleWaypointProgress(state?.adaptive_cavebot,draftId,drafts.find(d=>d.id===draftId)?.updated,dirty,drafts.find(d=>d.id===draftId)?.navigation_revision);
+  const storedDraft=drafts.find(d=>d.id===draftId), run=state?.adaptive_cavebot;
+  const progress=visibleWaypointProgress(run,draftId,storedDraft?.updated,dirty,storedDraft?.navigation_revision);
+  const nextStart=!!storedDraft?.navigation_revision && !!run?.waypoint?.navigation_revision &&
+    run.draft_id===draftId && ["running","paused","ready"].includes(run.status) &&
+    storedDraft.navigation_revision!==run.waypoint.navigation_revision;
+  const savedNotice="Zapisano na następny start";
   const waypointList=useMemo(()=><div className="v2-point-scroll" tabIndex={0} role="region" aria-label="Przewijana lista waypointów"><table><thead><tr><th>#</th><th>Współrzędne</th><th>Etykieta</th><th/></tr></thead><tbody>{points.map((p,i)=><tr key={i} aria-current={progress?.current===i?"step":undefined} className={progress?.current===i?"waypoint-current":progress?.last_reached===i?"waypoint-reached":""}><td title={progress?.current===i?"Bieżący cel trasy":progress?.last_reached===i?"Ostatnio zaliczony":undefined}>{progress?.current===i?"▸ ":""}{i+1}</td><td><button className="waypoint-location" title={waypointKind(points,i)} onClick={()=>{setMapOpen(true);setCenter(p);setSelected(p);}}>{p.join(", ")}</button></td><td><input aria-label={`Etykieta waypointu ${i+1}`} placeholder={waypointKind(points,i)} maxLength={60} value={labels[i]??""} disabled={busy||!!optimization||recorder?.active} onChange={e=>labelPoint(i,e.target.value)}/></td><td><button aria-label={`Usuń waypoint ${i+1}`} disabled={busy||!!optimization||recorder?.active} onClick={()=>updatePoints(removeAnchor(points,i))}>×</button></td></tr>)}</tbody></table>{!points.length&&<p className="v2-empty-points">Nagraj ruch lub dodaj punkty na mapie.</p>}</div>,
     [points,labels,links,busy,optimization,recorder?.active,progress?.current,progress?.last_reached,center[0],center[1],center[2],loop,scope,compatible]);
   const review=<>{draftWaiting&&<p role="status" className="v2-inline-note">Wczytywanie atlasu…</p>}{draftLoadError&&<p role="alert" className="v2-error">{draftLoadError}</p>}{optimization&&<div className="optimization-review" role="region" aria-label="Porównanie optymalizacji"><strong>{optimization.candidate.complete?`${optimization.before.points.length} → ${optimization.candidate.points.length} waypointów` : "Optymalizacja wymaga sprawdzenia"}{optimization.before.complete&&optimization.candidate.complete?` · ${optimization.before.path.length-1} → ${optimization.candidate.path.length-1} kroków`:""}</strong><button disabled={!optimization.candidate.complete} onClick={acceptOptimization}>Przyjmij</button><button onClick={()=>{setOptimization(null);frameRoute(plan?.path??points);}}>Odrzuć</button>{!optimization.candidate.complete&&optimization.candidate.gaps.map((g,i)=><button key={i} className="atlas-gap" onClick={()=>focusGap(g)}>Sprawdź odcinek {g.segment+1} → {g.segment+2}: {pointText(g.from)} → {pointText(g.to)}. {g.reason}</button>)}</div>}
@@ -349,7 +354,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
     }}/>;
   const draftControls=!browseOnly&&<div className="map-draft-controls" role="group" aria-label="Zapis szkicu">
     <input aria-label="Nazwa edytowanego szkicu" maxLength={80} placeholder="Nowa trasa" value={draftName} disabled={busy||recorder?.active} onChange={e=>setDraftName(e.target.value)}/>
-    <span role="status" className={dirty?"is-dirty":""}>{dirty?"Niezapisane zmiany":saved?"Zapisano":"Nowy szkic"}</span>
+    <span role="status" className={dirty?"is-dirty":""}>{dirty?"Niezapisane zmiany":nextStart?savedNotice:saved?"Zapisano":"Nowy szkic"}</span>
     <button className="map-save-draft" disabled={busy||!dirty||!compatible||points.length<2||recorder?.active} onClick={saveDraft}>{optimization?"Zapisz oryginał":"Zapisz"}</button>
     <button disabled={busy||(!dirty&&!optimization)||recorder?.active} onClick={()=>loadDraft(draftId)}>Odrzuć zmiany</button>
   </div>;
@@ -497,6 +502,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
         <button onClick={()=>setRename(!rename)}>Zmień nazwę szkicu</button><button disabled={busy||!plan||recorder?.active||!!optimization} onClick={optimizeRoute}>Optymalizuj trasę</button>{lastOptimization&&<button disabled={busy||!!optimization} onClick={undoOptimization}>Cofnij optymalizację</button>}</MapMore>
     </div>
     {routePicker}
+    {embedded&&!mapOpen&&nextStart&&<small role="status" className="v2-inline-note">{savedNotice}</small>}
     {embedded && !mapOpen && tagEditor}
     {(rename||(!draftId&&(points.length>0||recorder?.active)))&&<div className="route-save-row"><input aria-label="Nazwa szkicu" maxLength={80} placeholder="Nazwa trasy" value={draftName} onChange={e=>{setDraftName(e.target.value);}}/></div>}
     {(!embedded||!mapOpen)&&recordingStatus}

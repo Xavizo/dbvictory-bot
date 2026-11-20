@@ -62,7 +62,7 @@ export default function CavebotWorkspace({state,active,onRefresh}:{state:BotStat
     {(error||loadError)&&<p role="alert" className="v2-error">{error||loadError}</p>}{notice&&<p role="status" className="v2-inline-note">{notice}</p>}
     <div className="v2-config-columns">
     <section className="v2-waypoints">
-    {sketchDirty&&!state?.cavebot?.recording.active&&<div className="v2-inline-note" role="status">Niezapisany szkic <button disabled={busy||executing} onClick={()=>{setSelectionVersion(v=>v+1);setSketchDirty(false);}}>Odrzuć szkic</button></div>}
+    {sketchDirty&&!state?.cavebot?.recording.active&&<div className="v2-inline-note" role="status">Niezapisany szkic <button disabled={busy} onClick={()=>{setSelectionVersion(v=>v+1);setSketchDirty(false);}}>Odrzuć szkic</button></div>}
     {deleting&&route&&<div className="v2-inline-note">Usunąć „{route.name}”? <button onClick={()=>removeOrRestore(id,"delete")} disabled={busy}>Usuń</button><button onClick={()=>setDeleting(false)}>Anuluj</button></div>}
       <AtlasPanel state={state} active={active} profileScope={scope} onRefresh={onRefresh} initialDraftId={id} selectionVersion={selectionVersion} embedded={true} onEditingChange={setSketchDirty} onLoopChange={setLoop} onDraftSaved={async saved=>{setSketchDirty(false);setId(saved);selected.current=saved;await refresh();}}
         routeEnabledControl={<ActivationCheckbox label="Aktywuj ruch" title={movement&&!hasRoute?"Brak waypointów — bot będzie działać bez ruchu.":"Poruszaj się po trasie. Wyłącz, aby uruchomić samą walkę."} checked={movement} disabled={busy||executing} onChange={setMovement}/>}

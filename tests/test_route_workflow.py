@@ -105,7 +105,7 @@ def test_two_editor_windows_cannot_silently_overwrite_a_newer_sketch(tmp_path,mo
     assert atlas.drafts()[0]['name']=='newer'
 
 
-def test_can_edit_only_metadata_while_current_route_is_running(http_api, state, tmp_path, monkeypatch):
+def test_can_edit_tags_but_not_delete_running_route(http_api, state, tmp_path, monkeypatch):
     controller, _, draft = setup(state, tmp_path)
     controller.status = 'running'
     monkeypatch.setattr(api, '_state', state)
@@ -119,6 +119,39 @@ def test_can_edit_only_metadata_while_current_route_is_running(http_api, state, 
     assert post(operation='delete')[0] == 400
     assert post(operation='set_tags', tags=[{'text':'', 'color':'rose'}], previous=tags)[0] == 400
     assert state.passive_map_monitor.atlas.drafts()[0]['tags'] == tags
+
+
+def test_save_running_sketch_isolated_until_next_start(http_api, state, tmp_path, monkeypatch):
+    controller, _, draft_id = setup(state, tmp_path)
+    controller.status = 'running'
+    before = controller.waypoint_progress()
+    original = [point.copy() for point in controller.path]
+    monkeypatch.setattr(api, '_state', state)
+    request, _ = http_api
+    headers = {'Origin': DASHBOARD_ORIGIN, 'Authorization': f'Bearer {SESSION_TOKEN}'}
+    data = dict(scope=controller.scope, id=draft_id, name='Edited route', loop=False,
+                points=[[10,10,7], [10,12,7]])
+    def save(**changes):
+        return request('POST', '/api/map/drafts', json.dumps({**data, **changes}), **headers)
+
+    assert save()[0] == 400
+    assert save(expected_updated=before['draft_updated'] - 1)[0] == 400
+    status, _, body = save(expected_updated=before['draft_updated'])
+    assert status == 200
+    stored = json.loads(body)['drafts'][0]
+    assert stored['navigation_revision'] != before['navigation_revision']
+    assert stored['points'] == data['points']
+    assert controller.status == 'running' and controller.path == original
+    assert controller.waypoint_progress() == before
+    controller.pause('test')
+    resumed = asyncio.run(controller.resume_candidate())
+    assert resumed.path == original and resumed.waypoint_progress() == before
+    controller.stop(preserve_progress=True)
+    fresh = AdaptiveCavebot(state)
+    asyncio.run(fresh.prepare_async(controller.scope, draft_id, False))
+    assert fresh.path[-1] == data['points'][-1]
+    assert fresh.waypoint_progress()['navigation_revision'] == stored['navigation_revision']
+    assert state.game_proxy._inject_queue.empty()
 
 
 def test_draft_tags_survive_geometry_edits_and_conflicting_windows(tmp_path):

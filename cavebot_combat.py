@@ -564,6 +564,12 @@ class CombatRuntime:
                 self.phase='return';o.reason='Powrót na trasę po walce.'
                 path=detour(sample['cells'],pos,self.anchor)
                 if not path or len(path)<2:
+                    if not o.combat_only and o.path and distance(pos, o.path[o.index]) <= 6:
+                        # Let the movement worker rejoin the current leg. A fight
+                        # anchor can stay occupied after the last eligible target leaves.
+                        self.anchor = None
+                        self.phase = 'route'
+                        return False
                     o.describe_blockage(sample,self.anchor)
                     o.reason='Powrót po walce — '+o.reason
                     await asyncio.sleep(.05);return True

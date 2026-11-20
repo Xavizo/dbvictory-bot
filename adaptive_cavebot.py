@@ -443,9 +443,15 @@ class AdaptiveCavebot:
                 list(self.state.game_state.position) != self._unresolved_destination):
             raise ValueError("Brak potwierdzenia ostatniego ruchu. Sprawdź pozycję przed wznowieniem.")
         atlas=self.state.passive_map_monitor.atlas
-        draft=next((d for d in atlas.drafts() if d['id']==self.draft_id),None)
-        if not same_route(draft,self.route_draft):
-            raise ValueError('Zmieniono waypointy, przejścia lub pętlę. Odrzuć postęp i uruchom zmienioną trasę od nowa.')
+        stored=next((d for d in atlas.drafts() if d['id']==self.draft_id),None)
+        if not stored:
+            raise ValueError('Brak zapisanego szkicu do wznowienia.')
+        draft=stored
+        if not same_route(stored,self.route_draft):
+            if self.status!='paused' or not self.route_draft:
+                raise ValueError('Zmieniono przebieg trasy. Kliknij Uruchom w panelu Cavebota, aby użyć zapisanego szkicu.')
+            # Pause continues the same run, including its waypoint numbering.
+            draft=self.route_draft
         c=copy(self)
         c.reporter = None
         c._resuming_report = True
@@ -475,7 +481,7 @@ class AdaptiveCavebot:
         if (self.state.game_proxy is not proxy or self.state.game_state.player_id!=player or
             self.state.passive_map_monitor.atlas is not atlas or list(self.state.game_state.position)!=pos):
             raise ValueError('Pozycja lub sesja zmieniła się podczas wznawiania. Spróbuj ponownie.')
-        if next((d for d in atlas.drafts() if d['id']==self.draft_id),None)!=draft:
+        if next((d for d in atlas.drafts() if d['id']==self.draft_id),None)!=stored:
             raise ValueError('Szkic zmienił się podczas wznawiania.')
         c.status='ready';c.reason='Wznowienie od zapamiętanego odcinka.'
         return c

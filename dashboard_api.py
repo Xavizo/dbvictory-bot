@@ -445,8 +445,13 @@ class _Handler(BaseHTTPRequestHandler):
                 body=self._read_body()
                 if body.get("scope")!=atlas.scope:raise ValueError("Profil atlasu się zmienił. Odśwież widok.")
                 controller=getattr(_state,'adaptive_cavebot',None)
-                if body.get('operation') != 'set_tags' and controller and controller.status in {'running','paused','ready'} and getattr(controller,'draft_id',None)==body.get('id'):
-                    raise ValueError('Zatrzymaj V2 przed zmianą lub usunięciem wykonywanej trasy.')
+                active_draft = (body.get('id') and controller and controller.status in {'running','paused','ready'}
+                                and getattr(controller, 'draft_id', None) == body['id'])
+                if active_draft:
+                    if body.get('operation') not in {None, 'set_tags'}:
+                        raise ValueError('Zatrzymaj Cavebota przed tą operacją na aktywnej trasie.')
+                    if body.get('operation') is None and body.get('expected_updated') is None:
+                        raise ValueError('Odśwież szkic przed zapisem, aby sprawdzić jego wersję.')
                 if body.get('operation') == 'set_tags':
                     atlas.set_tags(body.get('id'), body.get('tags'), body.get('previous'))
                 elif body.get('operation') in {'delete','restore','configure','set_loop'}:

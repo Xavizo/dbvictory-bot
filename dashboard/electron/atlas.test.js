@@ -1036,7 +1036,7 @@ test('saving combat independently does not invalidate sketch edits, but concurre
     '@/lib/auth':{authenticatedFetch:async(url,options)=>{
       const body=options?.body?JSON.parse(options.body):null;requests.push({url,body});
       if(url.endsWith('/drafts')){
-        if(body)savedRow={...body,id:'saved',updated:(savedRow?.updated??0)+1};
+        if(body)savedRow={...body,id:'saved',navigation_revision:'saved-shape',updated:(savedRow?.updated??0)+1};
         return {ok:true,json:async()=>({scope:'scope',saved_id:'saved',drafts:[savedRow]})};
       }
       return {ok:true,json:async()=>({...body,path:body.points,original:body.points,complete:true,transitions:[],gaps:[],loop_closed:true})};
@@ -1059,6 +1059,10 @@ test('saving combat independently does not invalidate sketch edits, but concurre
   savedRow={...savedRow,updated:10,combat:{enabled:true}};
   await render().find(n=>n.props.className==='map-save-draft').props.onClick();
   assert.equal(requests.at(-1).body.expected_updated,10);assert.equal(savedRow.labels[0],'My edit');
+  props.state.adaptive_cavebot={status:'running',draft_id:'saved',waypoint:{navigation_revision:'previous-shape'}};
+  assert.ok(render().some(n=>n.props.role==='status'&&n.props.children==='Zapisano na następny start'));
+  props.state.adaptive_cavebot.waypoint.navigation_revision='saved-shape';
+  assert.ok(!render().some(n=>n.props.children==='Zapisano na następny start'));
   render().find(n=>n.props['aria-label']==='Etykieta waypointu 1').props.onChange({target:{value:'Keep locally'}});
   savedRow={...savedRow,updated:20,points:[[200,200,7],[201,200,7]]};
   const posts=requests.filter(r=>r.url.endsWith('/drafts')&&r.body).length;
