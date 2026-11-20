@@ -60,3 +60,14 @@ def test_partial_minimap_can_be_retried(tmp_path):
         world_floor(path, None, 7)
     write_map(path, flags=0)
     assert world_floor(path, None, 7)['sectors'] == []
+
+
+def test_populated_floor_spans_multiple_database_chunks(tmp_path):
+    path, atlas = tmp_path/'minimap.otmm', tmp_path/'atlas.sqlite3'
+    write_map(path)
+    with sqlite3.connect(atlas) as db:
+        db.execute('CREATE TABLE tiles(x,y,z,PRIMARY KEY(z,x,y))')
+        db.executemany('INSERT INTO tiles VALUES(?,?,7)', ((x,y) for x in range(65) for y in range(64)))
+    masks = {(s['x'],s['y']):png_rows(s['atlas']) for s in world_floor(path,atlas,7)['sectors'] if 'atlas' in s}
+    assert set(masks) == {(0,0),(64,0)}
+    assert sum(int(v).bit_count() for mask in masks.values() for v in mask) == 65*64

@@ -8,6 +8,7 @@ and pushes game state to all connected dashboards every 100ms.
 import asyncio
 import json
 import logging
+import sqlite3
 import sys
 import threading
 import time
@@ -16,6 +17,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit, parse_qs
 from dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
 from cavebot_combat import validate_combat
+from map_atlas import database_busy
 
 log = logging.getLogger("dashboard_api")
 
@@ -356,7 +358,12 @@ class _Handler(BaseHTTPRequestHandler):
             if getattr(monitor,"annotations",None):view["cells"]=monitor.annotations.annotate(view["cells"])
             if getattr(monitor,"learner",None):view["cells"]=monitor.learner.annotate(view["cells"])
             rows=list(monitor.learner.records.values()) if getattr(monitor,'learner',None) else []
-            view['route_transitions']=atlas.route_transitions(rows,view['cells'])
+            try:
+                view['route_transitions']=atlas.route_transitions(rows,view['cells'])
+            except sqlite3.OperationalError as exc:
+                if not database_busy(exc):raise
+                view['route_transitions']=[]
+                view['error']=view['error'] or 'Baza atlasu jest zajęta. Odświeżam przejścia.'
             return self._json_response(view)
         except (ValueError,KeyError,TypeError):return self._json_response({"error":"Nieprawidłowy obszar atlasu."},400)
 
@@ -379,6 +386,10 @@ class _Handler(BaseHTTPRequestHandler):
                 elif body.get('operation') is not None:raise ValueError('Nieznana operacja szkicu.')
                 else:draft_id=atlas.save_draft(body.get("name"),body.get("points"),body.get("id"),body.get("loop",True),body.get('expected_updated'),body.get('labels'),body.get('links'),body.get('tags'))
             return self._json_response({"scope":atlas.scope,"drafts":atlas.drafts(),"trash":atlas.drafts(deleted=True),"saved_id":draft_id})
+        except (BlockingIOError, sqlite3.OperationalError) as exc:
+            if isinstance(exc, BlockingIOError) or database_busy(exc):
+                return self._json_response({"error":"Baza atlasu jest chwilowo zajęta. Spróbuj ponownie."},503)
+            return self._json_response({"error":"Nie udało się odczytać lub zapisać szkiców."},500)
         except (ValueError,TypeError,KeyError) as exc:return self._json_response({"error":str(exc)},400)
         except Exception:return self._json_response({"error":"Nie udało się odczytać lub zapisać szkiców."},500)
 

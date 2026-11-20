@@ -1,5 +1,6 @@
 """Offline regression for dug holes, paged persistence and learned exits."""
 import asyncio,json,sqlite3
+from contextlib import closing
 from types import SimpleNamespace
 import pytest
 import map_atlas as atlas_module
@@ -110,3 +111,73 @@ def test_wrong_profile_never_reads_tiles_through_paged_fallback(tmp_path):
     bad=MapAtlas(tmp_path,'f'*64)
     assert bad.error and not bad.view(10,10,7)['cells'] and not bad.route_transitions([],[])
     with pytest.raises(ValueError):bad.plan([[10,10,7],[11,10,7]],[])
+
+
+def test_locked_commit_preserves_sketch_history_and_retries_latest_tiles(tmp_path, monkeypatch):
+    monkeypatch.setattr(atlas_module, 'CACHE_TILES', 2)
+    clock = [10.]
+    monkeypatch.setattr(atlas_module.time, 'monotonic', lambda: clock[0])
+    atlas = MapAtlas(tmp_path, 'f'*64)
+    def observe(*cells):
+        atlas.observe({'status':'ready', 'cells':cells})
+
+    points = [[12,15,7],[13,15,7]]
+    observe(cell(*points[0]), cell(*points[1]))
+    draft = atlas.save_draft('Vegeta', points)
+    # A second reader allows INSERT/UPDATE to run but prevents COMMIT.
+    with closing(sqlite3.connect(atlas.path)) as reader:
+        reader.execute('BEGIN')
+        reader.execute('SELECT count(*) FROM tiles').fetchone()
+        observe(cell(50,50,8),cell(51,50,8),cell(52,50,8))
+        observe(cell(50,50,8,kind='blocked'),cell(53,50,8),cell(54,50,8))
+        assert (50,50,8) not in atlas.tiles
+        assert atlas.total == 2 and reader.execute('SELECT count(*) FROM tiles').fetchone()[0] == 2
+        assert atlas.drafts()[0]['id'] == draft
+        view = atlas.view(12,15,7)
+        assert len(view['cells']) == 2 and 'SQLITE_BUSY' in view['error']
+        assert atlas.plan(points, [])['complete']
+        assert atlas._paged_tiles()[(50,50,8)]['kind'] == 'blocked'
+        assert next(c for c in atlas.view(50,50,8)['cells'] if c['x']==50)['kind']=='blocked'
+    clock[0] += 2
+    observe()  # No manually triggered refresh or new tile is needed.
+    assert atlas.view(12,15,7)['error'] is None and atlas.floors == {7,8}
+    reopened = MapAtlas(tmp_path, 'f'*64)
+    assert reopened.total == 7 and reopened.drafts()[0]['id'] == draft
+    assert next(c for c in reopened.view(50,50,8)['cells'] if c['x']==50)['kind']=='blocked'
+
+
+def test_exclusive_read_lock_does_not_disable_map_or_empty_sketch_list(tmp_path, monkeypatch):
+    import dashboard_api
+    atlas = MapAtlas(tmp_path,'f'*64)
+    atlas.observe(dict(status='ready',cells=[cell(16,16)]))
+    draft = atlas.save_draft('Saved', [[16,16,7],[17,16,7]])
+    monitor = SimpleNamespace(atlas=atlas)
+    monkeypatch.setattr(dashboard_api,'_state',SimpleNamespace(passive_map_monitor=monitor))
+    handler = SimpleNamespace(_json_response=lambda data,status=200:(status,data))
+    with closing(sqlite3.connect(atlas.path)) as db:
+        db.execute('BEGIN EXCLUSIVE')
+        assert atlas.view(16,16,7)['cells'] and atlas.error is None
+        assert dashboard_api._Handler._handle_map_drafts(handler)[0] == 503
+        waiting = MapAtlas(tmp_path, atlas.scope)
+        with pytest.raises(BlockingIOError):waiting.drafts()
+    assert atlas.view(16,16,7)['error'] is None
+    status, body = dashboard_api._Handler._handle_map_drafts(handler)
+    assert status == 200 and body['drafts'][0]['id'] == draft
+    now = waiting._retry_at + 1
+    monkeypatch.setattr(atlas_module.time,'monotonic',lambda:now)
+    waiting.observe(dict(status='ready',cells=[cell(17,16)]))
+    assert waiting.total == 2 and waiting.drafts()[0]['id'] == draft
+
+
+def test_backlog_drains_across_unchanged_frames_without_double_counting(tmp_path, monkeypatch):
+    atlas = MapAtlas(tmp_path, 'f'*64)
+    cells = [cell(x,10) for x in range(10,1110)]
+    with closing(sqlite3.connect(atlas.path)) as db:
+        db.execute('BEGIN IMMEDIATE')
+        atlas.observe(dict(status='ready',cells=cells))
+    clock = atlas._retry_at + 1
+    monkeypatch.setattr(atlas_module.time,'monotonic',lambda:clock)
+    for _ in range(2):
+        atlas.observe(dict(status='ready',cells=[cells[-1]]))
+    assert atlas.total == 1100 and not atlas.view(1109,10,7)['error']
+    assert MapAtlas(tmp_path,atlas.scope).total == 1100

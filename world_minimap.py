@@ -76,12 +76,17 @@ def world_floor(path, atlas_path, floor):
     masks = {}
     if atlas_path:
         with closing(sqlite3.connect(atlas_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
-            for x, y in db.execute('SELECT x,y FROM tiles WHERE z=?', (floor,)):
-                origin = (x // SIDE * SIDE, y // SIDE * SIDE)
-                if origin not in masks:
-                    masks[origin] = bytearray(512)
-                index = y % SIDE * SIDE + x % SIDE
-                masks[origin][index // 8] |= 128 >> (index % 8)
+            # Release the read lock before rasterizing each chunk of the floor.
+            after = (-1, -1)
+            while rows := db.execute('SELECT x,y FROM tiles WHERE z=? AND (x,y)>(?,?) '
+                                     'ORDER BY x,y LIMIT 4096', (floor, *after)).fetchall():
+                for x, y in rows:
+                    origin = (x // SIDE * SIDE, y // SIDE * SIDE)
+                    if origin not in masks:
+                        masks[origin] = bytearray(512)
+                    index = y % SIDE * SIDE + x % SIDE
+                    masks[origin][index // 8] |= 128 >> (index % 8)
+                after = rows[-1]
     sectors = []
     for x, y in sorted(terrain.keys() | masks.keys()):
         row = {'x': x, 'y': y}

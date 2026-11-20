@@ -4,9 +4,10 @@ from route_identity import navigation_revision
 from contextlib import closing
 import heapq
 import hashlib
-from itertools import groupby
+from itertools import groupby, islice
 from functools import lru_cache
 import json
+import logging
 from pathlib import Path
 import sqlite3
 import threading
@@ -24,6 +25,11 @@ CACHE_PAGES=128
 MAX_EXPANSIONS=40000
 MAX_ANCHORS=2048
 KINDS={"clear","blocked","avoid","no_ground"}
+log = logging.getLogger(__name__)
+
+
+def database_busy(exc):
+    return (getattr(exc, "sqlite_errorcode", 0) & 0xff) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 
 
 def validate_labels(labels,count):
@@ -306,17 +312,24 @@ class MapAtlas:
         # Older callers supplied the definition for item 183 alone.
         self.web_definitions = web_definitions if web_definitions is not None else ({183: web_definition} if web_definition else {})
         self.scope=scope
-        self.path=Path(directory)/f"map_atlas-{scope[:16]}.sqlite3"
+        self.path=Path(directory).absolute()/f"map_atlas-{scope[:16]}.sqlite3"
         self.tiles=OrderedDict();self.total=0;self.floors=set();self.error=None;self.revision=0
         self.lock=threading.RLock()
         self.recorded_ropes={}
+        self._pending = {}
+        self._write_warning = None
+        self._retry_at = 0.
+        self._retry_open = False
+        self._open()
+
+    def _open(self):
         try:
             self.path.parent.mkdir(parents=True,exist_ok=True)
-            with sqlite3.connect(self.path) as db:
+            with closing(sqlite3.connect(self.path, timeout=.2)) as db, db:
                 db.execute("CREATE TABLE IF NOT EXISTS meta (scope TEXT NOT NULL)")
                 row=db.execute("SELECT scope FROM meta").fetchone()
-                if row is None:db.execute("INSERT INTO meta VALUES (?)",(scope,))
-                elif row[0]!=scope:raise ValueError("scope")
+                if row is None:db.execute("INSERT INTO meta VALUES (?)",(self.scope,))
+                elif row[0]!=self.scope:raise ValueError("scope")
                 db.execute("CREATE TABLE IF NOT EXISTS recorded_ropes (id TEXT PRIMARY KEY, recording TEXT NOT NULL, edge TEXT NOT NULL)")
                 self.recorded_ropes={key:json.loads(raw) for key,raw in db.execute("SELECT id,edge FROM recorded_ropes")}
                 db.execute("CREATE TABLE IF NOT EXISTS tiles (x INT,y INT,z INT,data TEXT,seen REAL,PRIMARY KEY(x,y,z))")
@@ -335,13 +348,25 @@ class MapAtlas:
                 self.floors={r[0] for r in db.execute("SELECT DISTINCT z FROM tiles")}
                 rows=db.execute("SELECT x,y,z,data,seen FROM tiles ORDER BY seen DESC LIMIT ?",(CACHE_TILES,)).fetchall()
                 self.tiles=OrderedDict(decode_tile(row,self.web_definitions) for row in rows)
-        except (OSError,sqlite3.Error,ValueError,TypeError,KeyError):
+            self.error = None
+            self._retry_open = False
+            self._retry_at = 0.
+        except (OSError,sqlite3.Error,ValueError,TypeError,KeyError) as exc:
+            if database_busy(exc):
+                self._retry_open = True
+                self._retry_at = time.monotonic() + 1
+                self.error = "Baza atlasu jest zajęta. Ponawiam odczyt."
+                return
+            self._retry_open = False
             self.tiles=OrderedDict();self.error="Atlas niedostępny lub nieprawidłowy. Plik nie zostanie nadpisany."
 
     def observe(self,sample):
-        if sample.get("status")!="ready" or self.error:return
-        now=time.time();changed=[]
+        if sample.get("status")!="ready":return
+        now=time.time();changed=False
         with self.lock:
+            if self._retry_open and time.monotonic() >= self._retry_at:
+                self._open()
+            if self.error:return
             for cell in sample["cells"]:
                 if cell["kind"] not in KINDS:continue
                 key=(cell["x"],cell["y"],cell["z"])
@@ -350,41 +375,78 @@ class MapAtlas:
                 safe["navigation"]=[{k:f[k] for k in ("kind","item_id","stack","source","activation_hint","door_state_hint","behavior_hint",
                     "direction_hint","observation_count","required_level","requirement_source","closing_policy","lock_hint","note") if k in f} for f in cell.get("navigation",[])[:16]]
                 safe["transitions"]=[{k:r[k] for k in ("id","exit","action","direction","count") if k in r} for r in cell.get("transitions",[])[:32]]
-                previous=self.tiles.get(key)
+                previous=self.tiles.get(key) or self._pending.get(key)
                 if previous and {k:v for k,v in previous.items() if k!="seen_at"}==safe and now-previous["seen_at"]<30:continue
                 self.tiles[key]={**safe,"seen_at":now};self.tiles.move_to_end(key)
                 if len(self.tiles)>CACHE_TILES:self.tiles.popitem(last=False)
-                changed.append((*key,json.dumps(safe,separators=(",",":")),now))
-            if not changed:return
-            self.revision+=1
-            try:
-                with sqlite3.connect(self.path,timeout=.2) as db:
-                    # Lift the old artificial file/page limit. Disk capacity remains the limit.
-                    db.execute("PRAGMA max_page_count=2147483646")
-                    added=db.executemany("INSERT OR IGNORE INTO tiles VALUES (?,?,?,?,?)",changed).rowcount
-                    db.executemany("UPDATE tiles SET data=?,seen=? WHERE x=? AND y=? AND z=?",
-                                   [(raw,seen,x,y,z) for x,y,z,raw,seen in changed])
-                self.total+=added;self.floors.update(row[2] for row in changed)
-            except (OSError,sqlite3.Error):self.error="Zapis atlasu wstrzymany; ostatni obraz pozostaje w pamięci."
+                self._pending[key]=self.tiles[key]
+                changed=True
+            if changed:self.revision+=1
+            if self._pending and time.monotonic() >= self._retry_at:
+                self._flush_pending()
+
+    def _flush_pending(self):
+        # Keep the newest observation for every tile until COMMIT succeeds.
+        batch = list(islice(self._pending, 1024)) if self._write_warning else list(self._pending)
+        rows = []
+        for key in batch:
+            cell = self._pending[key]
+            raw = json.dumps({k:v for k,v in cell.items() if k != "seen_at"}, separators=(",",":"))
+            rows.append((*key, raw, cell["seen_at"]))
+        try:
+            with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=.05)) as db, db:
+                db.execute("PRAGMA max_page_count=2147483646")
+                added = db.executemany("INSERT OR IGNORE INTO tiles VALUES (?,?,?,?,?)",rows).rowcount
+                db.executemany("UPDATE tiles SET data=?,seen=? WHERE x=? AND y=? AND z=?",
+                               [(raw,seen,x,y,z) for x,y,z,raw,seen in rows])
+        except (OSError, sqlite3.Error) as exc:
+            reason = getattr(exc, "sqlite_errorname", type(exc).__name__)
+            if (getattr(exc,"sqlite_errorcode",0) & 0xff) in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+                log.error("Atlas storage unavailable (%s): %s", reason, exc)
+                self.error = "Baza atlasu jest nieprawidłowa. Zapis został wstrzymany."
+                return
+            warning = f"Atlas ponowi zapis ({reason}). Nowe pola czekają w pamięci."
+            if warning != self._write_warning:
+                log.warning("Atlas write deferred (%s): %s", reason, exc)
+            self._write_warning = warning
+            self._retry_at = time.monotonic() + (1 if database_busy(exc) else 5)
+            return
+        for key in batch:
+            del self._pending[key]
+        self.total += added
+        self.floors.update(key[2] for key in batch)
+        if self._write_warning and not self._pending:
+            log.info("Atlas pending tiles committed")
+            self._write_warning = None
+        self._retry_at = 0.
+
+    def _paged_tiles(self):
+        with self.lock:
+            tiles = PagedTiles(self.path, self.tiles, self.web_definitions)
+            tiles.recent.update(self._pending)
+            return tiles
 
     def view(self,x,y,z,radius=20):
         if not position([x,y,z]) or type(radius)is not int or not 5<=radius<=32:raise ValueError("Nieprawidłowy obszar atlasu.")
         with self.lock:
+            warning = self.error or self._write_warning
             try:
                 if self.error:raise ValueError(self.error)
                 with closing(sqlite3.connect(self.path.as_uri()+"?mode=ro",uri=True,timeout=.5)) as db:
                     rows=db.execute("SELECT x,y,z,data,seen FROM tiles WHERE z=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?",
                                     (z,x-radius,x+radius,y-radius,y+radius)).fetchall()
-                cells=[decode_tile(row,self.web_definitions)[1] for row in rows]
+                cells=dict(decode_tile(row,self.web_definitions) for row in rows)
             except (sqlite3.Error,ValueError,TypeError,KeyError):
-                cells=[c for (xx,yy,zz),c in self.tiles.items() if zz==z and abs(xx-x)<=radius and abs(yy-y)<=radius]
-                self.error=self.error or "Nie udało się odczytać fragmentu atlasu; dane pozostają na dysku."
-            return {"scope":self.scope,"center":[x,y,z],"radius":radius,"cells":cells,"floors":sorted(self.floors),
-                    "total":self.total,"limit":None,"revision":self.revision,"error":self.error,"passive":True}
+                cells={k:c for k,c in self.tiles.items() if k[2]==z and abs(k[0]-x)<=radius and abs(k[1]-y)<=radius}
+                warning=self.error or "Nie udało się odczytać tego fragmentu atlasu. Pokazuję pola z pamięci."
+            cells.update((k,c) for k,c in self._pending.items() if k[2]==z and abs(k[0]-x)<=radius and abs(k[1]-y)<=radius)
+            return {"scope":self.scope,"center":[x,y,z],"radius":radius,"cells":list(cells.values()),"floors":sorted(self.floors),
+                    "total":self.total,"limit":None,"revision":self.revision,"error":warning,"passive":True}
 
     def drafts(self,deleted=False):
-        if self.error:raise ValueError(self.error)
-        with self.lock,sqlite3.connect(self.path,timeout=.2) as db:
+        with self.lock, closing(sqlite3.connect(self.path.as_uri()+"?mode=ro",uri=True,timeout=.2)) as db:
+            if self._retry_open:raise BlockingIOError(self.error)
+            if self.error:raise ValueError(self.error)
             rows=[{"id":i,"name":name,"points":json.loads(points),"tags":json.loads(tags),"labels":validate_labels(json.loads(labels) if labels else None,len(json.loads(points))),"updated":updated,"loop":bool(loop),"links":validate_links(json.loads(links),json.loads(points)),"combat":validate_combat(json.loads(combat))}
                     for i,name,points,updated,loop,combat,labels,links,tags in db.execute("SELECT id,name,points,updated,loop,combat,labels,links,tags FROM drafts WHERE deleted=? ORDER BY updated DESC LIMIT 100",(int(deleted),))]
             return [{**row,'navigation_revision':navigation_revision(row)} for row in rows]
@@ -414,6 +476,7 @@ class MapAtlas:
         return draft_id
 
     def set_tags(self, draft_id, tags, previous):
+        if self.error:raise ValueError(self.error)
         if not isinstance(draft_id, str) or not 1 <= len(draft_id) <= 64:
             raise ValueError("Wybierz zapisany szkic.")
         updated = json.dumps(validate_tags(tags))
@@ -425,6 +488,7 @@ class MapAtlas:
                 raise ValueError("Etykiety szkicu zmieniły się w innym oknie lub szkic został usunięty.")
 
     def change_draft(self,draft_id,operation,combat=None,loop=None):
+        if self.error:raise ValueError(self.error)
         if not isinstance(draft_id,str) or not draft_id or len(draft_id)>64:raise ValueError("Nieprawidłowy identyfikator szkicu.")
         if operation not in {'delete','restore','configure','set_loop'}:raise ValueError('Nieznana operacja szkicu.')
         with self.lock,sqlite3.connect(self.path,timeout=.2) as db:
@@ -446,7 +510,7 @@ class MapAtlas:
             return rows+[row for key,row in self.recorded_ropes.items() if key not in known]
 
     def infer_recorded_ropes(self,recording,observations):
-        with self.lock:tiles=PagedTiles(self.path,self.tiles,self.web_definitions)
+        tiles=self._paged_tiles()
         return recorded_rope_edges(recording,observations,self.scope,tiles)
 
     def remember_recorded_ropes(self,recording,observations):
@@ -463,7 +527,7 @@ class MapAtlas:
     def route_transitions(self,observations,cells):
         if self.error:return []
         visible={(c['x'],c['y'],c['z']) for c in cells}
-        with self.lock:tiles=PagedTiles(self.path,self.tiles,self.web_definitions)
+        tiles=self._paged_tiles()
         edges=navigation_edges(tiles,[r for r in self.with_recorded_ropes(observations) if tuple(r.get('entry') or ()) in visible])
         return [{k:r.get(k) for k in ('id','origin','entry','exit','action','item_id','tool_id','prepared_item_id','tool_ids','count')}
                 for values in edges.values() for dest,r in values
@@ -471,8 +535,7 @@ class MapAtlas:
 
     def recording_step_observations(self, observations):
         """Resolve a recorded floor step when the same entrance had several tile stacks."""
-        with self.lock:
-            tiles = PagedTiles(self.path,self.tiles,self.web_definitions)
+        tiles = self._paged_tiles()
         entries = {}
         for row in observations:
             if (row.get("evidence")=="observed" and row.get("entry") and row.get("exit")
@@ -494,16 +557,14 @@ class MapAtlas:
         return [r for r in observations if r.get("id") not in discard]
 
     def ordinary_recorded_tiles(self, recording, observations):
-        with self.lock:
-            tiles = PagedTiles(self.path,self.tiles,self.web_definitions)
+        tiles = self._paged_tiles()
         entries = {tuple(row["entry"]) for row in observations if row.get("entry")}
         points = {tuple(s["pos"]) for s in recording["observed_path"] if position(s.get("pos"))}
         return {p for p in points-entries if (cell := tiles.get(p,{})).get("kind") == "clear"
                 and not cell.get("navigation") and not cell.get("stairs")}
 
     def unavailable_recorded_crossings(self, recording, observations):
-        with self.lock:
-            tiles = PagedTiles(self.path,self.tiles,self.web_definitions)
+        tiles = self._paged_tiles()
         trace = recording["observed_path"]
         pairs = {(tuple(a["pos"]),tuple(b["pos"])) for a,b in zip(trace,trace[1:])
                  if a["pos"][2]!=b["pos"][2] and not b.get("break_before")}
@@ -537,7 +598,7 @@ class MapAtlas:
         # avoids. Prefer an adjacent tile actually visited on this run, only
         # if both adjoining legs can be planned entirely on clear terrain.
         adjusted=[]
-        with self.lock: tiles=PagedTiles(self.path,self.tiles,self.web_definitions)
+        tiles=self._paged_tiles()
         ends={i for link in links for i in (link['from_index'],link['from_index']+1)}
         trace=recording.get('observed_path') or []
         def ordinary_avoid(i):
@@ -589,7 +650,7 @@ class MapAtlas:
         # Keep drawn anchors intact. A nearby endpoint may close via verified
         # ordinary terrain; distant returns still require explicit waypoints.
         loop_closed=points[-1]==points[0]
-        with self.lock:tiles=PagedTiles(self.path,self.tiles,self.web_definitions)
+        tiles=self._paged_tiles()
         # IDs identify an entry/exit mechanism, not its most recently observed
         # approach. Preserve saved links after learning a different approach.
         bound=list(observations)

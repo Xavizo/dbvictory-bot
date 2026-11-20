@@ -1,5 +1,11 @@
 [
   {
+    "version": "v1.10.3",
+    "changes": [
+      {"title":"Szkice i mapa pozostają dostępne po chwilowej blokadzie zapisu","detail":"Atlas zachowuje nowe pola w pamięci i ponawia zapis. Możesz ponownie otworzyć zapisany szkic i przygotować jego trasę po zwolnieniu bazy."}
+    ]
+  },
+  {
     "version": "v1.10.2",
     "changes": [
       {"title":"Czytelniejszy zapis anulowanych kroków","detail":"Przy anulowaniu kroku log pokazuje ostatnie zaobserwowane polecenie ruchu klienta i jego wiek. Minutowe podsumowania podają, ile kopii ramek pominięto lub odczytano częściowo."}
