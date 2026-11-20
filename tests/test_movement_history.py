@@ -76,6 +76,7 @@ def test_web_report_compares_manual_ground_click_with_planned_web_and_observed_c
     use=build_use_item_ex_packet(65535,10,0,8900,0,*B,0,target_item_id=486)
     monitor.record_client_packet(ClientOpcode.USE_ITEM_EX,PacketReader(use[1:]))
     tile['items'][-1]['id']=189
+    before['captured_at'] = h.web_watch[2]  # Same clock tick cannot prove the order.
     h.frame(before)
     assert h.web_watch  # Snapshot captured before the tool selection.
     h.frame({**before,'captured_at':time.time()+.1})

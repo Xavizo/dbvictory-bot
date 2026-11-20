@@ -15,6 +15,18 @@ CURRENT_DAT = "cc6d91160218e7565ab1247d19ae483485dedaf6a18e24a05978ef31badb3669"
 ORIGIN, WEB, END = [10,10,7], [11,10,7], [12,10,7]
 
 
+def test_web_prefers_confirmed_aio_even_for_older_sketch():
+    from adaptive_cavebot import tool_location
+    from navigation_tools import transition_tools
+
+    edge = dict(web_edge(ORIGIN, WEB, 183), tool_id=8899, tool_ids=[8899, 8900])
+    inventory = {"sources": [{"container": 0, "index": 1, "item_id": 8899}], "slots": {10: 8900}}
+    candidates = transition_tools(edge)
+    assert tool_location(inventory, candidates)[1] == 8900
+    inventory["slots"].clear()
+    assert tool_location(inventory, candidates)[1] == 8899
+
+
 def web_tile(iid=183):
     tile = cell(*WEB, kind="blocked")
     tile["items"][0]["flags"] = ["ground"]

@@ -151,7 +151,7 @@ class MovementHistory:
                 target, started, wall_started = self.web_watch
                 if now-started > AFTER_SECONDS:
                     self.web_watch = None
-                elif sample.get('captured_at', 0) >= wall_started:
+                elif sample.get('captured_at', 0) > wall_started:
                     cell = next((c for c in sample.get('cells', ()) if (c['x'], c['y'], c['z']) == target), None)
                     if cell and cell.get('kind') not in ('unknown', None):
                         ids = [i['id'] for i in cell.get('items', ())]

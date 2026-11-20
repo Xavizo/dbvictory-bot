@@ -4,7 +4,8 @@ ROPE_TOOLS = frozenset({3003, 8899, 8900})
 
 
 WEB_ITEM_IDS = frozenset({182, 183})
-AIO_TOOLS = (8899, 8900)
+# A manual cut of web 183 was confirmed with 8900 after a failed use of 8899.
+AIO_TOOLS = (8900, 8899)
 
 
 def covering_body(tile):
