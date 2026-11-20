@@ -21,7 +21,7 @@ test('a discovered ground without a draft previews a loop and saves only on requ
     },
   };
   const area = {id:'manual:abc',name:'Brolly',visits:2,xp:900,cells:[[24,32,7]],drafts:[],
-    eligible:true,sightings:[],check:{total:1,covered:1,missing:[]}};
+    eligible:true,sightings:[],needs_recheck:true};
   const points = [[25,33,7],[26,33,7],[25,33,7]];
   const auth = {authenticatedFetch: async (url, init) => {
     const body = init.body ? JSON.parse(init.body) : undefined;
@@ -29,7 +29,7 @@ test('a discovered ground without a draft previews a loop and saves only on requ
     let result;
     if (url.includes('/discoveries?')) result = {scope:'test',discoveries:[area],revision:'abc'};
     else if (url.endsWith('/grounds')) result = {scope:'test',sector_size:8,areas:[],drafts:[]};
-    else if (url.endsWith('/route')) result = {points,path:points,links:[],entrance:points[0],total:1,covered:1,missing:[],transitions:0,sightings:0};
+    else if (url.endsWith('/route')) result = {points,path:points,links:[],entrance:points[0],total:2,covered:1,missing:[[24,32,6]],transitions:0,sightings:0};
     else if (url.endsWith('/drafts')) result = {saved_id:'new-id'};
     else throw Error(url);
     return {ok:true,json:async () => result};
@@ -58,12 +58,14 @@ test('a discovered ground without a draft previews a loop and saves only on requ
     return nodes(root);
   }
   let panel = await render();
-  assert.ok(panel.some(n => n.props.children === 'Propozycja pętli gotowa'));
+  assert.ok(panel.some(n => n.props.children === 'Możesz przeliczyć pętlę z zapisanej wizyty.'));
   assert.deepEqual(posts, []);
   const button = label => panel.find(n => n.type === 'button' && n.props.children === label);
-  await button('Pokaż pętlę').props.onClick();
+  await button('Przelicz pętlę').props.onClick();
   panel = await render();
   assert.deepEqual(posts, [{scope:'test',ground:area.id}]);
+  assert.ok(panel.some(n=>n.props.children==='Pętla gotowa na części expowiska · 1/2 sektorów'));
+  assert.deepEqual(panel.find(n=>n.props.ground)?.props.ground.focus,{floor:7,cells:[[24,32,7]]});
   await button('Zapisz jako nowy szkic').props.onClick();
   panel = await render();
   assert.deepEqual(posts[1].points, points);

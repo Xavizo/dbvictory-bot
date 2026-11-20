@@ -76,6 +76,28 @@ def test_travel_relogin_and_xp_baseline_do_not_create_fake_visits():
     assert not writes
 
 
+def test_previous_seed_only_result_can_be_recalculated_without_a_new_visit(tmp_path):
+    from contextlib import closing
+    import sqlite3
+    from manual_hunts import CHECK_VERSION, remember_check, storage
+    atlas=MapAtlas(tmp_path,'d'*64)
+    atlas.observe(sample([cell(x,32,7) for x in range(24,49)]+[cell(24,32,6),cell(25,32,6)]))
+    visit=dict(id='first',seed=(24,32,6),anchors=[[24,32,6]],returned=True,xp=500,gains=5,at=10,
+               cells=[[24,32,6]]+[[x,32,7] for x in range(24,49,8)],sightings=[])
+    group=store_visit(atlas,visit)
+    with closing(sqlite3.connect(storage(atlas))) as db,db:
+        db.execute("""UPDATE grounds SET data=json_set(data,'$.check',json('{"total":5,"covered":1}'))""")
+    area,=discoveries(atlas)
+    assert area['needs_recheck'] and 'check' not in area
+    proposal=propose(atlas,[],dict(scope=atlas.scope,ground=group['id']))
+    saved,=discoveries(atlas)
+    assert proposal['covered']==saved['check']['covered']==4
+    assert saved['check']['version']==CHECK_VERSION and saved['visits']==1 and 'needs_recheck' not in saved
+    store_visit(atlas,dict(visit,cells=[*visit['cells'],[24,32,5]]))
+    remember_check(atlas,area,proposal)
+    assert 'check' not in discoveries(atlas)[0]
+
+
 def test_single_kill_visits_and_simultaneous_evidence_can_retract_a_late_pet(tmp_path):
     atlas=MapAtlas(tmp_path,'a'*64)
     saved=[]

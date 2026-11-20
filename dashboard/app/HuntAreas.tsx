@@ -10,7 +10,7 @@ type Draft={id:string;name:string;archived:boolean;laps:number;duration_ms:numbe
   sightings?:Observation[];witnesses?:Witness[];sighting_laps?:number;latest:{id:string;cells:Position[];observations:Observation[]}|null};
 type Area={id:string|null;version?:number;name:string;cells:Position[];drafts:string[]};
 type Discovery=Area&{id:string;visits:number;xp:number;eligible:boolean;sightings:Observation[];witnesses?:Witness[];
-  check?:{covered?:number;total?:number;missing?:Position[];reason?:string}};
+  needs_recheck?:boolean;check?:{covered?:number;total?:number;missing?:Position[];reason?:string}};
 type Catalogue={scope:string;sector_size:number;areas:Area[];drafts:Draft[];discoveries?:Discovery[]};
 type Circuit={path:Position[];points:Position[];links:{from_index:number;id:string}[];entrance:Position;
   covered:number;total:number;missing:Position[];sightings:number;transitions:number};
@@ -85,7 +85,9 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   },[data]);
   const area=copy??choices.get(key);
   const discovery=data?.discoveries?.find(d=>d.id===key);
-  const ready=data?.discoveries?.find(d=>d.check?.total&&d.check.covered===d.check.total);
+  const ready=data?.discoveries?.find(d=>d.check?.total&&d.check.covered===d.check.total)
+    ??data?.discoveries?.find(d=>(d.check?.covered??0)>0);
+  const check=route??discovery?.check;
   useEffect(()=>{
     const first=data?.discoveries?.[0];
     if(first&&!choices.has(key)&&!copy&&!planning){
@@ -138,6 +140,18 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
         ...Array.from(v.lines,([name,count])=>name+" ×"+count)].join("\n")}))};
   },[cells,linked,species,kind,layer,discovery]);
   const floors=Array.from(new Set(area?.cells.map(p=>p[2]))).sort((a,b)=>a-b);
+  const floorCoverage=useMemo(()=>{
+    if(!discovery||!check?.missing?.length)return [];
+    const outside=new Set(check.missing.map(p=>p.join(",")));
+    const stats=new Map<number,{floor:number;covered:number;total:number}>();
+    for(const p of discovery.cells){
+      const row=stats.get(p[2])??{floor:p[2],covered:0,total:0};
+      row.total++;
+      if(!outside.has(p.join(",")))row.covered++;
+      stats.set(p[2],row);
+    }
+    return [...stats.values()].sort((a,b)=>a.floor-b.floor);
+  },[discovery,check]);
   function pick(k:string){
     const a=choices.get(k);if(!a)return;
     createKey.current="";
@@ -157,7 +171,14 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
         result=await post(endpoint+"/route",{scope:data.scope,ticket:result.ticket},ctl.signal);
       }
       if(from)setApproach(result.path);
-      else setRoute(result);
+      else {
+        setRoute(result);
+        if(discovery&&result.entrance){
+          const floor=result.entrance[2];
+          const outside=new Set(result.missing.map((p:Position)=>p.join(",")));
+          setFocus({floor,cells:discovery.cells.filter(p=>p[2]===floor&&!outside.has(p.join(",")))});
+        }
+      }
     }catch(e){if(!ctl.signal.aborted)setRouteError(e instanceof Error?e.message:"Nie udało się wyznaczyć trasy.");}
     finally{if(!ctl.signal.aborted)setPlanning(false);}
   }
@@ -214,10 +235,12 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
         {!!floors.length&&<div className="hunt-floors">Piętra {floors.map(z=><button key={z} onClick={()=>setFocus({floor:z,cells:area.cells})}>{z}</button>)}</div>}
         {discovery?<div><h3>Odkryte podczas ręcznej gry</h3>
           <p>Wizyty: {discovery.visits} · {label(discovery.xp)} XP · sektory: {discovery.cells.length}</p>
-          <strong role="status">{discovery.check?.total&&discovery.check.covered===discovery.check.total?"Propozycja pętli gotowa":
-            discovery.check?.reason??(discovery.check?.missing?.length?"Brak potwierdzonego dojścia i powrotu do części obszaru.":
-            discovery.eligible?"Trwa sprawdzanie połączeń na mapie.":"Wróć do odwiedzonych sal lub na kolejną wizytę.")}</strong>
-          {!!discovery.check?.missing?.length&&<small>Piętra do sprawdzenia: {Array.from(new Set(discovery.check.missing.map(p=>p[2]))).sort((a,b)=>a-b).join(", ")}</small>}
+          <strong role="status">{check?.covered&&check.total
+            ?(check.covered===check.total?"Propozycja pętli gotowa":`Pętla gotowa na części expowiska · ${check.covered}/${check.total} sektorów`)
+            :discovery.check?.reason??(discovery.needs_recheck?"Możesz przeliczyć pętlę z zapisanej wizyty.":
+              discovery.eligible?"Trwa sprawdzanie połączeń na mapie.":"Wróć do odwiedzonych sal lub na kolejną wizytę.")}</strong>
+          {!!floorCoverage.length&&<details><summary>Poza pętlą: {check?.missing?.length} sektorów</summary>
+            {floorCoverage.map(s=><small key={s.floor}>Piętro {s.floor} · w pętli {s.covered}/{s.total}</small>)}</details>}
         </div>:copy?<fieldset disabled={busy}>
           <label>Nazwa expowiska<input value={copy.name} maxLength={100} onChange={e=>setCopy({...copy,name:e.target.value})}/></label>
           <p>Kliknij sektor {side} × {side}, aby dodać go do obszaru lub usunąć. Przeciągnij mapę, aby ją przesunąć.</p>
@@ -225,7 +248,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
           <button onClick={save} disabled={!copy.name.trim()||!copy.cells.length||!copy.drafts.length}>Zapisz obszar</button> <button onClick={()=>{setCopy(null);setError("");}}>Anuluj</button>
         </fieldset>:<div><button disabled={busy||planning} onClick={()=>{resetRoute();setCopy({...area});}}>{area.id?"Edytuj obszar":"Dostosuj granice"}</button> {!area.id&&<button disabled={busy||planning||!area.cells.length} onClick={save}>Zapisz obszar</button>}</div>}
         {!copy&&<section aria-label="Pętla expienia"><h3>Pętla expienia</h3>
-          <button disabled={planning||busy||!area.cells.length} onClick={()=>preview()}>{route?"Przelicz pętlę":discovery?.check?.total?"Pokaż pętlę":"Zaproponuj pętlę"}</button>
+          <button disabled={planning||busy||!area.cells.length} onClick={()=>preview()}>{route||discovery?.needs_recheck?"Przelicz pętlę":discovery?.check?.total?"Pokaż pętlę":"Zaproponuj pętlę"}</button>
           {planning&&<small role="status">Przetwarzanie…</small>}
           {routeError&&<p role="alert">{routeError}</p>}
           {route&&<><p>Pokrycie {route.covered}/{route.total} sektorów · {route.path.length-1} kroków · przejścia: {route.transitions}</p>

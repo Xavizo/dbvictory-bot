@@ -1,5 +1,5 @@
 """Suggest and simulate a circuit on the saved hunting-ground map."""
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
 from functools import lru_cache
 import heapq
 
@@ -109,12 +109,14 @@ def propose(atlas, observations, body):
             raise ValueError('Do propozycji ze szkicu potrzebny jest pełny obieg.')
         area = dict(cells=source['latest']['cells'], drafts=[source['id']])
     elif key.startswith('manual:'):
-        from manual_hunts import discoveries
+        from manual_hunts import discoveries, remember_check
         area = next(iter(discoveries(atlas,key)),None)
         if not area:
             raise ValueError('Wykryte expowisko zmieniło się. Wczytaj obszary ponownie.')
         if 'approach' not in body:
-            return manual_circuit(atlas,observations,area)
+            result = manual_circuit(atlas,observations,area)
+            remember_check(atlas,area,result)
+            return result
     else:
         area = next((a for a in info['areas'] if a['id']==key), None)
         if not area:
@@ -154,10 +156,43 @@ def manual_circuit(atlas, observations, area):
             counts[tuple(mark['point'])]+=mark['count']
     rows=atlas.with_recorded_ropes(observations)
     return circuit(atlas,rows,GroundMap(atlas,rows),
-                   cells,counts,[tuple(area['seed'])])
+                   cells,counts,[tuple(area['seed'])],choose_region=True)
 
 
-def circuit(atlas, observations, ground, cells, first_seen, seeds):
+def round_trip_regions(graph, reverse):
+    """Strongly connected components of the directed, in-area navigation graph."""
+    finished, seen = [], set()
+    for root in graph:
+        if root in seen:
+            continue
+        seen.add(root)
+        stack = [(root, iter(graph[root]))]
+        while stack:
+            p, edges = stack[-1]
+            edge = next(edges, None)
+            if edge is None:
+                finished.append(p)
+                stack.pop()
+            elif edge[0] not in seen:
+                q = edge[0]
+                seen.add(q)
+                stack.append((q,iter(graph[q])))
+    seen.clear()
+    for root in reversed(finished):
+        if root in seen:
+            continue
+        region, pending = {root}, [root]
+        seen.add(root)
+        while pending:
+            for q in reverse.get(pending.pop(), ()):
+                if q not in seen:
+                    seen.add(q)
+                    region.add(q)
+                    pending.append(q)
+        yield region
+
+
+def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_region=False):
     # Keep the approach from town outside the circuit, even if it is shorter.
     ordinary = {(x,y,z) for sx,sy,z in sorted(cells) for x in range(sx,sx+SIDE)
                 for y in range(sy,sy+SIDE) if ground.clear((x,y,z))}
@@ -175,15 +210,23 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds):
         graph[p] = [(q,w,link) for q,w,link in ground.neighbors(p) if q in nodes]
         for q,_,_ in graph[p]:
             reverse[q].append(p)
-    def reachable(next_points):
-        visited, pending = {start}, deque([start])
-        while pending:
-            for q in next_points(pending.popleft()):
-                if q not in visited:
-                    visited.add(q)
-                    pending.append(q)
-        return visited
-    accessible = reachable(lambda p: (q for q,_,_ in graph[p])) & reachable(lambda p: reverse[p])
+    regions = round_trip_regions(graph, reverse)
+    if choose_region:
+        # An XP sample can fall on the approach or in an isolated room.
+        # Compare whole circuits once, without running a path search per seed.
+        def score(region):
+            fields = region & ordinary
+            return (len({sector(p) for p in fields}), sum(first_seen[p] for p in fields),
+                    start in fields, len(fields), min(fields))
+        candidates = (region for region in regions if len(region & ordinary)>=2)
+        accessible = max(candidates,key=score,default=None)
+        if accessible is None:
+            raise ValueError('Brak drugiego dostępnego pola z potwierdzonym powrotem.')
+        if start not in accessible:
+            start = min(ordinary & accessible,key=lambda p:(-first_seen[p],p))
+    else:
+        # Authored grounds keep their explicitly chosen entrance.
+        accessible = next(region for region in regions if start in region)
     by_sector = defaultdict(list)
     for p in sorted(ordinary & accessible):
         by_sector[sector(p)].append(p)

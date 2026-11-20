@@ -18,6 +18,7 @@ from transition_learning import position
 log = logging.getLogger(__name__)
 QUIET_SECONDS = 90
 CHECKPOINT_SECONDS = 20
+CHECK_VERSION = 2
 
 
 @dataclass(slots=True)
@@ -218,7 +219,35 @@ def discoveries(atlas, ident=None):
             return []
         rows = (db.execute('SELECT data FROM grounds WHERE id=?',(ident,)) if ident is not None
                 else db.execute('SELECT data FROM grounds ORDER BY updated DESC,id'))
-        return [json.loads(raw) for raw, in rows]
+        areas = []
+        for raw, in rows:
+            area = json.loads(raw)
+            if 'check' in area and area['check'].get('version') != CHECK_VERSION:
+                area.pop('check')
+                area['needs_recheck'] = True
+            areas.append(area)
+        return areas
+
+
+def remember_check(atlas, area, result):
+    """Cache the summary only if the visit still matches the simulated snapshot."""
+    check = {k:result[k] for k in ('covered','total','missing','entrance','reason') if k in result}
+    check['version'] = CHECK_VERSION
+    try:
+        with closing(sqlite3.connect(storage(atlas),timeout=.5)) as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT data FROM grounds WHERE id=?',(area['id'],)).fetchone()
+            if row:
+                current = json.loads(row[0])
+                # Worker snapshots contain tuples; archived snapshots use JSON arrays.
+                fields=('cells','sightings','seed')
+                if (current.get('check') != check and
+                        json.dumps([current[k] for k in fields])==json.dumps([area[k] for k in fields])):
+                    current['check'] = check
+                    db.execute('UPDATE grounds SET data=? WHERE id=?',(json.dumps(current),area['id']))
+    except (OSError,sqlite3.Error) as exc:
+        # The simulated route remains useful if the optional cache is busy.
+        log.warning('Nie zapisano wyniku symulacji expowiska: %s',exc)
 
 
 def store_visit(atlas, visit):
@@ -301,7 +330,7 @@ def store_visit(atlas, visit):
             data['witnesses']=merge_witnesses(group for raw, in rows for group in json.loads(raw))
         else:
             data['witnesses']=merge_witnesses([*groups,*(g for row in previous.values() for g in row.get('witnesses',()))])
-        if eligible and old.get('check') and old.get('cells')==[list(s) for s in data['cells']]:
+        if eligible and old.get('check',{}).get('version')==CHECK_VERSION and old.get('cells')==[list(s) for s in data['cells']]:
             data['check']=old['check']
         db.execute('INSERT OR REPLACE INTO grounds VALUES (?,?,?)',(ident,visit['at'],json.dumps(data)))
     return data
@@ -350,12 +379,9 @@ class DiscoveryWriter:
                     checked[area['id']]=time.monotonic()
                     try:
                         result=manual_circuit(atlas,records,area)
-                        check=dict(covered=result['covered'],total=result['total'],missing=result['missing'])
                     except ValueError as exc:
-                        check=dict(reason=str(exc))
-                    area['check']=check
-                    with closing(sqlite3.connect(storage(atlas),timeout=1)) as db, db:
-                        db.execute('UPDATE grounds SET data=? WHERE id=?',(json.dumps(area),area['id']))
+                        result=dict(reason=str(exc))
+                    remember_check(atlas,area,result)
             except (OSError,sqlite3.Error) as exc:
                 log.warning('Opóźniony zapis wykrytego expowiska: %s',exc)
                 with self.cv:

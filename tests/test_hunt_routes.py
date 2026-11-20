@@ -67,3 +67,19 @@ def test_sightings_guide_visits_without_following_a_lured_monster_or_crossing_a_
     assert [39,39,7] not in route['path']
     assert any(x>=38 and y>=38 for x,y,z in route['path'])
     assert all(sector(p) in {(24,32,7),(32,32,7)} for p in route['path'])
+
+
+def test_manual_loop_uses_largest_round_trip_despite_seed_and_one_way_exit(tmp_path):
+    from hunt_routes import manual_circuit
+    atlas=MapAtlas(tmp_path,'a'*64)
+    # First XP is on 6. From there a one-way drop reaches the main floor.
+    atlas.observe(sample([cell(x,32,6) for x in range(24,31)] +
+                         [cell(x,32,7) for x in range(24,60)] + [cell(26,31,6,item=1956)]))
+    area=dict(seed=[25,32,6],cells=[[24,32,6]]+[[x,32,7] for x in range(24,60,8)],
+              sightings=[dict(point=[40,32,7],observer_cell=[40,32,7],count=3)])
+    edge=dict(id='drop',origin=[26,32,6],entry=[26,31,6],exit=[26,32,7],
+              action='use',evidence='observed',item_id=1956,entry_items=[1956])
+    route=manual_circuit(atlas,[edge],area)
+    assert route['covered']==5 and route['total']==6 and route['missing']==[(24,32,6)]
+    assert route['path'][0]==route['path'][-1]==[40,32,7]
+    assert route['transitions']==0

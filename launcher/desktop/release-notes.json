@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.13.1",
+    "changes":[
+      {"title":"Pętla expowiska startuje w największej połączonej części","detail":"Atlas sprawdza, skąd da się przejść najwięcej sektorów i wrócić. Dotychczasowe wizyty można przeliczyć od razu."},
+      {"title":"Podgląd pokazuje gotową część trasy","detail":"Po przeliczeniu mapa otwiera piętro początku pętli. Panel podaje jej pokrycie oraz liczbę sektorów poza trasą."}
+    ]
+  },
+  {
     "version": "v1.13.0",
     "changes": [
       {"title":"Atlas rozpoznaje expowiska podczas ręcznej gry","detail":"Bez włączania nagrywania atlas łączy wizyty w tych samych sektorach z XP i zapamiętuje pierwsze miejsca spotkania potworów."},

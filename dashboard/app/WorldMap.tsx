@@ -123,7 +123,7 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar}:{init
           {m.minimum&&<text x=".95" y="-.5" fontSize="1.7" fill="white" stroke="#30203c" strokeWidth=".32" paintOrder="stroke">{m.minimum}+</text>}
         </g>)}</g>}
       {ground?.missing?.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}
-        fill="#cf5050" fillOpacity=".35" stroke="#f48b8b" strokeWidth=".4"><title>Brak potwierdzonej pętli przez ten sektor</title></rect>)}
+        fill="#242734" fillOpacity=".28" stroke="#c0b7c6" strokeOpacity=".7" strokeDasharray="1 1" strokeWidth=".3" pointerEvents="none"><title>Sektor poza wyznaczoną pętlą</title></rect>)}
       <RouteLine path={ground?.route} floor={floor} color="#59f1bc"/>
       <RouteLine path={ground?.approach} floor={floor} color="#73bfff" dashed/>
       {ground?.route?.[0]?.[2]===floor&&<circle cx={ground.route[0][0]+.5} cy={ground.route[0][1]+.5} r="1.2"
