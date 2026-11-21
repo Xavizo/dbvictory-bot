@@ -953,7 +953,7 @@ class AdaptiveCavebot:
             if motion!=self.motion_generation or time.monotonic()<self.manual_until:
                 if recover:return False
                 raise MovementDeferred('Ręczny ruch — ponownie sprawdzam pozycję.')
-            if recover and attempt and pos == origin and attempt.get('motion') == self.motion_generation:
+            if attempt and (recover or attempt.get('stair_step')) and pos == origin and attempt.get('motion') == self.motion_generation:
                 cancel = self.state.game_state.last_walk_cancel
                 checked_at = attempt.get('walk_checked_at')
                 # A cancel reports the resulting position, with no command ID.
@@ -1012,7 +1012,7 @@ class AdaptiveCavebot:
             raise
         finally:
             self._observe_report('interrupted', target, outcome, interruption)
-            if recover:
+            if recover or (self._route_command and self._route_attempt and self._route_attempt.get('stair_step')):
                 self._uncertain_walk_origin = tuple(origin) if outcome in {"position_unconfirmed", "position_interrupted"} else None
             timing.position_ms = (perf_counter() - started) * 1000
             if history:
@@ -1191,7 +1191,10 @@ class AdaptiveCavebot:
         ids={i['id'] for i in tile['items']};item=edge.get('item_id')
         matches=item in ids if item is not None else bool(edge.get('entry_items')) and set(edge['entry_items'])<=ids
         if not matches and not (opened and edge['action'] in {'use','use_then_step'} and edge.get('open_item_id') in ids):raise ValueError("Obiekt przejścia zmienił się; potrzebny nowy odczyt i plan.")
-        if tile.get('occupants',0)>tile.get('occupant_types',{}).get('self',0):raise ValueError("Wejście przejścia jest zajęte.")
+        stair_step = edge['action']=='step' and origin[2]!=dest[2] and any(f['kind']=='stairs' for f in features)
+        if tile.get('occupants',0)>tile.get('occupant_types',{}).get('self',0):
+            if stair_step:raise MovementDeferred("Schody są zajęte. Czekam na zwolnienie wejścia.")
+            raise ValueError("Wejście przejścia jest zajęte.")
         def same_entry():
             fresh=next((c for c in self.map_now()['cells'] if [c['x'],c['y'],c['z']]==entry),None)
             return bool(fresh and fresh['items']==tile['items'] and fresh.get('occupants',0)<=fresh.get('occupant_types',{}).get('self',0))
@@ -1204,8 +1207,18 @@ class AdaptiveCavebot:
                     await self.fresh_map()
                     if not await self.step(target,door=target==entry):raise ValueError('Brak potwierdzenia kroku przez drzwi.')
                 return
+            if stair_step and self.blocked.get(tuple(entry),0)>time.monotonic():
+                raise MovementDeferred("Krok na schody został anulowany. Czekam przed kolejną próbą.")
             await self.send(build_walk_packet(OFFSETS[entry[0]-origin[0],entry[1]-origin[1]]),same_entry)
-            if not await self._confirm_walk(dest,origin,4,entry):raise ValueError("Przejście nie potwierdziło wyjścia; nie ponawiam użycia.")
+            attempt=self._route_attempt if self._route_command else None
+            if stair_step and attempt is not None:
+                attempt['stair_step']=True
+            if not await self._confirm_walk(dest,origin,4,entry):
+                if stair_step and attempt and attempt.get('cancelled'):
+                    self.failures+=1
+                    self.blocked[tuple(entry)]=time.monotonic()+min(self.failures,5)
+                    raise MovementDeferred("Serwer anulował krok na schody. Ponownie sprawdzam wejście.")
+                raise ValueError("Przejście nie potwierdziło wyjścia; nie ponawiam użycia.")
             return
         if not opened:
             obj=next((i for i in tile['items'] if i['id']==item),None)

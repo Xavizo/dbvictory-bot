@@ -91,6 +91,29 @@ def test_recorded_hole_from_another_side_and_saved_links_survive_new_approach(tm
     assert not atlas.plan(points,[row,conflict],links=links)['complete']
 
 
+@pytest.mark.parametrize('reachable',[True,False])
+def test_stairs_use_the_observed_side_within_the_original_leg(tmp_path,reachable):
+    anchor,entry,approach,landing=[1039,1300,4],[1038,1300,4],[1038,1299,4],[1037,1300,3]
+    onward=[1036,1300,3]
+    cells=[cell(*p) for p in (anchor,landing,onward)]
+    cells.extend([cell(*entry,kind='blocked',item=5259,navigation=[{'kind':'stairs'}]),
+                  cell(*approach,kind='clear' if reachable else 'blocked')])
+    atlas=MapAtlas(tmp_path,'f'*64)
+    atlas.observe(dict(status='ready',cells=cells))
+    row=dict(id='up',origin=approach,entry=entry,exit=landing,action='step',entry_items=[5259],evidence='observed')
+    points=[anchor,landing,onward]
+    plan=atlas.plan(points,[row],links=[dict(from_index=0,id='up')])
+    if reachable:
+        assert plan['complete'] and plan['points']==points
+        assert plan['path']==[anchor,approach,landing,onward]
+        assert [(leg['start'],leg['end']) for leg in plan['legs']]==[(0,2),(2,3)]
+        action,=plan['transitions']
+        assert (action['origin'],action['entry'],action['exit'])==(approach,entry,landing)
+    else:
+        assert not plan['complete'] and not plan['transitions']
+        assert plan['gaps'][0]['to']==landing and '(1038, 1299, 4)' in plan['gaps'][0]['reason']
+
+
 def test_specific_use_from_recorded_approach_is_not_lost_when_latest_origin_changes(tmp_path):
     from map_atlas import recording_points
     a,b=[10,10,7],[10,11,6]

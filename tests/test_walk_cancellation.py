@@ -80,6 +80,36 @@ def test_cancelled_route_step_replans_and_finishes_without_manual_resume(state, 
     assert any("serwer anulował krok" in msg for msg in ctrl.logs)
 
 
+def test_stair_cancel_retries_from_observed_side_after_entrance_clears(state,tmp_path):
+    anchor,approach,entry,landing=[1039,1300,4],[1038,1299,4],[1038,1300,4],[1037,1300,3]
+    stairs=cell(*entry,kind='blocked',item=5259,navigation=[{'kind':'stairs'}])
+    cells=[cell(*p) for p in (anchor,approach,landing)]+[stairs]
+    edge=dict(id='stairs',origin=approach,entry=entry,exit=landing,action='step',entry_items=[5259],evidence='observed')
+    ctrl,_,_=setup(state,tmp_path,cells,[approach,landing],[edge])
+    atlas=state.passive_map_monitor.atlas
+    draft=atlas.save_draft('side approach',[anchor,landing],links=[dict(from_index=0,id='stairs')])
+    gs=state.game_state
+    gs.position=tuple(anchor)
+    ctrl.prepare(atlas.scope,draft,False)
+    walked=[]
+    async def simulate_step(payload,guard):
+        assert guard()
+        walked.append(gs.position)
+        if gs.position==tuple(anchor):
+            gs.position=tuple(approach)
+        elif len(walked)==2:
+            cancel_walk(gs,2,time.perf_counter())
+            stairs.update(occupants=1,occupant_types={'monster':1})
+            asyncio.get_running_loop().call_later(.15,stairs.update,dict(occupants=0,occupant_types={}))
+        else:
+            assert not stairs['occupants'] and gs.position==tuple(approach)
+            gs.position=tuple(landing)
+    state.game_proxy.inject_to_server=simulate_step
+    asyncio.run(asyncio.wait_for(ctrl.run(),2))
+    assert walked==[tuple(anchor),tuple(approach),tuple(approach)]
+    assert ctrl.status=='complete' and ctrl.laps==1
+
+
 @pytest.mark.parametrize("case", ["queued_before_write", "old_origin", "ambiguous_retry",
                                   "manual_during_send", "transition", "already_arrived"])
 def test_uncorrelated_cancel_does_not_abort_next_position_confirmation(state, tmp_path, case):

@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.16.3",
+    "changes":[
+      {"title":"Wejście na schody od sprawdzonej strony","detail":"Gdy waypoint leży z boku schodów, Cavebot najpierw dochodzi na pole, z którego zaobserwowano udaną zmianę piętra. Działa również w zapisanych szkicach."},
+      {"title":"Ponowienie anulowanego kroku na schody","detail":"Po anulowaniu kroku przez serwer Cavebot ponownie sprawdza wejście. Gdy schody są zajęte, czeka na zwolnienie pola."}
+    ]
+  },
+  {
     "version":"v1.16.2",
     "changes":[
       {"title":"Zamykanie chmurki alertu","detail":"Chmurka czeka na kliknięcie ×. Zamknięty podgląd nie wraca przy kolejnym sygnale tego samego alertu. Wpis pozostaje w historii."}
