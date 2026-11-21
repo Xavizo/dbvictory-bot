@@ -1,4 +1,5 @@
 """V2 combat policy. Only fresh, uniquely identified visible monsters qualify."""
+from collections import Counter
 import math
 import re
 import time
@@ -71,6 +72,9 @@ def eligible_monsters(gs,sample,config,now=None):
     cells={(c['x'],c['y'],c['z']):c for c in sample.get('cells',[])}
     accessible=reachable_tiles(sample['cells'],gs.position)
     creatures=list(gs.creatures.items());result=[]
+    # A dead or expired row can share the square of a newly arrived live monster.
+    occupants=Counter((c.get('x'),c.get('y'),c.get('z')) for _,c in creatures
+                      if 0<=now-c.get('t',0)<=.6 and c.get('health')!=0)
     pets=getattr(gs,'pets',None)
     for cid,c in creatures:
         if pets and pets.is_pet(cid):continue
@@ -79,7 +83,7 @@ def eligible_monsters(gs,sample,config,now=None):
         if pos not in accessible:continue
         if pos[2]!=gs.position[2] or tile.get('occupants')!=1 or tile.get('occupant_types',{}).get('monster')!=1:continue
         if pets and pets.confirmed_after_map(pos,sample.get('pet_map_generation')):continue
-        if sum((v.get('x'),v.get('y'),v.get('z'))==pos for _,v in creatures)!=1:continue
+        if occupants[pos]!=1:continue
         distance=max(abs(pos[0]-gs.position[0]),abs(pos[1]-gs.position[1]))
         if config.get('engage','near')!='visible' and distance>config['radius']:continue
         for rank,rule in enumerate(config['rules']):

@@ -173,6 +173,16 @@ def test_monster_filter_rejects_players_npcs_stale_and_ambiguous_identity(state,
     assert not eligible_monsters(state.game_state,{**sample,'stale':True},cfg)
 
 
+@pytest.mark.parametrize('old_hp,age', [(0,0), (85,2)])
+def test_dead_or_expired_creature_on_same_tile_does_not_hide_live_target(state,tmp_path,old_hp,age):
+    c,cells=armed(state,tmp_path)
+    cid,row,_=monster(state,cells)
+    now=time.time()
+    state.game_state.creatures[cid+1]={**row,'health':old_hp,'t':now-age}
+    targets=eligible_monsters(state.game_state,state.passive_map_monitor.snapshot(),c.combat.config,now)
+    assert [t['id'] for t in targets]==[cid]
+
+
 def test_ordered_exclusions_priority_and_strategy(state,tmp_path):
     c,cells=armed(state,tmp_path);a,_,_=monster(state,cells,name='Wolf Alpha',x=12);b,_,_=monster(state,cells,name='Wolf',x=11,cid=0x40000002)
     cfg=validate_combat(dict(rules=[dict(pattern='Wolf Alpha',action='ignore'),dict(pattern='*',action='attack')]))

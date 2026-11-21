@@ -110,6 +110,60 @@ def test_stair_cancel_retries_from_observed_side_after_entrance_clears(state,tmp
     assert ctrl.status=='complete' and ctrl.laps==1
 
 
+@pytest.mark.parametrize('restore_preferred', [False, True])
+def test_gotrunks_unknown_approach_takes_linked_stairs_and_preserves_progress(state,tmp_path,restore_preferred):
+    anchor,approach,entry,landing=[1039,1300,2],[1038,1299,2],[1038,1300,2],[1037,1300,1]
+    onward=[1037,1299,1]
+    stairs=cell(*entry,kind='blocked',item=5259,navigation=[{'kind':'stairs'}])
+    stairs['transitions']=[dict(id='up',exit=landing,action='step')]
+    cells=[cell(*p) for p in (anchor,approach,landing,onward)]+[stairs]
+    edge=dict(id='up',origin=approach,entry=entry,exit=landing,action='step',entry_items=[5259],evidence='observed')
+    ctrl,_,_=setup(state,tmp_path,cells,[approach,landing,onward],[edge])
+    atlas=state.passive_map_monitor.atlas
+    draft=atlas.save_draft('WP66-67',[anchor,landing,onward],links=[dict(from_index=0,id='up')])
+    state.game_state.position=tuple(anchor)
+    ctrl.prepare(atlas.scope,draft,False)
+    assert ctrl.path==[anchor,approach,landing,onward]
+    cells[1]['kind']='unknown'
+    sample=state.passive_map_monitor.snapshot()
+    stairs['transitions'].append(dict(id='other',exit=[1039,1300,1],action='step'))
+    assert not ctrl.use_stairs_from_saved_waypoint(sample)
+    stairs['transitions'].pop()
+    stairs['occupants']=1
+    assert not ctrl.use_stairs_from_saved_waypoint(sample)
+    stairs['occupants']=0
+    # If the player takes this exact staircase manually, recovery credits the
+    # landing, even while the cursor is still before the unreadable approach.
+    ctrl.status='running'
+    state.game_state.position=tuple(onward)
+    with pytest.raises(ValueError,match='Recovery'):
+        asyncio.run(ctrl.recover_position(state.passive_map_monitor.snapshot()))
+    state.game_state.position=tuple(landing)
+    with pytest.raises(ValueError,match='Recovery'):
+        asyncio.run(ctrl.recover_position({**state.passive_map_monitor.snapshot(),'stale':True}))
+    assert ctrl.index==0
+    assert asyncio.run(ctrl.recover_position(state.passive_map_monitor.snapshot()))
+    assert ctrl.index==2 and ctrl.last_waypoint==1 and state.game_proxy._inject_queue.empty()
+    state.game_state.position=tuple(anchor)
+    ctrl.prepare(atlas.scope,draft,False)
+    visited=[]
+    async def step(payload,guard):
+        assert guard()
+        current=list(state.game_state.position)
+        visited.append(current)
+        if restore_preferred and len(visited)==1:
+            cancel_walk(state.game_state,3,time.perf_counter())
+            cells[1]['kind']='clear'
+            return
+        dest=onward if current==landing else approach if current==anchor and restore_preferred else landing
+        state.game_state.position=tuple(dest)
+    state.game_proxy.inject_to_server=step
+    asyncio.run(asyncio.wait_for(ctrl.run(),2.5))
+    assert ctrl.status=='complete' and ctrl.last_waypoint==2
+    assert visited==([anchor,anchor,approach,landing] if restore_preferred else [anchor,landing])
+    assert ctrl.path[-1]==onward and (approach in ctrl.path)==restore_preferred
+
+
 @pytest.mark.parametrize("case", ["queued_before_write", "old_origin", "ambiguous_retry",
                                   "manual_during_send", "transition", "already_arrived"])
 def test_uncorrelated_cancel_does_not_abort_next_position_confirmation(state, tmp_path, case):

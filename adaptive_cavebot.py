@@ -527,6 +527,45 @@ class AdaptiveCavebot:
         elif start<=self.variation_until<=end:self.variation_until=start
         self.path[start:end+1]=local;self.checkpoints=sorted(rows,key=lambda r:(r['index'],r['waypoint']))
 
+    def linked_step_after_approach(self):
+        i=self.index
+        if i+2>=len(self.path) or i<self.loop_start:return None
+        origin,approach,landing=self.path[i:i+3]
+        if origin[2]==landing[2] or distance(origin,approach)!=1:return None
+        if any(cp['index']==i+1 for cp in self.checkpoints):return None
+        if any(e['origin']==origin and e['exit']==approach for e in self.edges):return None
+        draft=self.route_draft or {}
+        points=draft.get('points',[])
+        starts={cp['waypoint'] for cp in self.checkpoints if cp['index']==i}
+        ends={cp['waypoint'] for cp in self.checkpoints if cp['index']==i+2}
+        ids={link['id'] for link in draft.get('links',[]) if link['from_index'] in starts
+             and link['from_index']+1 in ends and points[link['from_index']:link['from_index']+2]==[origin,landing]}
+        options=[e for e in self.edges if e['origin']==approach and e['exit']==landing and e['id'] in ids and e['action']=='step']
+        return options[0] if len(options)==1 and distance(origin,options[0]['entry'])==1 else None
+
+    def use_stairs_from_saved_waypoint(self, sample):
+        """Bypass only an unreadable approach between a linked waypoint and its landing."""
+        edge=self.linked_step_after_approach()
+        if not edge:return False
+        i=self.index
+        origin,approach,landing=self.path[i:i+3]
+        if sample.get('center')!=origin:return False
+        cells={(c['x'],c['y'],c['z']):c for c in sample['cells']}
+        if cells.get(tuple(approach),{}).get('kind')!='unknown':return False
+        tile=cells.get(tuple(edge['entry']),{})
+        if (tile.get('kind') not in {'clear','blocked'} or tile.get('occupants')!=0
+                or not any(f['kind']=='stairs' for f in tile.get('navigation',[]))):return False
+        observed=tile.get('transitions',[])
+        if (not any(t['id']==edge['id'] and t['action']=='step' for t in observed)
+                or any(t['exit']!=landing for t in observed)):return False
+        existing=[e for e in self.edges if e['origin']==origin and e['exit']==landing]
+        if any(e['entry']!=edge['entry'] or e['id']!=edge['id'] for e in existing):return False
+        if not existing:
+            self.edges.append({**edge,'origin':origin,'preferred_origin':approach})
+        self.replace_path(i+1,i+2,[landing])
+        self.logs.append(f'Niepełny odczyt podejścia {tuple(approach)}. Sprawdzam schody z waypointu {tuple(origin)}.')
+        return True
+
     def checkpoint_limit(self,default):
         return min(default,next((r['index']+1 for r in self.checkpoints if r['index']>self.index),default))
 
@@ -747,6 +786,26 @@ class AdaptiveCavebot:
         return target
 
     async def recover_position(self, sample):
+        pos=list(self.state.game_state.position)
+        origin=self.path[self.index]
+        if (self.status=='running' and origin[2]!=pos[2] and sample.get('center')==pos and sample.get('status')=='ready'
+                and not sample.get('stale') and sample.get('age_seconds',99)<=.6):
+            # Manual crossing or late arrival. Only credit the exact planned exit.
+            if self.path[self.index+1:self.index+2]==[pos] and any(
+                    e.get('action')=='step' and e['origin']==origin and e['exit']==pos for e in self.edges):
+                landing_index=self.index+1
+            else:
+                edge=self.linked_step_after_approach()
+                landing_index=self.index+2 if edge and edge['exit']==pos else None
+            if landing_index is not None:
+                self.guard()
+                self.index=landing_index
+                self.mark_waypoint()
+                self.blockage=None;self.failures=0
+                if self.combat.anchor and self.combat.anchor[2]!=pos[2]:self.combat.anchor=None
+                self.save_session_cursor()
+                self.logs.append(f'Potwierdzono wyjście na trasie: {tuple(pos)}.')
+                return True
         previous = self.index - 1
         if self.loop and self.index == self.loop_start and len(self.path) > 1 and self.path[-1] == self.path[self.index]:
             previous = len(self.path) - 2
@@ -1345,7 +1404,7 @@ class AdaptiveCavebot:
                 self.domains.movement_state="waiting"
                 await asyncio.sleep(.05);continue
             if not self.combat_only and pos!=self.path[self.index]:
-                if self.combat.config['enabled'] and self.combat.anchor is not None:
+                if self.combat.config['enabled'] and self.combat.anchor is not None and pos[2]==self.path[self.index][2]:
                     # Chase/retreat owns this temporary excursion; its return
                     # intent uses this same executor, never a competing walker.
                     await self.domains.consume_movement(sample,False)
@@ -1402,6 +1461,10 @@ class AdaptiveCavebot:
                 if web:
                     edge=web_edge(pos,target,web['id'])
             if edge:
+                preferred=edge.get('preferred_origin')
+                if preferred and step_clear(sample['cells'],pos,preferred,self.blocked):
+                    self.replace_path(self.index+1,self.index+1,[preferred,target])
+                    continue
                 self._route_command=True;self._route_boundary=True
                 self.save_session_cursor(pending=target)
                 try:await self.transition(edge,sample)
@@ -1447,6 +1510,7 @@ class AdaptiveCavebot:
                         if local:
                             self.replace_path(self.index+1,j,local[1:]);target=self.path[self.index+1];found=True;break
                     if not found:
+                        if self.use_stairs_from_saved_waypoint(sample):continue
                         self.describe_blockage(sample,target)
                         if (tuple(target) not in self.blocked and not self.combat.config['enabled']
                                 and not any(t.get('occupants',0) for t in sample['cells'])):

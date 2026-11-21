@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.16.4",
+    "changes":[
+      {"title":"Alternatywne wejście na schody","detail":"Gdy odczyt pola podejścia jest niepełny, Cavebot może skorzystać z tych samych schodów z sąsiedniego waypointu zapisanego w szkicu. Po ręcznym przejściu rozpoznaje zapisane wyjście i kontynuuje trasę."},
+      {"title":"Wybór potwora na polu po innym celu","detail":"Stary odczyt lub pokonany potwór na tej samej kratce przestaje zasłaniać aktualny cel."}
+    ]
+  },
+  {
     "version":"v1.16.3",
     "changes":[
       {"title":"Wejście na schody od sprawdzonej strony","detail":"Gdy waypoint leży z boku schodów, Cavebot najpierw dochodzi na pole, z którego zaobserwowano udaną zmianę piętra. Działa również w zapisanych szkicach."},
