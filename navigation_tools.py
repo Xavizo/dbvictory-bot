@@ -8,11 +8,19 @@ WEB_ITEM_IDS = frozenset({182, 183})
 AIO_TOOLS = (8900, 8899)
 
 
+def is_covering_body(item):
+    # Ordinary containers share the flags of this confirmed movable corpse.
+    flags = item.get('flags', ())
+    return (item['id'] == 8506 and 'container' in flags
+            and 'not_moveable' not in flags and 0 <= item.get('stack', -1) < 255)
+
+
+def covering_bodies(tile):
+    return [item for item in (tile or {}).get('items', ()) if is_covering_body(item)]
+
+
 def covering_body(tile):
-    # Observed on DBVictory. Ordinary containers share these flags.
-    return next((item for item in (tile or {}).get('items', ())
-                 if item['id'] == 8506 and 'container' in item['flags']
-                 and 'not_moveable' not in item['flags'] and 0 <= item['stack'] < 255), None)
+    return next((item for item in (tile or {}).get('items', ()) if is_covering_body(item)), None)
 
 
 def has_cut_web(items, definitions):
@@ -34,7 +42,8 @@ def cuttable_web(tile):
     if (len(webs) != 1 or webs[0]['id'] != features[0].get('item_id')
             or webs[0].get('stack') != features[0].get('stack')):
         return None
-    other_flags = {f for i in items if i['id'] not in WEB_ITEM_IDS for f in i.get('flags', ())}
+    other_flags = {f for i in items if i['id'] not in WEB_ITEM_IDS and not is_covering_body(i)
+                   for f in i.get('flags', ())}
     if 'ground' not in other_flags or other_flags & {'not_walkable', 'not_pathable', 'floor_change'}:
         return None
     return webs[0]

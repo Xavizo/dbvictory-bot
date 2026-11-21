@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.16.5",
+    "changes":[
+      {"title":"Odsuwanie kilku ciał z pajęczyny","detail":"Cavebot sprawdza liczbę ciał po każdym przesunięciu. Gdy ciało pozostaje na przeszkodzie, próbuje innego pola. Raport ruchu pokazuje liczbę ciał przed i po próbie."},
+      {"title":"Obejście przed schodami","detail":"Gdy brakuje odczytu waypointu tuż przed schodami, Cavebot szuka krótkiego dojścia do zapisanego wejścia. Rozpoznaje też ręczne przejście na jego dokładne wyjście."}
+    ]
+  },
+  {
     "version":"v1.16.4",
     "changes":[
       {"title":"Alternatywne wejście na schody","detail":"Gdy odczyt pola podejścia jest niepełny, Cavebot może skorzystać z tych samych schodów z sąsiedniego waypointu zapisanego w szkicu. Po ręcznym przejściu rozpoznaje zapisane wyjście i kontynuuje trasę."},

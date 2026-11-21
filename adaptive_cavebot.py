@@ -5,14 +5,14 @@ from time import perf_counter
 import logging
 import random
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from copy import copy,deepcopy
 from route_identity import navigation_revision,same_route
 from collections import deque
 from cavebot_combat import CombatRuntime,validate_combat
 from protocol import Direction,ClientOpcode,build_walk_packet,build_use_item_packet,build_use_item_ex_packet,build_move_item_packet
 from combat_wave import TURN_OPCODES
-from navigation_tools import WEB_ITEM_IDS, covering_body, cuttable_web, supported_transition, transition_tools, web_edge
+from navigation_tools import WEB_ITEM_IDS, covering_bodies, covering_body, cuttable_web, supported_transition, transition_tools, web_edge
 
 class MovementDeferred(ValueError):
     """No ordinary step sent: retry from a fresh map while combat stays alive."""
@@ -46,6 +46,19 @@ OFFSETS={(0,-1):Direction.NORTH,(1,0):Direction.EAST,(0,1):Direction.SOUTH,(-1,0
 MANUAL_MOVES={ClientOpcode.NEW_WALK,ClientOpcode.AUTO_WALK,ClientOpcode.STOP_WALK,ClientOpcode.FOLLOW,*[ClientOpcode(n) for n in (0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d)]}
 WALK_OPCODES={0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d}
 
+BODY_ACK_SECONDS = 1.5
+BODY_DROP_RETRY_SECONDS = 10.
+
+
+@dataclass
+class BodyMove:
+    entry: tuple
+    before: int = 0
+    drop: tuple | None = None
+    sent_at: float = 0.
+    retry_after: dict = field(default_factory=dict)
+
+
 @dataclass
 class WalkTiming:
     number: int
@@ -66,6 +79,15 @@ def walkable(cell):
     return bool(cell and cell.get("kind")=="clear" and
                 cell.get("occupants",0)<=cell.get("occupant_types",{}).get("self",0) and
                 all(f["kind"] in {"rope_spot","ladder"} for f in cell.get("navigation",[])))
+
+def visible_linked_stairs(tile, edge):
+    if not tile or tile.get('kind') not in {'clear', 'blocked'}:
+        return False
+    observed = tile.get('transitions', ())
+    return (any(f['kind'] == 'stairs' for f in tile.get('navigation', ()))
+            and any(t['id'] == edge['id'] and t['action'] == 'step' for t in observed)
+            and all(t['exit'] == edge['exit'] for t in observed))
+
 
 def web_passable(tile):
     return (walkable(tile) and not tile.get('navigation') and not tile.get('transitions')
@@ -527,8 +549,8 @@ class AdaptiveCavebot:
         elif start<=self.variation_until<=end:self.variation_until=start
         self.path[start:end+1]=local;self.checkpoints=sorted(rows,key=lambda r:(r['index'],r['waypoint']))
 
-    def linked_step_after_approach(self):
-        i=self.index
+    def linked_step_after_approach(self, index=None):
+        i = self.index if index is None else index
         if i+2>=len(self.path) or i<self.loop_start:return None
         origin,approach,landing=self.path[i:i+3]
         if origin[2]==landing[2] or distance(origin,approach)!=1:return None
@@ -543,6 +565,42 @@ class AdaptiveCavebot:
         options=[e for e in self.edges if e['origin']==approach and e['exit']==landing and e['id'] in ids and e['action']=='step']
         return options[0] if len(options)==1 and distance(origin,options[0]['entry'])==1 else None
 
+    def stairs_after_next_waypoint(self):
+        i = self.index
+        if i < self.loop_start or i + 3 >= len(self.path):
+            return None
+        origin, waypoint = self.path[i:i+2]
+        if distance(origin, waypoint) != 1 or any(
+                e['origin'] == origin and e['exit'] == waypoint for e in self.edges):
+            return None
+        return self.linked_step_after_approach(i + 1)
+
+    def detour_to_stair_approach(self, sample):
+        """Walk around an unreadable waypoint to the recorded side of its linked stairs."""
+        edge = self.stairs_after_next_waypoint()
+        if not edge:
+            return False
+        i = self.index
+        origin, waypoint, approach = self.path[i:i+3]
+        cells = sample['cells']
+        tiles = {(c['x'], c['y'], c['z']): c for c in cells}
+        if sample.get('center') != origin or tiles.get(tuple(waypoint), {}).get('kind') != 'unknown':
+            return False
+        if not visible_linked_stairs(tiles.get(tuple(edge['entry'])), edge):
+            return False
+        excluded = set(self.blocked) | {tuple(waypoint), tuple(edge['entry'])}
+        excluded.update(p for p, c in tiles.items() if c.get('transitions') or c.get('navigation') or c.get('stairs'))
+        local = detour(cells, origin, approach, excluded)
+        if not local or len(local) > 7:
+            return False
+        anchors = [cp['waypoint'] for cp in self.checkpoints if cp['index'] == i + 1]
+        self.replace_path(i, i + 2, local)
+        self.checkpoints.extend(dict(index=i + len(local) - 1, waypoint=w) for w in anchors)
+        self.checkpoints.sort(key=lambda cp: (cp['index'], cp['waypoint']))
+        self.mark_waypoint()
+        self.logs.append(f'Omijam nieczytelne pole {tuple(waypoint)}. Podejście do schodów: {tuple(approach)}.')
+        return True
+
     def use_stairs_from_saved_waypoint(self, sample):
         """Bypass only an unreadable approach between a linked waypoint and its landing."""
         edge=self.linked_step_after_approach()
@@ -553,11 +611,7 @@ class AdaptiveCavebot:
         cells={(c['x'],c['y'],c['z']):c for c in sample['cells']}
         if cells.get(tuple(approach),{}).get('kind')!='unknown':return False
         tile=cells.get(tuple(edge['entry']),{})
-        if (tile.get('kind') not in {'clear','blocked'} or tile.get('occupants')!=0
-                or not any(f['kind']=='stairs' for f in tile.get('navigation',[]))):return False
-        observed=tile.get('transitions',[])
-        if (not any(t['id']==edge['id'] and t['action']=='step' for t in observed)
-                or any(t['exit']!=landing for t in observed)):return False
+        if tile.get('occupants') != 0 or not visible_linked_stairs(tile, edge):return False
         existing=[e for e in self.edges if e['origin']==origin and e['exit']==landing]
         if any(e['entry']!=edge['entry'] or e['id']!=edge['id'] for e in existing):return False
         if not existing:
@@ -797,6 +851,10 @@ class AdaptiveCavebot:
             else:
                 edge=self.linked_step_after_approach()
                 landing_index=self.index+2 if edge and edge['exit']==pos else None
+                if landing_index is None:
+                    edge = self.stairs_after_next_waypoint()
+                    if edge and edge['exit'] == pos:
+                        landing_index = self.index + 3
             if landing_index is not None:
                 self.guard()
                 self.index=landing_index
@@ -1107,32 +1165,56 @@ class AdaptiveCavebot:
 
     async def uncover_tool_target(self, edge, sample, tile):
         target, origin = edge['entry'], edge['origin']
-        body = covering_body(tile)
-        if not body:
+        bodies = covering_bodies(tile)
+        count = len(bodies)
+        move = self._pending_body_move
+        history = getattr(self.state.game_state, 'movement_history', None)
+        now = time.monotonic()
+        if move and move.entry == tuple(target) and move.drop is not None:
+            # Reused frames can predate the command even when navigation resumes late.
+            elapsed = sample.get('captured_at', 0) - move.sent_at
+            if elapsed <= 0 or (count >= move.before and elapsed < BODY_ACK_SECONDS):
+                raise MovementDeferred('Czekam na potwierdzenie odsunięcia ciała z pola narzędzia.')
+            if history:
+                history.body_move(target, move.drop, move.before, count)
+            if count >= move.before:
+                move.retry_after[move.drop] = now + BODY_DROP_RETRY_SECONDS
+            move.drop = None
+        if not bodies:
             self._pending_body_move = None
             return
-        if self._pending_body_move == target:
-            raise MovementDeferred('Czekam na potwierdzenie odsunięcia ciała z pola narzędzia.')
+        if move is None or move.entry != tuple(target):
+            move = self._pending_body_move = BodyMove(tuple(target))
+        body = bodies[0]
 
         def drop_site(c):
             p = [c['x'], c['y'], c['z']]
             return (distance(p, target) == 1 and distance(p, origin) <= 1
                     and walkable(c) and not c.get('stairs') and not c.get('navigation')
                     and not c.get('transitions') and not c.get('server_blocking')
-                    and len(c['items']) == 1 and 'ground' in c['items'][0]['flags'])
+                    and c['items'] and 'ground' in c['items'][0]['flags']
+                    and len(c['items']) == 1 + len(covering_bodies(c)))
 
         sites = [c for c in sample['cells'] if drop_site(c)]
         if not sites:
             raise MovementDeferred('Brak wolnego pola na odsunięcie ciała.')
-        drop = min(([c['x'],c['y'],c['z']] for c in sites), key=lambda p: (p == origin, p))
+        choices = [((c['x'], c['y'], c['z']), len(c['items'])) for c in sites]
+        available = [(p, size) for p, size in choices if move.retry_after.get(p, 0) <= now]
+        if not available:
+            raise MovementDeferred('Odsunięcie ciała niepotwierdzone. Czekam na inne pole lub ponowienie próby.')
+        drop, _ = min(available, key=lambda choice: (choice[0] == tuple(origin), choice[1], choice[0]))
         def still_valid():
             cells = self.map_now()['cells']
             src = next((c for c in cells if [c['x'],c['y'],c['z']] == target), None)
             return (list(self.state.game_state.position) == origin and src and not src.get('occupants')
                     and src['items'] == tile['items'] and covering_body(src) == body
-                    and any([c['x'],c['y'],c['z']] == drop and drop_site(c) for c in cells))
+                    and any((c['x'], c['y'], c['z']) == drop and drop_site(c) for c in cells))
         if await self.send(build_move_item_packet(target, body['id'], body['stack'], drop, 1), still_valid):
-            self._pending_body_move = list(target)
+            move.drop = drop
+            move.before = count
+            move.sent_at = time.time()
+            if history:
+                history.body_move(target, drop, count, None)
         raise MovementDeferred('Sprawdzam pole po odsunięciu ciała.')
 
     async def clear_web(self, edge, sample):
@@ -1510,7 +1592,7 @@ class AdaptiveCavebot:
                         if local:
                             self.replace_path(self.index+1,j,local[1:]);target=self.path[self.index+1];found=True;break
                     if not found:
-                        if self.use_stairs_from_saved_waypoint(sample):continue
+                        if self.use_stairs_from_saved_waypoint(sample) or self.detour_to_stair_approach(sample):continue
                         self.describe_blockage(sample,target)
                         if (tuple(target) not in self.blocked and not self.combat.config['enabled']
                                 and not any(t.get('occupants',0) for t in sample['cells'])):

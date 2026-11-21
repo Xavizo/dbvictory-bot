@@ -183,6 +183,16 @@ class MovementHistory:
                     self._event(now,"observer_totals",dropped=counts[0],partial=counts[1],failures=counts[2])
                     self.coverage = counts
 
+    def body_move(self, entry, drop, before, after):
+        with self.lock:
+            if self.closed:
+                return
+            now = self.clock()
+            phase = 'body_move_requested' if after is None else 'body_move_observed'
+            self._event(now, phase, target=tuple(entry), destination=tuple(drop),
+                        bodies_before=before, bodies_after=after)
+            self._trigger(now, phase)
+
     def web_tool(self, source, target, tool, target_id, target_layer, cell):
         """Compare semantic tool selections on a known web, including clicks on the ground beneath it."""
         if tool not in (8899, 8900) or not any(i.get('id') in (182, 183) for i in (cell or {}).get('items', ())):
