@@ -29,6 +29,9 @@ test('ground selection distinguishes floors, coordinates and overlapping grounds
   assert.equal(model.localGround(choices,[31,39,7],8,'route'),'draft:route');
   assert.equal(model.localGround(choices,[32,39,7],8),'draft:route');
   assert.equal(model.localGround(choices,[31,39,8],8),'');
+  const visits=new Map([['manual:new',{cells:[[24,32,5],[24,32,7]]}],['manual:old',{cells:[[24,32,7]]}]]);
+  assert.equal(model.localGround(visits,[25,33,7],8),'manual:new');
+  assert.equal(model.localGround(visits,[25,33,5],8),'manual:new');
   assert.equal(model.localGround(choices,null,8),'');
 });
 

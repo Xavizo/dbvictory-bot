@@ -61,6 +61,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const previewRequest=useRef<AbortController|null>(null);
   useEffect(()=>()=>previewRequest.current?.abort(),[]);
   const createKey=useRef("");
+  const [pinned,setPinned]=useState(false);
   useEffect(()=>{
     const ctl=new AbortController();setError("");
     request({signal:ctl.signal}).then((info:Catalogue)=>{
@@ -110,17 +111,21 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const via=confirmedVia??terrain?.via??[];
   const floors=[...new Set(selected.map(p=>p[2]))].sort((a,b)=>a-b);
   const discovery=data?.discoveries?.find(d=>d.id===key);
+  const side=data?.sector_size??8;
+  const sx=location?Math.floor(location[0]/side)*side:null,sy=location?Math.floor(location[1]/side)*side:null,z=location?.[2];
+  const cavebot=state?.adaptive_cavebot;
+  const activeDraft=cavebot?.mode==="route"&&cavebot.status==="running"?cavebot.draft_id:undefined;
+  const localKey=useMemo(()=>sx===null||sy===null||z===undefined?"":localGround(choices,[sx,sy,z],side,activeDraft),
+    [choices,sx,sy,z,side,activeDraft]);
   useEffect(()=>{
-    if(!data||checkedScope!==data.scope||copy||planning||choices.has(key))return;
-    const match=localGround(choices,location,data.sector_size,state?.adaptive_cavebot?.draft_id);
-    if(key||match){
-      resetRoute();setKey(match);setLayer("spawns");setSpecies("");
-      setFocus(match?center(choices.get(match)!,location![2]):null);
-    }
-  },[data,checkedScope,choices,key,copy,planning,location,state?.adaptive_cavebot?.draft_id]);
+    if(!scope||checkedScope!==scope||copy||planning||busy||selecting||selection!==null||baseRoute)return;
+    const exists=choices.has(key);
+    if(exists&&(pinned||!localKey)||localKey===key)return;
+    resetRoute();setKey(localKey);setPinned(false);setLayer("spawns");setSpecies("");
+    setFocus(localKey?center(choices.get(localKey)!,z!):null);
+  },[scope,checkedScope,choices,key,localKey,pinned,copy,planning,busy,selecting,selection,baseRoute,z]);
   const linked=useMemo(()=>data?.drafts.filter(d=>area?.drafts.includes(d.id))??[],[area?.drafts,data]);
   const cells=useMemo(()=>new Set(area?.cells.map(p=>p.join(","))),[area?.cells]);
-  const side=data?.sector_size??8;
   const [,expire]=useState(0);
   const captured=state?.passive_map?.captured_at;
   useEffect(()=>{
@@ -186,7 +191,10 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     return [...stats.values()].sort((a,b)=>a.floor-b.floor);
   },[discovery,check,applied,route]);
   function pick(k:string){
+    const automatic=k==="@local";
+    if(automatic)k=localKey;
     const a=choices.get(k);if(!a)return;
+    setPinned(!automatic);
     createKey.current="";
     resetRoute();
     setKey(k);setCopy(null);setSpecies("");setLayer("spawns");setError("");setFocus(center(a,location?.[2]??initialFloor));
@@ -266,7 +274,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       const {id}=await request({method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...area,scope:data.scope,create_key:createKey.current||undefined})});
       const saved={...area,id,version:(area.version??0)+1};
       setData({...data,areas:[...data.areas.filter(a=>a.id!==id),saved]});
-      setKey(id);setCopy(null);
+      setKey(id);setPinned(true);setCopy(null);
     }catch(e){setError(e instanceof Error?e.message:"Nie udało się zapisać obszaru.");}
     finally{setBusy(false);}
   }
@@ -283,6 +291,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       {!data&&!error&&<p role="status" className="atlas-loading"><i className="atlas-spinner"/>Wczytywanie…</p>}
       {data&&<label><select aria-label="Obszar lub szkic" disabled={!!copy||busy||!!planning} value={key} onChange={e=>pick(e.target.value)}>
         {!area&&<option value="" disabled>Wybierz expowisko</option>}
+        {pinned&&localKey&&<option value="@local">Przy postaci (automatycznie) · {choices.get(localKey)?.name}</option>}
         {!!data.discoveries?.length&&<optgroup label="Z ręcznej gry">{data.discoveries.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</optgroup>}
         {!!data.areas.length&&<optgroup label="Zapisane expowiska">{data.areas.map(a=><option key={a.id} value={a.id!}>{a.name}</option>)}</optgroup>}
         <optgroup label="Propozycje ze szkiców">{data.drafts.filter(d=>!d.archived).map(d=><option key={d.id} value={"draft:"+d.id}>{d.name}</option>)}</optgroup>

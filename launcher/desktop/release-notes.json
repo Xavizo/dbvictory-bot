@@ -1,5 +1,9 @@
 [
   {
+    "version":"v1.20.1",
+    "changes":[{"title":"Sektory expowiska przy postaci","detail":"Atlas podąża za zmianą expowiska i piętra. Ręczny wybór obszaru i edycja terenu zachowują aktualny szkic."}]
+  },
+  {
     "version":"v1.20.0",
     "changes":[
       {"title":"Porównaj pętle na expowisku","detail":"Zaznacz sektory w Atlasie, porównaj krótką, pełną i dopasowaną do respawnu trasę, a potem zapisz wybraną jako szkic. Prognoza uwzględnia blokadę odnowy spawnu w pobliżu postaci."},

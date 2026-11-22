@@ -22,10 +22,15 @@ export function atlasLocation(state:BotState|null, live:Position|null):Position|
 export function localGround(choices:Map<string,{cells:Position[]}>,p:Position|null|undefined,side:number,activeDraft?:string) {
   if(!p||side<=0)return "";
   const x=Math.floor(p[0]/side)*side,y=Math.floor(p[1]/side)*side;
-  let best="",size=Infinity;
+  let best="",size=Infinity,foundDiscovery=false;
   for(const [key,area] of choices){
     if(!area.cells.some(c=>c[0]===x&&c[1]===y&&c[2]===p[2]))continue;
     if(activeDraft&&key==="draft:"+activeDraft)return key;
+    // Discoveries arrive newest first. An older overlapping visit can cover fewer rooms.
+    if(key.startsWith("manual:")){
+      if(foundDiscovery)continue;
+      foundDiscovery=true;
+    }
     if(area.cells.length<size){best=key;size=area.cells.length;}
   }
   return best;
