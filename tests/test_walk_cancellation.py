@@ -355,7 +355,7 @@ def test_displacement_keeps_target_walkable_and_rejoins_once(state, tmp_path, ma
     asyncio.run(asyncio.wait_for(ctrl.run(), 3))
     assert results[0] is (WalkOutcome.MANUAL if manual else WalkOutcome.DISPLACED)
     assert all(result is WalkOutcome.ARRIVED for result in results[1:])
-    assert not ctrl.blocked and not ctrl._delayed_departure
+    assert not ctrl.blocked and not ctrl._failed_exits
     assert tuple(origin) not in sent[1:] and gs.position == tuple(end)
     assert ctrl.status == 'complete' and ctrl.laps == 1
     assert outcomes[0][1] == 'position_interrupted' and outcomes[0][2]

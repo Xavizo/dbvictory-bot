@@ -1,12 +1,12 @@
 export type Position=[number,number,number];
-export type LureProgress={engaged?:number;nearby?:number;following:number;goal:number;waiting:boolean;stop_reason:'group'|'timeout'|'transition'|'corridor'|null};
+export type LureProgress={engaged?:number;nearby?:number;following:number;goal:number;waiting:boolean;stop_reason:'group'|'timeout'|'transition'|'corridor'|'origin_limit'|'clear_pack'|null};
 export type ConditionOp='>'|'>='|'='|'<='|'<';
 export type CombatSpell={words:string;trigger:"visible"|"distance";cooldown:number;ki:number;range:number;count:number;
   aim?:'target'|'self';ki_op?:ConditionOp;ki_unit?:'percent'|'value';hp?:number|null;hp_op?:ConditionOp;hp_unit?:'percent'|'value';range_op?:ConditionOp;count_op?:ConditionOp};
 export type SpellCheck={words:string;aim:'target'|'self';matched_count:number;ready:boolean;conditions_met:boolean;remaining:number;reason:string;selected:boolean;wave_note?:string|null;wave_direction?:number|null;turn_required?:boolean};
 export type MonsterRule={pattern:string;action:"attack"|"ignore";priority:number;
   stance?:"inherit"|"stop"|"chase"|"lure"|"distance";distance?:number;spell_mode?:"inherit"|"none"|"custom";spell?:CombatSpell|null};
-export type CombatConfig={enabled:boolean;mode:"stop"|"chase"|"lure";strategy:"nearest"|"lowest_hp"|"highest_hp"|"finish";engage:"visible"|"near";radius:number;distance:number;lure_count:number;lure_seconds:number;lure_distance:number;
+export type CombatConfig={enabled:boolean;mode:"stop"|"chase"|"lure";strategy:"nearest"|"lowest_hp"|"highest_hp"|"finish";engage:"visible"|"near";radius:number;distance:number;lure_count:number;lure_seconds:number;lure_distance:number;lure_origin_limit?:number;
   rules:MonsterRule[];spells:CombatSpell[]};
 export const defaultMonsterRule=():MonsterRule=>({pattern:"",action:"attack",priority:50,stance:"inherit",spell_mode:"inherit"});
 export const defaultCombatSpell=():CombatSpell=>({words:"",trigger:"distance",cooldown:1,ki:10,range:5,count:1});
@@ -19,7 +19,7 @@ export function monsterRuleSummary(rule:MonsterRule):string {
 }
 export type DraftTag={text:string;color:"mint"|"blue"|"amber"|"rose"|"violet"};
 export type RouteDraft={navigation_revision?:string;id:string;name:string;tags?:DraftTag[];points:Position[];labels:string[];links?:{from_index:number;id:string}[];loop:boolean;updated:number;combat:CombatConfig};
-export const defaultCombat=():CombatConfig=>({enabled:false,mode:"stop",strategy:"nearest",engage:"near",radius:5,distance:1,lure_count:4,lure_seconds:8,lure_distance:3,rules:[],spells:[]});
+export const defaultCombat=():CombatConfig=>({enabled:false,mode:"stop",strategy:"nearest",engage:"near",radius:5,distance:1,lure_count:4,lure_seconds:8,lure_distance:3,lure_origin_limit:12,rules:[],spells:[]});
 export type TargetPreview={message:string;targets:{id:number;name:string;health:number;priority:number;distance:number}[];selected:{id:number}|null;spells?:SpellCheck[]};
 export function parseTargetPreview(response:unknown):TargetPreview {
   if(!response || typeof response!=="object")throw Error("Nieprawidłowa odpowiedź podglądu celów.");

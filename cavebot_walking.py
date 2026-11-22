@@ -49,7 +49,7 @@ def step_clear(cells,origin,target,blocked=(),door=False):
     # The client enters only the diagonal destination, not the two side tiles.
     return distance(origin,target)==1 and allowed(target)
 
-def detour(cells,start,end,blocked=(),*,skip_first=None):
+def detour(cells,start,end,blocked=(),*,skip_first=()):
     """Bounded local BFS: only fresh visible terrain, no unobserved transitions."""
     start,end=tuple(start),tuple(end);tiles={(c['x'],c['y'],c['z']):c for c in cells};blocked=set(blocked)
     allowed=lambda p:p not in blocked and walkable(tiles.get(p))
@@ -62,7 +62,7 @@ def detour(cells,start,end,blocked=(),*,skip_first=None):
             return path[::-1]
         for dx,dy in OFFSETS:
             q=(p[0]+dx,p[1]+dy,p[2])
-            if q in previous or (p == start and q == skip_first) or not allowed(q):continue
+            if q in previous or (p == start and q in skip_first) or not allowed(q):continue
             previous[q]=p;queue.append(q)
     return None
 

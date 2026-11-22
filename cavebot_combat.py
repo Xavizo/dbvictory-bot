@@ -28,11 +28,12 @@ def validate_combat(value=None):
     if not isinstance(value,dict):raise ValueError('Nieprawidłowa konfiguracja walki.')
     result=dict(enabled=value.get('enabled',False),mode=value.get('mode','stop'),strategy=value.get('strategy','nearest'),
                 engage=value.get('engage','near'),radius=value.get('radius',5),distance=value.get('distance',1),lure_count=value.get('lure_count',4),
-                lure_seconds=value.get('lure_seconds',8),lure_distance=value.get('lure_distance',3),rules=value.get('rules',[]),spells=value.get('spells',[]))
+                lure_seconds=value.get('lure_seconds',8),lure_distance=value.get('lure_distance',3),
+                lure_origin_limit=value.get('lure_origin_limit',12),rules=value.get('rules',[]),spells=value.get('spells',[]))
     if result['engage'] not in {'visible','near'}:raise ValueError('Nieprawidłowy warunek wyboru celu.')
     if type(result['enabled']) is not bool or result['mode'] not in {'stop','chase','lure'} or result['strategy'] not in {'nearest','lowest_hp','highest_hp','finish'}:
         raise ValueError('Nieprawidłowy sposób walki lub wyboru celu.')
-    for key,lo,hi in [('radius',1,7),('distance',1,7),('lure_count',1,12),('lure_seconds',1,30),('lure_distance',1,7)]:
+    for key,lo,hi in [('radius',1,7),('distance',1,7),('lure_count',1,12),('lure_seconds',1,30),('lure_distance',1,7),('lure_origin_limit',1,64)]:
         if type(result[key]) is not int or not lo<=result[key]<=hi:raise ValueError(f'Nieprawidłowe ustawienie: {key}.')
     if not isinstance(result['rules'],list) or len(result['rules'])>32:raise ValueError('Maksymalnie 32 reguły potworów.')
     rules=[]
@@ -66,7 +67,7 @@ def matches(pattern,name):
     return re.fullmatch('.*'.join(re.escape(p) for p in pattern.casefold().split('*')),name.casefold()) is not None
 
 
-def eligible_monsters(gs,sample,config,now=None):
+def eligible_monsters(gs,sample,config,now=None,*,on_sighting=None):
     now=time.time() if now is None else now
     if sample.get('status')!='ready' or sample.get('stale') or sample.get('age_seconds',99)>.6 or tuple(sample.get('center',[]))!=tuple(gs.position):return []
     cells={(c['x'],c['y'],c['z']):c for c in sample.get('cells',[])}
@@ -80,11 +81,13 @@ def eligible_monsters(gs,sample,config,now=None):
         if pets and pets.is_pet(cid):continue
         pos=(c.get('x'),c.get('y'),c.get('z'));tile=cells.get(pos,{})
         if cid==gs.player_id or type(cid)is not int or not 0<cid<2**32 or c.get('source')!='dll' or not 0<=now-c.get('t',0)<=.6 or not 0<c.get('health',0)<=100:continue
-        if pos not in accessible:continue
         if pos[2]!=gs.position[2] or tile.get('occupants')!=1 or tile.get('occupant_types',{}).get('monster')!=1:continue
         if pets and pets.confirmed_after_map(pos,sample.get('pet_map_generation')):continue
         if occupants[pos]!=1:continue
         distance=max(abs(pos[0]-gs.position[0]),abs(pos[1]-gs.position[1]))
+        if on_sighting is not None:
+            on_sighting(cid, c.get('name','?'), pos)
+        if pos not in accessible:continue
         if config.get('engage','near')!='visible' and distance>config['radius']:continue
         for rank,rule in enumerate(config['rules']):
             if matches(rule['pattern'],c.get('name','')):
@@ -122,6 +125,8 @@ class CombatRuntime:
     def __init__(self,owner,config):
         self.owner=owner;self.config=config;self.target=None;self.sent_target=0
         self.phase='route';self.lure_started=None;self.battle_started=None;self.progress_at=0;self.last_health=None
+        self.visible_recruits = []
+        self.first_sightings = {}
         self.pursuit=PursuitTracker();self.lure_waiting=False;self.lure_stop_reason=None
         self.lure_access=None;self.bank_members=set();self.first_clear_map=None
         self.placement_checked=False;self.placement=None;self.placement_group=set()
@@ -173,6 +178,8 @@ class CombatRuntime:
         target = path[index+1]
         planned = next((c for c in sample['cells'] if (c['x'],c['y'],c['z'])==target), {})
         members = {tuple(c['position']) for c in targets if c['id'] in self.placement_group}
+        if self.origin_stop(targets, self.placement_group, origin, target):
+            return None
         if len(members) != len(self.placement_group):
             return None
         if self.pack_members and any(tuple(c['position']) != self.pack_members[c['id']]
@@ -331,32 +338,52 @@ class CombatRuntime:
             if self.anchor is None:self.anchor=list(self.owner.state.game_state.position)
         self.phase='fight';self.lure_waiting=False
 
-    def route_step_allowed(self,boundary=False):
+    def route_step_allowed(self,boundary=False,destination=None):
         """Recheck at enqueue AND dispatch, after any awaited spell/attack."""
         if not self.config['enabled'] or self.owner.combat_only:return True
         sample=self.owner.map_now();targets=self.candidates(sample)
         mode=self.policy_mode or self.config['mode']
         if mode!='lure':return not targets
         physical=self.visible_group(sample,targets)
-        following=self.refresh_lure_limit(targets,physical,boundary,sample)
+        following=self.refresh_lure_limit(targets,physical,boundary,sample,destination)
         if self.blocking_target(targets,sample):return False
         if self.lure_stop_reason or self.battle_started:
             return self.allow_positioning(sample,targets,physical,boundary)
         if self.engaged_count>=self.config['lure_count'] or (boundary and physical):return False
         return not self.gathering_wait(sample, targets, following)
 
-    def gather_stop_reason(self, sample, targets, engaged, boundary):
+    def origin_stop(self, targets, engaged, position, destination):
+        limit = self.config['lure_origin_limit']
+        for mob in targets:
+            sighting = self.first_sightings.get(mob['id'])
+            if not sighting or mob['id'] not in engaged:
+                continue
+            origin = sighting[0]
+            if gap(mob['position'], origin) >= limit:
+                return True
+            # From an adjacent tile the mob can still reach us at the limit.
+            if (destination and destination[2] == origin[2] and
+                    gap(destination, origin) > limit + 1 and
+                    gap(destination, origin) > gap(position, origin)):
+                return True
+        return False
+
+    def gather_stop_reason(self, sample, targets, engaged, boundary, destination=None):
         goal = self.config['lure_count']
         if len(engaged) >= goal:
             return 'group'
         if boundary and targets:
             return 'transition'
+        o = self.owner
+        pos = tuple(o.state.game_state.position)
+        route = o.path[o.index:o.index+9] if getattr(o, 'path', None) else ()
+        if destination is None and len(route) > 1 and tuple(route[0]) == pos:
+            destination = route[1]
+        if self.origin_stop(targets, engaged, pos, destination):
+            return 'origin_limit'
         half_group = len(engaged) >= max(2, (goal+1)//2)
         if len(targets) < 2:
             return None
-        o = self.owner
-        pos = tuple(o.state.game_state.position)
-        route = o.path[o.index:o.index+9]
         if not route or tuple(route[0]) != pos:
             return None
         now = time.monotonic()
@@ -381,6 +408,20 @@ class CombatRuntime:
                 self.bank_members = {cid for cid,p in pack.items() if p in access.members}
                 o.logs.append(f'Lurowanie: zostaję na {pos}. Miejsca dla grupy tutaj: {access.here}, dalej: {access.ahead}.')
                 return 'corridor'
+        # With a partly travelled leash, finish a pack in open ground if no
+        # reachable recruit lies ahead. A visible recruit buys the remaining range.
+        members = {tuple(c['position']) for c in eligible if c['id'] in engaged}
+        threshold = (2 * self.config['lure_origin_limit'] + 2) // 3
+        if len(members) >= 2 and any(
+                c['id'] in engaged and c['id'] in self.first_sightings and
+                gap(c['position'], self.first_sightings[c['id']][0]) >= threshold for c in eligible):
+            visible = self.visible_recruits
+            if not any(c['id'] not in engaged and c['id'] not in self.stalled_targets and
+                       target_policy(self.config,c)['mode']=='lure' and
+                       route_approaches(pos,c['position'],route,0,o.edges) for c in visible):
+                space, _ = placement_terrain(sample['cells'], pos, o.edges, members)
+                if open_sides(space,pos) >= max(5,len(members)) and melee_capacity(space,pos,members) >= len(members):
+                    return 'clear_pack'
         if not half_group:
             return None
 
@@ -390,14 +431,13 @@ class CombatRuntime:
             return None
         # A configured attack radius can be shorter than the visible corridor.
         # Looking for another recruit must not change which targets may be attacked.
-        visible = targets if self.config['engage'] == 'visible' else eligible_monsters(
-            o.state.game_state, sample, {**self.config, 'engage':'visible'})
+        visible = self.visible_recruits
         if any(c['id'] not in engaged and c['id'] not in self.stalled_targets
                and route_approaches(pos,c['position'],route,0,o.edges) for c in visible):
             return None
         return 'corridor'
 
-    def refresh_lure_limit(self,targets,physical,boundary,sample):
+    def refresh_lure_limit(self,targets,physical,boundary,sample,destination=None):
         adjacent={c['id'] for c in targets if c['distance']<=1}
         following={c['id'] for c in targets if c['id'] in self.pursuit.following}
         self.nearby_count=max(len(adjacent),sum(gap<=1 for _,gap in physical))
@@ -405,7 +445,7 @@ class CombatRuntime:
         self.confirmed_count=len(adjacent|following)
         self.engaged_count=self.confirmed_count+sum(gap<=1 and point not in known_positions for point,gap in physical)
         if not self.lure_stop_reason:
-            reason = self.gather_stop_reason(sample, targets, adjacent | following, boundary)
+            reason = self.gather_stop_reason(sample, targets, adjacent | following, boundary, destination)
             if reason:self.latch_lure(reason)
         return following
 
@@ -418,8 +458,29 @@ class CombatRuntime:
         return now-self.group_clear_since >= (.8 if self.lure_access else .4)
 
     def candidates(self,sample=None):
-        rows=eligible_monsters(self.owner.state.game_state,sample if sample is not None else self.owner.map_now(),self.config)
-        now=time.monotonic()
+        gs = self.owner.state.game_state
+        sample = sample if sample is not None else self.owner.map_now()
+        config = self.config
+        track = (not getattr(self.owner,'combat_only',False) and gs.position and
+                 (config['mode']=='lure' or any(r.get('stance')=='lure' for r in config['rules'])))
+        now = time.monotonic()
+        if track:
+            # A short gap in visibility, changing targets or ending a fight
+            # must not move a surviving monster's first observed position.
+            self.first_sightings = {cid: sighting for cid, sighting in self.first_sightings.items()
+                                    if now-sighting[2] < 30 and sighting[0][2] == gs.position[2]
+                                    and gs.creatures.get(cid,{}).get('health') != 0}
+            def remember(cid, name, point):
+                seen = self.first_sightings.get(cid)
+                origin = seen[0] if seen and seen[1] == name else point
+                self.first_sightings[cid] = (origin, name, now)
+
+            rows = eligible_monsters(gs,sample,{**config,'engage':'visible'},on_sighting=remember)
+            self.visible_recruits = rows
+            if config['engage'] != 'visible':
+                rows = [mob for mob in rows if mob['distance'] <= config['radius']]
+        else:
+            rows = eligible_monsters(gs,sample,config)
         self.stalled_targets={cid:t for cid,t in self.stalled_targets.items() if t>now}
         return [row for row in rows if row['id'] not in self.stalled_targets]
 
@@ -645,7 +706,8 @@ class CombatRuntime:
             await asyncio.sleep(.05);return True
         self.phase='fight';o.reason=f'Walka: {current["name"]} · {current["health"]}% HP.'
         if self.lure_stop_reason:
-            label={'group':'Grupa zebrana','transition':'Przejście lub koniec odcinka','corridor':'Przed wąskim korytarzem','timeout':'Limit czasu zbierania'}[self.lure_stop_reason]
+            label={'group':'Grupa zebrana','transition':'Przejście lub koniec odcinka','corridor':'Przed wąskim korytarzem','timeout':'Limit czasu zbierania',
+                   'origin_limit':'Limit SQM od wykrycia moba','clear_pack':'Brak kolejnych mobów na trasie'}[self.lure_stop_reason]
             if self.lure_access:
                 here,ahead = self.lure_access
                 label=f'Przed przewężeniem · miejsca dla grupy tutaj: {here}, dalej: {ahead}'

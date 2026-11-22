@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.22.0",
+    "changes":[
+      {"title":"Obejście po nieudanych krokach","detail":"Przy postoju Cavebot pamięta ostatnie nieudane kierunki z tej samej kratki i sprawdza inne dostępne dojście."},
+      {"title":"Zasięg lurowania od miejsca wykrycia","detail":"Ustaw maksymalne oddalenie moba w SQM. W otwartym miejscu Cavebot może wcześniej dobić grupę, jeśli na dalszej trasie nie widać kolejnego celu."}
+    ]
+  },
+  {
     "version":"v1.21.0",
     "changes":[
       {"title":"Wspólna mapa stref i potworów","detail":"Atlas pokazuje razem sektory zapisane podczas ręcznej gry i obiegów. Kliknij sektor, aby zobaczyć gatunki odnotowane przy pierwszym wykryciu."},

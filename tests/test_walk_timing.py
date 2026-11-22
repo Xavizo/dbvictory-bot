@@ -158,10 +158,10 @@ def test_unavailable_position_at_deadline_is_distinct_from_a_timeout():
         without_input = await controller._confirm_walk(target, origin, timeout=.02, recover=True)
         assert without_input is nav.WalkOutcome.OBSERVATION_GAP
         await controller.handle_walk_failure(without_input, origin, target)
-        assert controller._delayed_departure is None and not controller.blocked
+        assert not controller._failed_exits and not controller.blocked
         controller.guard = lambda: None
         with_input = await controller._confirm_walk(target, origin, timeout=.02, recover=True)
         assert with_input is nav.WalkOutcome.TIMEOUT
         await controller.handle_walk_failure(with_input, origin, target)
-        assert controller.delayed_departure(origin) == tuple(target) and not controller.blocked
+        assert controller.delayed_departures(origin) == {tuple(target)} and not controller.blocked
     asyncio.run(observe())

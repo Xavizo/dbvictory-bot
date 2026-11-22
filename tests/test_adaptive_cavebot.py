@@ -188,7 +188,7 @@ def test_expired_hp_during_dispatched_step_waits_for_same_session(state,tmp_path
     asyncio.run(simulate())
     expected={'arrive':'complete','late_arrival':'complete','stop':'idle','death':'paused','disconnect':'paused'}
     assert sent==[0x66] and c.status==expected[finish] and c.laps==int(expected[finish]=='complete')
-    assert not c.blocked and not c._delayed_departure
+    assert not c.blocked and not c._failed_exits
 
 
 def stair_edge(action='step'):

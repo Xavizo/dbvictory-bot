@@ -139,7 +139,8 @@ class AdaptiveCavebot:
         self._walk_number = 0
         self._map_after_walk = None
         self._uncertain_walk_origin = None
-        self._delayed_departure = None
+        self._failed_origin = None
+        self._failed_exits = {}
         self.combat_only=False;self.draft_id=None;self.combat=CombatRuntime(self,validate_combat())
         self.reporter = None
         self._resuming_report = False
@@ -398,7 +399,8 @@ class AdaptiveCavebot:
         self.last_waypoint=None;self.tolerated_waypoints=0
         self.loop=loop;self.index=0;self.laps=0;self.name=draft['name'];self.status='ready';self.reason=f'Trasa przygotowana od waypointu {join+1}.'
         self._pending_shortcut=None
-        self._delayed_departure=None
+        self._failed_origin=None
+        self._failed_exits.clear()
         self.blocked={};self.failures=0;self.recovery_attempts.clear();self.recovery_count=0
         self.mark_waypoint()
 
@@ -914,7 +916,7 @@ class AdaptiveCavebot:
         if self.index < self.loop_start:
             limit = min(limit, self.loop_start + 1)
         self.expire_movement_blocks()
-        delayed = self.delayed_departure(pos)
+        delayed = self.delayed_departures(pos)
         unsafe = set(self.blocked)
         unsafe.update(tuple(e['entry']) for e in self.edges if e.get('entry') and e.get('action') == 'step')
         best = None
@@ -951,13 +953,17 @@ class AdaptiveCavebot:
         self.recovery_count += 1
         return True
 
-    def delayed_departure(self, pos):
-        if self._delayed_departure:
-            origin, target, until = self._delayed_departure
-            if origin == tuple(pos) and time.monotonic() < until:
-                return target
-            self._delayed_departure = None
-        return None
+    def delayed_departures(self, pos):
+        now = time.monotonic()
+        if self._failed_origin != tuple(pos):
+            self._failed_exits.clear()
+            self._failed_origin = tuple(pos)
+        self._failed_exits = {p: t for p, t in self._failed_exits.items() if now - t < 8}
+        # A lone exit can be retried promptly. Retain its timestamp so a failure
+        # in a second direction does not send us straight back to the first.
+        if len(self._failed_exits) == 1:
+            return {p for p, t in self._failed_exits.items() if now - t < 1}
+        return set(self._failed_exits)
 
     async def handle_walk_failure(self, result, origin, target):
         if result in WALK_DETAILS:
@@ -965,13 +971,16 @@ class AdaptiveCavebot:
             self.reason = WALK_DETAILS[result]
             return
         self.failures += 1
-        until = time.monotonic() + min(self.failures, 10)
+        now = time.monotonic()
+        until = now + min(self.failures, 10)
+        if result in (WalkOutcome.CANCELLED, WalkOutcome.TIMEOUT):
+            self.delayed_departures(origin)
+            self._failed_exits[tuple(target)] = now
         if result is WalkOutcome.CANCELLED:
             self.blocked[tuple(target)] = until
             self.describe_blockage(await self.fresh_map(), target, cancelled=True)
         elif result is WalkOutcome.TIMEOUT:
             # A missing ACK describes this departure, not the destination tile.
-            self._delayed_departure = (tuple(origin), tuple(target), until)
             self.blockage = None
             self.reason = 'Brak potwierdzenia kroku. Sprawdzam dojście z innej strony.'
 
@@ -1004,9 +1013,10 @@ class AdaptiveCavebot:
             return True
         stop=min(len(self.path),self.index+9,self.loop_start+1 if self.index<self.loop_start else len(self.path))
         stop=self.checkpoint_limit(stop)
+        delayed = self.delayed_departures(pos)
         for j in range(self.index,stop):
             if j>self.index and any(e['origin']==self.path[j-1] and e['exit']==self.path[j] for e in self.edges):break
-            local=detour(sample['cells'],pos,self.path[j],self.blocked)
+            local=detour(sample['cells'],pos,self.path[j],self.blocked,skip_first=delayed)
             if not local or len(local)>13:continue
             self.replace_path(self.index,j,local);self.recovery_attempts.append(now);self.recovery_count+=1
             self.logs.append(f'Recovery: powrót do trasy po {len(local)-1} widocznych polach, piętro {pos[2]}.')
@@ -1056,7 +1066,7 @@ class AdaptiveCavebot:
                 request = None
             await asyncio.sleep(.01)
 
-    async def send(self,payload,validate=None,skip_if_changed=False,defer_movement=False):
+    async def send(self,payload,validate=None,skip_if_changed=False,defer_movement=False,route_destination=None):
         self.last_receipt=None
         if self.combat_only and (not payload or payload[0] not in {ClientOpcode.ATTACK,ClientOpcode.SAY,*TURN_OPCODES}):
             raise ValueError('Tryb samej walki nie może wysyłać ruchu ani używać obiektów.')
@@ -1083,7 +1093,7 @@ class AdaptiveCavebot:
                 journal = getattr(lease.game, "engine_journal", None)
                 valid=(lease.valid() and (journal is None or journal.current()) and task_alive(owner) and self.status=='running' and self.generation==generation and time.monotonic()-sent<.5 and
                     (combat_command and payload[0] in {ClientOpcode.ATTACK,ClientOpcode.SAY} or self.combat_only or list(self.state.game_state.position)==origin) and
-                    (not route_command or (motion==self.motion_generation and time.monotonic()>=self.manual_until and self.combat.route_step_allowed(boundary))) and
+                    (not route_command or (motion==self.motion_generation and time.monotonic()>=self.manual_until and self.combat.route_step_allowed(boundary, route_destination))) and
                     (validate is None or validate()))
             except Exception:valid=False
             attempt['valid']=valid;attempt['checks']+=1
@@ -1171,7 +1181,7 @@ class AdaptiveCavebot:
         if distance(pos,target)!=1:raise ValueError("Krok nie jest sąsiednim polem.")
         self.map_now()  # fail closed on missing/stale input before scheduling
         sent=await self.send(build_walk_packet(OFFSETS[target[0]-pos[0],target[1]-pos[1]]),
-                        lambda:list(self.state.game_state.position)==pos and step_clear(self.map_now()['cells'],pos,target,self.blocked,door=door) and (validate is None or validate()),defer_movement=not door)
+                        lambda:list(self.state.game_state.position)==pos and step_clear(self.map_now()['cells'],pos,target,self.blocked,door=door) and (validate is None or validate()),defer_movement=not door,route_destination=target)
         if not sent:raise MovementDeferred('Pole zmieniło się — ponownie sprawdzam drogę; walka aktywna.')
         return await self._confirm_walk(target, pos, recover=not door)
 
@@ -1212,6 +1222,7 @@ class AdaptiveCavebot:
             if history:
                 history.route_result("route_position", outcome, target, timing.position_ms)
             if outcome == "position_confirmed":
+                self._failed_exits.clear()
                 self._map_after_walk = timing
             else:
                 timing.report(outcome)
@@ -1619,8 +1630,8 @@ class AdaptiveCavebot:
             sample=await self.fresh_map()
             if list(self.state.game_state.position) != pos:
                 continue
-            delayed = self.delayed_departure(pos)
-            shortcut = self.pass_ordinary_waypoint(sample) and tuple(self.path[self.index+2]) != delayed
+            delayed = self.delayed_departures(pos)
+            shortcut = self.pass_ordinary_waypoint(sample) and tuple(self.path[self.index+2]) not in delayed
             if not shortcut and not self.combat.placement:self.vary_leg(sample)
             target=self.path[self.index + (2 if shortcut else 1)]
             edge=next((e for e in self.edges if e['origin']==pos and e['exit']==target),None)
@@ -1673,7 +1684,7 @@ class AdaptiveCavebot:
                     continue
                 self.expire_movement_blocks()
                 tiles={(c['x'],c['y'],c['z']):c for c in sample['cells']}
-                if tuple(target) == delayed or not step_clear(sample['cells'],pos,target,self.blocked):
+                if tuple(target) in delayed or not step_clear(sample['cells'],pos,target,self.blocked):
                     # Rejoin within the next eight ordinary steps, never skip a transition.
                     candidates=[]
                     limit=min(len(self.path),self.index+9,self.loop_start+1 if self.index<self.loop_start else len(self.path))
@@ -1690,7 +1701,7 @@ class AdaptiveCavebot:
                         if local:
                             self.replace_path(self.index+1,j,local[1:]);target=self.path[self.index+1];found=True;break
                     if not found:
-                        if tuple(target) == delayed:
+                        if tuple(target) in delayed:
                             self.reason = 'Brak potwierdzenia kroku. Czekam przed ponowieniem z tego pola.'
                             await asyncio.sleep(.1)
                             continue

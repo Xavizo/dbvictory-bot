@@ -6,6 +6,7 @@ export function LureSettings({value,onChange}:{value:CombatConfig;onChange:(next
     <div className="lure-settings-fields">
       <label>Zatrzymaj się przy<span><input aria-label="Liczba mobów do lurowania" type="number" min={1} max={12} value={value.lure_count} onChange={e=>onChange({...value,lure_count:Number(e.target.value)})}/> mobach w grupie</span></label>
       <label>Czekaj na grupę od<span><input aria-label="Odstęp lurowania SQM" type="number" min={1} max={7} value={value.lure_distance} onChange={e=>onChange({...value,lure_distance:Number(e.target.value)})}/> SQM</span></label>
+      <label>Maks. od pierwszego wykrycia moba<span><input aria-label="Limit od miejsca wykrycia moba w SQM" type="number" min={1} max={64} value={value.lure_origin_limit??12} onChange={e=>onChange({...value,lure_origin_limit:Number(e.target.value)})}/> SQM</span></label>
     </div>
     <small title="Limit liczy sumę bez duplikatów: potwierdzone podążanie i osiągalne moby obok postaci. Nie jest to odczyt celu agresji serwera.">Liczą się podążające moby oraz te stojące obok. Cele bez dojścia nie zatrzymują trasy.</small>
   </div>;
@@ -14,7 +15,7 @@ export function LureSettings({value,onChange}:{value:CombatConfig;onChange:(next
 export default function LureStatus({progress,paused=false}:{progress:LureProgress;paused?:boolean}) {
   const {following,goal,waiting,stop_reason:reason}=progress;
   const count=progress.engaged??following;
-  const captions = {group:'Grupa zebrana · walczę',timeout:'Limit czasu · walczę',transition:'Przed przejściem · walczę',corridor:'Przed wąskim korytarzem · walczę'};
+  const captions = {origin_limit:'Limit SQM od wykrycia · walczę',clear_pack:'Brak kolejnych mobów przed grupą · walczę',group:'Grupa zebrana · walczę',timeout:'Limit czasu · walczę',transition:'Przed przejściem · walczę',corridor:'Przed wąskim korytarzem · walczę'};
   const caption=paused?'Lurowanie wstrzymane':reason?captions[reason]:waiting?'Czekam na moby · atakuję':'Zbieram grupę · atakuję';
   return <div className={`lure-progress ${reason?'is-fighting':''}`} role="status" aria-label="Postęp lurowania" title={`W grupie ${count}/${goal} · ${caption}`}>
     <div><strong>W grupie <b>{count} <span>/ {goal}</span></b></strong><small>{caption}</small></div>
