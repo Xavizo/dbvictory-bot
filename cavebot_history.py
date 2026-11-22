@@ -128,9 +128,11 @@ class RunHistory:
         cause = block.get('cause')
         blocked_now = cause and (cause in o.reason or o.reason.startswith('Brak potwierdzenia kroku'))
         target = block.get('target') if blocked_now else self.last_target
+        next_index = o.index + 1
+        route_next = o.path[next_index] if next_index < len(o.path) else None
         return dict(ms=round(now*1000),route=o.name,revision=self.revision,draft_id=getattr(o,'draft_id',None),lap=o.laps,
                     position=list(gs.position),waypoint=None if current is None else current+1,
-                    reason=o.reason, step_target=target, movement=o.domains.movement_state,combat=combat.phase,
+                    reason=o.reason, step_target=target, route_next=route_next, movement=o.domains.movement_state,combat=combat.phase,
                     lure=group,manual=now<o.manual_until,block_cause=cause if blocked_now else None,
                     hold_reason=o.navigation_hold, xp=xp if xp_ok else None,
                     senzu=usage.total if usage else None,deaths=getattr(gs,'session_kills',None))

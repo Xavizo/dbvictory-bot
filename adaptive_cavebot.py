@@ -729,6 +729,13 @@ class AdaptiveCavebot:
     def pass_ordinary_waypoint(self, sample, *, displaced=False):
         choice = self.waypoint_pass_choice(sample, displaced=displaced)
         if not choice:
+            if not displaced:
+                # A detour can change the neighbors of a marker between laps.
+                # Revoke its temporary offset before dispatch checks it again.
+                pending = next((cp for cp in self.checkpoints
+                                if cp['index'] == self.index + 1 and 'exact_point' in cp), None)
+                if pending is not None:
+                    self.path[pending['index']] = pending.pop('exact_point')
             return False
         row, exact, chosen = choice
         if chosen == exact:
@@ -1610,6 +1617,8 @@ class AdaptiveCavebot:
                 continue
             # Combat may have awaited attack/spell pacing; use current terrain.
             sample=await self.fresh_map()
+            if list(self.state.game_state.position) != pos:
+                continue
             delayed = self.delayed_departure(pos)
             shortcut = self.pass_ordinary_waypoint(sample) and tuple(self.path[self.index+2]) != delayed
             if not shortcut and not self.combat.placement:self.vary_leg(sample)
@@ -1647,6 +1656,15 @@ class AdaptiveCavebot:
                     self.navigation_hold=str(exc);self.logs.append('Ruch: '+str(exc));continue
                 finally:self._route_command=False;self._route_boundary=False
             else:
+                if pos == target:
+                    # Restoring the authored marker can put it under the player.
+                    # The fresh map already confirms arrival at this ordinary tile.
+                    self.index += 1
+                    self.mark_waypoint()
+                    self.blockage = None
+                    self.failures = 0
+                    self.save_session_cursor()
+                    continue
                 if distance(pos, target) > 1:
                     if await self.reconnect_route_step(pos, target):
                         continue

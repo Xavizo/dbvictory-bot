@@ -45,10 +45,13 @@ def test_metrics_use_confirmed_counters_and_distinguish_zero():
 def test_stationary_event_and_retained_destination():
     lap=Lap(frame(0),False,0)
     for ms in (1000,2000,3000,4000,5000):
-        lap.observe(frame(ms,step_target=[668,481,7],reason='czekam na mapę'))
+        lap.observe(frame(ms,step_target=[667,481,7],route_next=[668,481,7],reason='czekam na mapę'))
     lap.observe(frame(5100,position=[668,481,7]))
     assert [(e['kind'],e['target']) for e in lap.events if e['kind'] in {'stationary','moved'}] == [
-        ('stationary',[668,481,7]),('moved',None)]
+        ('stationary',[667,481,7]),('moved',None)]
+    stop = next(e for e in lap.events if e['kind'] == 'stationary')
+    assert (stop['route_next'], stop['movement'], stop['combat']) == ([668,481,7], 'running', 'route')
+    assert '(668, 481, 7)' in stop['detail']
 
 
 def owner_for(path):
@@ -58,7 +61,7 @@ def owner_for(path):
     combat=NS(policy_mode='lure',config={'lure_count':4},confirmed_count=2,lure_waiting=False,lure_stop_reason=None,
               phase='lure',target={'id':5},bank_members=set(),pursuit=NS(following={5,6}))
     return NS(state=state,route_draft=None,checkpoints=[],last_waypoint=0,combat=combat,manual_until=0,domains=NS(movement_state='running'),
-              index=0,loop_start=0,laps=0,name='Saiyan',reason='Marsz',blockage=None,navigation_hold=None)
+              path=[[50,50,7],[51,50,7]],index=0,loop_start=0,laps=0,name='Saiyan',reason='Marsz',blockage=None,navigation_hold=None)
 
 
 def test_live_report_closes_once_persists_and_recovers_after_panel_and_engine_restart(tmp_path):

@@ -80,7 +80,12 @@ class Lap:
                 self.event(frame, 'moved')
             self.still_since, self.still = frame['ms'], False
         elif frame.get('position') and not self.still and frame['ms'] - self.still_since >= 4000:
-            self.event(frame, 'stationary', detail or frame.get('reason') or code)
+            next_tile = frame.get('route_next')
+            reason = detail or frame.get('reason') or code
+            if next_tile is not None:
+                reason = f'{reason} Następne pole trasy {tuple(next_tile)}.'
+            self.event(frame, 'stationary', reason)
+            self.events[-1].update(route_next=next_tile, movement=frame.get('movement'), combat=frame.get('combat'))
             self.still = True
         if frame.get('waypoint') != self.prev.get('waypoint'):
             self.event(frame, 'waypoint')

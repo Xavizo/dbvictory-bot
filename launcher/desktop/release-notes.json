@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.19.2",
+    "changes":[
+      {"title":"Przejście przez waypoint po obejściu przeszkody","detail":"Gdy obejście zmieni odcinek trasy, Cavebot ponownie wyznaczy krok do waypointu. Raport postoju zapisuje następne pole trasy i stan ruchu."}
+    ]
+  },
+  {
     "version":"v1.19.1",
     "changes":[
       {"title":"Świat otwiera się przy postaci","detail":"Ctrl + kółko przełącza piętra w tym samym kadrze. Expowiska otwierają lokalny obszar, a podświetlenie zbadanych pól możesz włączyć w Warstwach."}

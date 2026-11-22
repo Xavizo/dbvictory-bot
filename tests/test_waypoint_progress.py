@@ -352,3 +352,36 @@ def test_adjacent_draft_markers_keep_their_exact_step(state, tmp_path):
     original = deepcopy(c.path)
     assert not c.pass_ordinary_waypoint(c.map_now())
     assert c.path == original
+
+
+@pytest.mark.parametrize('origin', [(657,440,7), (658,439,7)])
+def test_replanned_exit_from_offset_waypoint_does_not_stall_next_lap(state, tmp_path, origin):
+    # The previous lap used the tile south of the authored marker. A detour
+    # changed the outgoing leg, so the original two-hop shortcut is now invalid.
+    points = [[655,442,7], [658,439,7], [661,441,7]]
+    c, _, _ = setup(state, tmp_path,
+                    [cell(x,y) for x in range(654,663) for y in range(437,444)], points)
+    approach = [points[0], [656,441,7], [657,440,7]]
+    if list(origin) != approach[-1]:
+        approach.append(list(origin))
+    c.path = approach + [[658,440,7], [659,441,7], [660,441,7], points[2]]
+    c.index = len(approach) - 1
+    c.checkpoints = [dict(index=0, waypoint=0), dict(index=c.index+1, waypoint=1, exact_point=points[1]),
+                     dict(index=len(c.path)-1, waypoint=2)]
+    state.game_state.position = tuple(c.path[c.index])
+    visited = []
+    connect_fake_walk(state, c)
+    send = state.game_proxy.inject_to_server
+
+    async def walk(payload, guard):
+        await send(payload, guard)
+        visited.append(tuple(state.game_state.position))
+
+    state.game_proxy.inject_to_server = walk
+    asyncio.run(asyncio.wait_for(c.run(), 2))
+    if origin != tuple(points[1]):
+        assert tuple(points[1]) in visited
+    else:
+        assert origin not in visited
+    assert c.status == 'complete' and c.last_waypoint == 2
+    assert c.route_draft['points'] == points
