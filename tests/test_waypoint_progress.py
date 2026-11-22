@@ -239,3 +239,116 @@ def test_resume_acknowledges_exact_exit_received_during_pause(state,tmp_path):
     resumed=asyncio.run(c.resume_candidate())
     assert resumed.index==1 and resumed.waypoint_progress()['current']==2
     assert c.index==0 and state.game_proxy._inject_queue.empty()
+
+
+def corner_route(state, tmp_path):
+    points = [[10,10,7], [14,10,7], [14,14,7]]
+    cells = [cell(x,y) for x in range(9,17) for y in range(8,16)]
+    c, _, _ = setup(state, tmp_path, cells, points)
+    c.path = [[x,10,7] for x in range(10,15)] + [[14,y,7] for y in range(11,15)]
+    c.checkpoints = [dict(index=i, waypoint=w) for w,i in enumerate((0,4,8))]
+    c.index = 3
+    state.game_state.position = tuple(c.path[3])
+    return c, cells
+
+
+def test_open_corner_skips_only_after_ack_and_does_not_change_draft(state, tmp_path):
+    c, _ = corner_route(state, tmp_path)
+    original = deepcopy(c.route_draft)
+    assert c.pass_ordinary_waypoint(c.map_now())
+    assert c.index == 3 and c.waypoint_progress()['current'] == 1
+    connect_fake_walk(state, c)
+    send = state.game_proxy.inject_to_server
+    walked = []
+
+    async def walk(payload, guard):
+        await send(payload, guard)
+        walked.append(state.game_state.position)
+        if len(walked) == 1:
+            assert c.last_waypoint == 0
+
+    state.game_proxy.inject_to_server = walk
+    asyncio.run(asyncio.wait_for(c.run(), 2))
+    assert walked[0] == (14,11,7) and (14,10,7) not in walked
+    assert c.tolerated_waypoints == 1 and c.last_waypoint == 2
+    assert c.route_draft == original and c.path[4] == [14,10,7]
+
+
+def test_resume_after_corner_arrival_before_route_tick(state, tmp_path):
+    c, _ = corner_route(state, tmp_path)
+    c.status = 'paused'
+    c._pending_shortcut = [3, [14,11,7]]
+    state.game_state.position = (14,11,7)
+    resumed = asyncio.run(c.resume_candidate())
+    assert (resumed.index, resumed.last_waypoint, resumed.tolerated_waypoints) == (5, 1, 1)
+    assert resumed._pending_shortcut is None
+    assert state.game_proxy._inject_queue.empty()
+
+
+@pytest.mark.parametrize('condition', ['open', 'wall', 'action', 'label', 'stale', 'lure_stop'])
+def test_displaced_beside_waypoint_requires_open_connection(state, tmp_path, condition):
+    c, cells = corner_route(state, tmp_path)
+    c.status = 'running'
+    state.game_state.position = (13,12,7)  # two tiles from the draft marker
+    sample = c.map_now()
+    if condition == 'wall':
+        next(t for t in cells if (t['x'],t['y']) == (13,11))['kind'] = 'blocked'
+    if condition == 'action':
+        c.edges = [dict(origin=[14,10,7],entry=[14,11,7],exit=[14,10,6])]
+    if condition == 'label':
+        c.route_draft['labels'] = ['', 'zbiórka', '']
+    if condition == 'stale':
+        sample['stale'] = True
+    if condition == 'lure_stop':
+        c.combat.lure_stop_reason = 'limit'
+    if condition != 'open':
+        assert not c.pass_ordinary_waypoint(sample, displaced=True)
+        assert c.index == 3 and c.tolerated_waypoints == 0
+        return
+    assert c.recover_local(sample)
+    assert c.index == 4 and c.last_waypoint == 1 and c.tolerated_waypoints == 1
+    assert c.path[4] == [13,12,7]
+    connect_fake_walk(state,c)
+    asyncio.run(asyncio.wait_for(c.run(), 2))
+    assert c.path[4] == [14,10,7] and c.last_waypoint == 2
+
+
+def test_free_waypoint_in_single_tile_corridor_stays_exact(state, tmp_path):
+    points = [[10,10,7], [14,10,7], [18,10,7]]
+    c, _, _ = setup(state, tmp_path, [cell(x,10) for x in range(10,19)], points)
+    connect_fake_walk(state,c)
+    asyncio.run(asyncio.wait_for(c.run(), 2))
+    assert c.tolerated_waypoints == 0 and c.status == 'complete'
+    assert c.last_waypoint == 2
+
+
+def test_open_room_prefers_clearance_and_restores_waypoint_after_pass(state, tmp_path):
+    points = [[10,10,7], [14,10,7], [18,10,7]]
+    c, _, _ = setup(state,tmp_path,[cell(x,y) for x in range(9,20) for y in range(10,15)],points)
+    c.path = [[x,10,7] for x in range(10,19)]
+    c.checkpoints = [dict(index=i,waypoint=w) for w,i in enumerate((0,4,8))]
+    c.index = 3
+    state.game_state.position = (13,10,7)
+    c.pass_ordinary_waypoint(c.map_now())
+    assert c.path[4] == [14,11,7] and c.last_waypoint == 0
+    connect_fake_walk(state,c)
+    asyncio.run(asyncio.wait_for(c.run(), 2))
+    assert c.tolerated_waypoints == 1 and c.path[4] == points[1]
+
+
+def test_new_door_between_player_and_marker_revokes_pending_shortcut(state, tmp_path):
+    c, cells = corner_route(state, tmp_path)
+    origin = c.path[c.index]
+    assert c.pass_ordinary_waypoint(c.map_now())
+    next(t for t in cells if (t['x'],t['y']) == (13,11))['navigation'] = [dict(kind='door')]
+    assert not c.waypoint_pass_still_clear(origin)
+    assert c.last_waypoint == 0 and c.index == 3
+    assert state.game_proxy._inject_queue.empty()
+
+
+def test_adjacent_draft_markers_keep_their_exact_step(state, tmp_path):
+    c, cells = corner_route(state, tmp_path)
+    c.checkpoints.insert(1, dict(index=3, waypoint=0))
+    original = deepcopy(c.path)
+    assert not c.pass_ordinary_waypoint(c.map_now())
+    assert c.path == original

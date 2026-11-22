@@ -3,14 +3,14 @@ import asyncio
 import time
 from time import perf_counter
 import logging
-import random
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from copy import copy,deepcopy
 from route_identity import navigation_revision,same_route
+from cavebot_walking import OFFSETS, distance, walkable, step_clear, detour, varied_detour, waypoint_tile
 from collections import deque
 from cavebot_combat import CombatRuntime,validate_combat
-from protocol import Direction,ClientOpcode,build_walk_packet,build_use_item_packet,build_use_item_ex_packet,build_move_item_packet
+from protocol import ClientOpcode,build_walk_packet,build_use_item_packet,build_use_item_ex_packet,build_move_item_packet
 from combat_wave import TURN_OPCODES
 from navigation_tools import WEB_ITEM_IDS, covering_bodies, covering_body, cuttable_web, supported_transition, transition_tools, web_edge
 
@@ -41,8 +41,6 @@ def fresh_health(gs):
 log=logging.getLogger(__name__)
 NAME="adaptive_cavebot"
 LEGACY={"cavebot","cavebot2"}
-OFFSETS={(0,-1):Direction.NORTH,(1,0):Direction.EAST,(0,1):Direction.SOUTH,(-1,0):Direction.WEST,
-         (1,-1):Direction.NORTHEAST,(1,1):Direction.SOUTHEAST,(-1,1):Direction.SOUTHWEST,(-1,-1):Direction.NORTHWEST}
 MANUAL_MOVES={ClientOpcode.NEW_WALK,ClientOpcode.AUTO_WALK,ClientOpcode.STOP_WALK,ClientOpcode.FOLLOW,*[ClientOpcode(n) for n in (0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d)]}
 WALK_OPCODES={0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d}
 
@@ -76,12 +74,6 @@ class WalkTiming:
                  self.number, self.target, self.position_ms,
                  "-" if self.map_ms is None else f"{self.map_ms:.1f}", outcome)
 
-def distance(a,b):return max(abs(a[0]-b[0]),abs(a[1]-b[1])) if a[2]==b[2] else 100000
-def walkable(cell):
-    return bool(cell and cell.get("kind")=="clear" and
-                cell.get("occupants",0)<=cell.get("occupant_types",{}).get("self",0) and
-                all(f["kind"] in {"rope_spot","ladder"} for f in cell.get("navigation",[])))
-
 def visible_linked_stairs(tile, edge):
     if not tile or tile.get('kind') not in {'clear', 'blocked'}:
         return False
@@ -94,69 +86,6 @@ def visible_linked_stairs(tile, edge):
 def web_passable(tile):
     return (walkable(tile) and not tile.get('navigation') and not tile.get('transitions')
             and not any(i['id'] in WEB_ITEM_IDS for i in tile['items']))
-
-def step_clear(cells,origin,target,blocked=(),door=False):
-    tiles={(c['x'],c['y'],c['z']):c for c in cells}
-    def allowed(p):
-        c=tiles.get(tuple(p))
-        if tuple(p) in blocked or not c:return False
-        if door and list(p)==target:
-            return (c.get('kind')=='clear' and c.get('occupants',0)<=c.get('occupant_types',{}).get('self',0) and
-                    any((f['kind'] in {'door','level_gate'} or (f['kind']=='passage' and f.get('behavior_hint') in {'use_enters','open_then_step'}))
-                        and f.get('door_state_hint')=='open' for f in c.get('navigation',[])))
-        return walkable(c)
-    # The client enters only the diagonal destination, not the two side tiles.
-    return distance(origin,target)==1 and allowed(target)
-
-def detour(cells,start,end,blocked=()):
-    """Bounded local BFS: only fresh visible terrain, no unobserved transitions."""
-    start,end=tuple(start),tuple(end);tiles={(c['x'],c['y'],c['z']):c for c in cells};blocked=set(blocked)
-    allowed=lambda p:p not in blocked and walkable(tiles.get(p))
-    queue=deque([start]);previous={start:None}
-    while queue and len(previous)<=512:
-        p=queue.popleft()
-        if p==end:
-            path=[]
-            while p is not None:path.append(list(p));p=previous[p]
-            return path[::-1]
-        for dx,dy in OFFSETS:
-            q=(p[0]+dx,p[1]+dy,p[2])
-            if q in previous or not allowed(q):continue
-            previous[q]=p;queue.append(q)
-    return None
-
-def varied_detour(cells,start,end,reference,blocked=(),rng=None):
-    """One bounded bend per leg; only known walkable cells, at most two extra steps."""
-    # Stay within 2 SQM of this ordinary leg, without revisiting cells.
-    corridor=[c for c in cells if any(distance((c['x'],c['y'],c['z']),p)<=2 for p in reference)]
-    shortest=detour(corridor,start,end,blocked)
-    if not shortest or len(shortest)<7:return shortest
-    rng=rng or random.SystemRandom()
-    mid=shortest[len(shortest)//2];options=[shortest]
-    for c in corridor:
-        anchor=[c['x'],c['y'],c['z']]
-        if anchor==mid or distance(anchor,mid)>2 or not walkable(c):continue
-        a=detour(corridor,start,anchor,blocked);b=detour(corridor,anchor,end,blocked)
-        if not a or not b:continue
-        path=a[:-1]+b
-        if len(path)>len(shortest)+2 or len({tuple(v) for v in path})!=len(path):continue
-        # Prefer broad, simple bends; avoid a random zigzag at every step.
-        dirs=[(q[0]-p[0],q[1]-p[1]) for p,q in zip(path,path[1:])]
-        if sum(a!=b for a,b in zip(dirs,dirs[1:]))>3:continue
-        if path not in options:options.append(path)
-    # Compare alternatives against the whole visible room, including the
-    # free space just outside the permitted band around the route.
-    terrain = {(c['x'],c['y'],c['z']) for c in cells if walkable(c)} - set(blocked)
-    def clearance_cost(path):
-        cost = len(path) - len(shortest)
-        for x,y,z in path[1:-1]:
-            free = sum((x+dx,y+dy,z) in terrain for dx,dy in OFFSETS)
-            cost += 8 - free
-        return cost
-    costs = [clearance_cost(path) for path in options]
-    best = min(costs)
-    return rng.choice([path for path,cost in zip(options,costs) if cost == best])
-
 
 def tool_location(snapshot,tool_ids):
     for iid in tool_ids:
@@ -201,6 +130,7 @@ class AdaptiveCavebot:
         self.checkpoints=[];self.route_draft=None;self.last_waypoint=None;self.tolerated_waypoints=0
         self._saved_plan = None
         self._unresolved_destination = None
+        self._pending_shortcut = None
         self.navigation_hold=None
         self._held_web=None
         self._pending_body_move=None
@@ -230,15 +160,26 @@ class AdaptiveCavebot:
                     navigation_revision=navigation_revision(self.route_draft) if self.route_draft else None,
                     tolerated=self.tolerated_waypoints)
 
-    def mark_waypoint(self):
-        for c in self.checkpoints:
-            if c['index']==self.index:self.last_waypoint=c['waypoint']
+    def mark_waypoint(self, *, passed_beside=False):
+        for checkpoint in self.checkpoints:
+            k = checkpoint['index']
+            exact = checkpoint.get('exact_point')
+            if k == self.index:
+                if (passed_beside or exact) and self.last_waypoint != checkpoint['waypoint']:
+                    self.tolerated_waypoints += 1
+                self.last_waypoint = checkpoint['waypoint']
+            elif exact and 0 < k < self.index and k + 1 < len(self.path):
+                # Drop the temporary walking line once past it. A detour may
+                # have changed its neighbors since it was planned.
+                if all(distance(p, exact) == 1 for p in (self.path[k-1], self.path[k+1])):
+                    self.path[k] = checkpoint.pop('exact_point')
 
     def session_cursor(self, pending=None):
         plan = dict(path=self.path, edges=self.edges, checkpoints=self.checkpoints, loop_start=self.loop_start,
                     scope=self.scope, draft_id=self.draft_id, loop=self.loop, min_hp=self.min_hp)
         cursor = dict(index=self.index, last_waypoint=self.last_waypoint, laps=self.laps,
                       tolerated_waypoints=self.tolerated_waypoints, pending=pending,
+                      pending_shortcut=self._pending_shortcut,
                       revision=navigation_revision(self.route_draft))
         return cursor, plan
 
@@ -276,6 +217,7 @@ class AdaptiveCavebot:
         controller.guard()
         controller.map_now()
         controller._unresolved_destination = saved["pending"]
+        controller._pending_shortcut = saved.get("pending_shortcut")
         controller.status = "paused"
         controller.reason = "Odzyskano postęp po restarcie. Możesz wznowić trasę."
         return controller
@@ -454,6 +396,7 @@ class AdaptiveCavebot:
                                  for n,w in anchors if loop or n>=offset],key=lambda c:(c['index'],c['waypoint']))
         self.last_waypoint=None;self.tolerated_waypoints=0
         self.loop=loop;self.index=0;self.laps=0;self.name=draft['name'];self.status='ready';self.reason=f'Trasa przygotowana od waypointu {join+1}.'
+        self._pending_shortcut=None
         self.blocked={};self.failures=0;self.recovery_attempts.clear();self.recovery_count=0
         self.mark_waypoint()
 
@@ -498,7 +441,7 @@ class AdaptiveCavebot:
         # Pause may arrive after a step/use was sent but before its acknowledgment
         # advanced the cursor. A fresh exact next position completes that step;
         # in particular never ask the player to repeat an acknowledged descent.
-        if c.index+1<len(c.path) and pos==c.path[c.index+1]:
+        if not c.confirm_shortcut(pos) and c.index+1<len(c.path) and pos==c.path[c.index+1]:
             c.index+=1;c.mark_waypoint()
         if pos!=c.path[c.index]:
             await asyncio.to_thread(c._plan_resume,atlas,pos,observations)
@@ -521,11 +464,11 @@ class AdaptiveCavebot:
         old=self.path;anchors=self.checkpoints;approach=entry['path']
         if self.loop and offset>=begin:
             cycle=old[offset:-1]+old[begin:offset+1]
-            rows=[dict(index=(r['index']-offset if r['index']>=offset else r['index']-offset+size)+len(approach)-1,waypoint=r['waypoint'])
+            rows=[dict(r,index=(r['index']-offset if r['index']>=offset else r['index']-offset+size)+len(approach)-1)
                   for r in anchors if r['index']>=begin]
         else:
             cycle=old[offset:]
-            rows=[dict(index=r['index']-offset+len(approach)-1,waypoint=r['waypoint']) for r in anchors if r['index']>offset]
+            rows=[dict(r,index=r['index']-offset+len(approach)-1) for r in anchors if r['index']>offset]
         self.path=approach[:-1]+cycle;self.checkpoints=sorted(rows,key=lambda r:(r['index'],r['waypoint']))
         self.loop_start=len(approach)-1+max(0,begin-offset);self.index=0
 
@@ -743,6 +686,79 @@ class AdaptiveCavebot:
         self.replace_path(self.index,end,local);self.variation_until=self.index+len(local)-1
         return True
 
+    def waypoint_pass_choice(self, sample, *, displaced=False):
+        """Choose the last step into a waypoint area from the current live room."""
+        k = self.index + 1
+        if self.index < self.loop_start or k + 1 >= len(self.path) or not self.route_draft:
+            return None
+        if self.combat.placement or self.combat.lure_stop_reason:
+            return None
+        row = next((cp for cp in self.checkpoints if cp['index'] >= k), None)
+        if not row or row['index'] != k:
+            return None
+        # Adjacent markers may describe precise short legs. Do not reshape
+        # their shared step or credit two markers at one observed position.
+        if sum(cp['index'] == k for cp in self.checkpoints) != 1 or (
+                not displaced and any(cp['index'] == self.index for cp in self.checkpoints)):
+            return None
+        number = row['waypoint']
+        draft = self.route_draft
+        labels = draft.get('labels') or []
+        if number >= len(draft['points']) or (number < len(labels) and labels[number]):
+            return None
+        exact = draft['points'][number]
+        if row.get('exact_point', self.path[k]) != exact:
+            return None
+        origin, onward = self.path[k-1], self.path[k+1]
+        if origin == onward or distance(origin, exact) != 1 or distance(exact, onward) != 1:
+            return None
+        pos = list(self.state.game_state.position)
+        if (sample.get('status') != 'ready' or sample.get('stale') or sample.get('age_seconds', 99) > .6
+                or sample.get('center') != pos or (not displaced and pos != origin)):
+            return None
+        protected = {tuple(e[key]) for e in self.edges for key in ('origin','entry','exit') if e.get(key)}
+        now = time.monotonic()
+        excluded = protected | {p for p, until in self.blocked.items() if until > now}
+        preferred = self.path[k] if row.get('exact_point') else None
+        chosen = waypoint_tile(sample['cells'], excluded, origin, exact, onward, pos,
+                               displaced=displaced, preferred=preferred)
+        return (row, exact, chosen) if chosen is not None else None
+
+    def pass_ordinary_waypoint(self, sample, *, displaced=False):
+        choice = self.waypoint_pass_choice(sample, displaced=displaced)
+        if not choice:
+            return False
+        row, exact, chosen = choice
+        if chosen == exact:
+            if 'exact_point' in row:
+                self.path[row['index']] = row.pop('exact_point')
+            return False
+        if not displaced and chosen == self.path[self.index]:
+            return True  # The next tile after the marker is one ordinary step away.
+        self.path[row['index']] = chosen
+        row['exact_point'] = exact
+        if displaced:
+            self.index = row['index']
+            self.mark_waypoint()
+            self.save_session_cursor()
+        return displaced
+
+    def waypoint_pass_still_clear(self, expected):
+        choice = self.waypoint_pass_choice(self.map_now())
+        return bool(choice and choice[2] == expected)
+
+    def confirm_shortcut(self, pos):
+        if not self._pending_shortcut or self._pending_shortcut != [self.index, pos]:
+            return False
+        if self.path[self.index+2:self.index+3] != [pos]:
+            return False
+        self.index += 1
+        self.mark_waypoint(passed_beside=True)
+        self.index += 1
+        self.mark_waypoint()
+        self._pending_shortcut = None
+        return True
+
     def describe_blockage(self,sample,target,*,cancelled=False):
         pos=list(self.state.game_state.position)
         cell=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
@@ -779,7 +795,7 @@ class AdaptiveCavebot:
         if (sample.get('status')!='ready' or sample.get('stale') or sample.get('age_seconds',99)>.6 or
             list(sample.get('center',[]))!=list(self.state.game_state.position)):return False
         checkpoint=next((r for r in self.checkpoints if r['index']>self.index),None)
-        if not checkpoint or checkpoint['index'] >= len(self.path):return False
+        if not checkpoint or checkpoint.get('exact_point') or checkpoint['index'] >= len(self.path):return False
         k=checkpoint['index'];point=self.path[k];pos=list(self.state.game_state.position)
         expected = self.path[self.index]
         displaced = pos != expected
@@ -936,6 +952,9 @@ class AdaptiveCavebot:
         self.guard();pos=list(self.state.game_state.position);now=time.monotonic()
         expected=self.path[self.index]
         if distance(pos,expected)>6:raise ValueError('Recovery: poza lokalnym zasięgiem lub inne piętro — sprawdź drogę powrotną.')
+        if pos != expected and self.pass_ordinary_waypoint(sample, displaced=True):
+            self.recovery_count += 1
+            return True
         if pos == self.next_ordinary_tile(sample):
             self.index += 1
             self.mark_waypoint()
@@ -1481,6 +1500,13 @@ class AdaptiveCavebot:
                 await asyncio.sleep(.05);continue
             self.reason='Dojście do najbliższego osiągalnego waypointu.' if self.index<self.loop_start else 'Nawigacja po trasie.'
             sample=await self.fresh_map();pos=list(self.state.game_state.position)
+            if self._pending_shortcut and self.confirm_shortcut(pos):
+                self.failures = 0
+                self.blockage = None
+                self.save_session_cursor()
+                continue
+            if self._pending_shortcut and (self.index != self._pending_shortcut[0] or pos != self.path[self.index]):
+                self._pending_shortcut = None
             if self.navigation_hold:
                 if (self._held_web and sample.get('center')==pos and self.index+1<len(self.path)
                         and self._held_web==(pos,self.path[self.index+1])):
@@ -1554,8 +1580,9 @@ class AdaptiveCavebot:
                 continue
             # Combat may have awaited attack/spell pacing; use current terrain.
             sample=await self.fresh_map()
-            if not self.combat.placement:self.vary_leg(sample)
-            target=self.path[self.index+1]
+            shortcut = self.pass_ordinary_waypoint(sample)
+            if not shortcut and not self.combat.placement:self.vary_leg(sample)
+            target=self.path[self.index + (2 if shortcut else 1)]
             edge=next((e for e in self.edges if e['origin']==pos and e['exit']==target),None)
             if edge is None and distance(pos,target)==1:
                 # A web can reappear on a route saved while the field was clear.
@@ -1569,6 +1596,7 @@ class AdaptiveCavebot:
                     self.replace_path(self.index+1,self.index+1,[preferred,target])
                     continue
                 self._route_command=True;self._route_boundary=True
+                self._pending_shortcut = None
                 self.save_session_cursor(pending=target)
                 try:await self.transition(edge,sample)
                 except MovementDeferred as exc:
@@ -1620,8 +1648,16 @@ class AdaptiveCavebot:
                             raise ValueError('Brak widocznego obejścia przeszkody; sprawdź trasę.')
                         await asyncio.sleep(.1);continue
                 self._route_command=True;self._route_boundary=at_transition
+                self._pending_shortcut = [self.index, target] if shortcut else None
                 self.save_session_cursor(pending=target)
-                try:arrived=await self.step(target)
+                try:
+                    # The map can change after planning and before the walk is dispatched.
+                    via = pos if shortcut else next((target for cp in self.checkpoints
+                        if cp['index'] == self.index+1 and cp.get('exact_point')), None)
+                    if via is None:
+                        arrived = await self.step(target)
+                    else:
+                        arrived = await self.step(target, validate=lambda: self.waypoint_pass_still_clear(via))
                 except MovementDeferred as exc:
                     self.reason=str(exc);await asyncio.sleep(.05);continue
                 finally:self._route_command=False;self._route_boundary=False
@@ -1632,5 +1668,7 @@ class AdaptiveCavebot:
                     self.describe_blockage(await self.fresh_map(),target,cancelled=cancelled)
                     if self.failures>=3:self.reason='Brak potwierdzenia kroku — sprawdzam obejście; walka aktywna.'
                     continue
-            self.index+=1;self.mark_waypoint();self.failures=0;self.blockage=None;self._pending_body_move=None
+            if not self.confirm_shortcut(list(self.state.game_state.position)):
+                self.index+=1;self.mark_waypoint()
+            self.failures=0;self.blockage=None;self._pending_body_move=None
             self.save_session_cursor()
