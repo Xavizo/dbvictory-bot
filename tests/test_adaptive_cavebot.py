@@ -9,6 +9,7 @@ import pytest
 import mcp_server as server
 from adaptive_cavebot import AdaptiveCavebot,OFFSETS,detour,step_clear
 from map_atlas import MapAtlas
+from cavebot_walking import WalkOutcome
 from protocol import WALK_OPCODES,ClientOpcode,PacketReader
 from test_automation_safety import state,proxy
 
@@ -141,9 +142,9 @@ def test_missing_ack_on_ordinary_step_rechecks_terrain_and_retries(state,tmp_pat
     confirmations=[]
     async def confirm(target,*a,**kw):
         confirmations.append(time.monotonic())
-        if len(confirmations)==1:return False
+        if len(confirmations)==1:return WalkOutcome.TIMEOUT
         state.game_state.position=tuple(target)
-        return True
+        return WalkOutcome.ARRIVED
     c.wait_position=confirm
     asyncio.run(asyncio.wait_for(c.run(),1.9))
     assert c.status=='complete' and c.laps==1 and len(confirmations)==2
@@ -187,6 +188,7 @@ def test_expired_hp_during_dispatched_step_waits_for_same_session(state,tmp_path
     asyncio.run(simulate())
     expected={'arrive':'complete','late_arrival':'complete','stop':'idle','death':'paused','disconnect':'paused'}
     assert sent==[0x66] and c.status==expected[finish] and c.laps==int(expected[finish]=='complete')
+    assert not c.blocked and not c._delayed_departure
 
 
 def stair_edge(action='step'):

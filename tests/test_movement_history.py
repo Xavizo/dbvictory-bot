@@ -7,6 +7,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from adaptive_cavebot import AdaptiveCavebot
+from cavebot_walking import WalkOutcome
 from dashboard_api import _Handler
 from movement_history import MovementHistory
 from packet_observer import log_walk_cancels
@@ -143,7 +144,7 @@ def test_cavebot_timer_and_worker_finalize_on_disconnect(session):
     now,h = session
     controller = AdaptiveCavebot(NS(game_state=NS(movement_history=h),passive_map_monitor=NS(_result=frame())))
     async def timeout(*args):
-        return False
+        return WalkOutcome.TIMEOUT
     controller.wait_position = timeout
     assert not asyncio.run(controller._confirm_walk(B,A))
     h.close()

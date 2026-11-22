@@ -1,5 +1,6 @@
 """Local Cavebot paths over observed tiles. All decisions here are free of session state."""
 from collections import deque
+from enum import Enum
 import random
 
 from protocol import Direction
@@ -7,6 +8,26 @@ from protocol import Direction
 
 OFFSETS={(0,-1):Direction.NORTH,(1,0):Direction.EAST,(0,1):Direction.SOUTH,(-1,0):Direction.WEST,
          (1,-1):Direction.NORTHEAST,(1,1):Direction.SOUTHEAST,(-1,1):Direction.SOUTHWEST,(-1,-1):Direction.NORTHWEST}
+
+
+class WalkOutcome(Enum):
+    ARRIVED = "position_confirmed"
+    CANCELLED = "position_cancelled"
+    DISPLACED = "position_displaced"
+    MANUAL = "position_manual"
+    OBSERVATION_GAP = "position_observation_gap"
+    TIMEOUT = "position_unconfirmed"
+
+    def __bool__(self):
+        # Door, tool and combat callers only need to know if arrival was observed.
+        return self is WalkOutcome.ARRIVED
+
+
+WALK_DETAILS = {
+    WalkOutcome.DISPLACED: "Pozycja zmieniła się w trakcie kroku. Sprawdzam dojście z nowego pola.",
+    WalkOutcome.MANUAL: "Ręczny ruch. Sprawdzę trasę z aktualnej pozycji.",
+    WalkOutcome.OBSERVATION_GAP: "Odczyt pozycji jest nieaktualny. Czekam na świeżą próbkę.",
+}
 
 
 def distance(a,b):return max(abs(a[0]-b[0]),abs(a[1]-b[1])) if a[2]==b[2] else 100000
@@ -28,7 +49,7 @@ def step_clear(cells,origin,target,blocked=(),door=False):
     # The client enters only the diagonal destination, not the two side tiles.
     return distance(origin,target)==1 and allowed(target)
 
-def detour(cells,start,end,blocked=()):
+def detour(cells,start,end,blocked=(),*,skip_first=None):
     """Bounded local BFS: only fresh visible terrain, no unobserved transitions."""
     start,end=tuple(start),tuple(end);tiles={(c['x'],c['y'],c['z']):c for c in cells};blocked=set(blocked)
     allowed=lambda p:p not in blocked and walkable(tiles.get(p))
@@ -41,7 +62,7 @@ def detour(cells,start,end,blocked=()):
             return path[::-1]
         for dx,dy in OFFSETS:
             q=(p[0]+dx,p[1]+dy,p[2])
-            if q in previous or not allowed(q):continue
+            if q in previous or (p == start and q == skip_first) or not allowed(q):continue
             previous[q]=p;queue.append(q)
     return None
 

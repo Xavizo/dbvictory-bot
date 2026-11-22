@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from cavebot_walking import WalkOutcome
 from adaptive_cavebot import OFFSETS
 from game_state import scan_packet
 from protocol import ServerOpcode, WALK_OPCODES
@@ -313,3 +314,76 @@ def test_uncorrelated_cancel_does_not_abort_next_position_confirmation(state, tm
         assert not ctrl._route_attempt.get("cancelled")
 
     asyncio.run(scenario())
+
+@pytest.mark.parametrize("manual", [False, True], ids=["correction", "manual"])
+def test_displacement_keeps_target_walkable_and_rejoins_once(state, tmp_path, manual):
+    origin, end = [1055,1281,7], [1055,1284,7]
+    tiles = [cell(x,y) for x in range(1054,1058) for y in range(1280,1286)]
+    ctrl, _, _ = setup(state, tmp_path, tiles, [origin, end])
+    gs = state.game_state
+    outcomes = []
+    ctrl._observe_report = lambda method,*args: outcomes.append(args) if method == "interrupted" else None
+    sent = []
+    step = ctrl.step
+
+    async def dispatch(payload, guard):
+        assert guard()
+        dx,dy = next(delta for delta,d in OFFSETS.items() if int(WALK_OPCODES[d]) == payload[0])
+        x,y,z = gs.position
+        target = (x+dx,y+dy,z)
+        sent.append(target)
+        if len(sent) == 1:
+            loop = asyncio.get_running_loop()
+            def displace():
+                if manual:
+                    ctrl.motion_generation += 1
+                    ctrl.manual_until = time.monotonic() + .02
+                gs.position = (1056,1282,7)
+            loop.call_later(.01, displace)
+        else:
+            gs.position = target
+        ctrl.last_command = 0
+
+    results = []
+    async def observe(*args, **kwargs):
+        result = await step(*args, **kwargs)
+        results.append(result)
+        return result
+
+    ctrl.step = observe
+    state.game_proxy.inject_to_server = dispatch
+    asyncio.run(asyncio.wait_for(ctrl.run(), 3))
+    assert results[0] is (WalkOutcome.MANUAL if manual else WalkOutcome.DISPLACED)
+    assert all(result is WalkOutcome.ARRIVED for result in results[1:])
+    assert not ctrl.blocked and not ctrl._delayed_departure
+    assert tuple(origin) not in sent[1:] and gs.position == tuple(end)
+    assert ctrl.status == 'complete' and ctrl.laps == 1
+    assert outcomes[0][1] == 'position_interrupted' and outcomes[0][2]
+
+
+def test_lost_confirmation_skips_only_first_hop_and_can_enter_same_tile(state, tmp_path):
+    origin, target = [10,10,7], [11,10,7]
+    cells = [cell(*p) for p in (origin, target, [10,11,7])]
+    ctrl, _, _ = setup(state, tmp_path, cells, [origin,target])
+    gs = state.game_state
+    sent = []
+    real_wait = ctrl.wait_position
+
+    async def wait(target, origin, timeout, intermediate, recover):
+        return await real_wait(target, origin, .035, intermediate, recover)
+
+    async def dispatch(payload, guard):
+        assert guard()
+        dx,dy = next(delta for delta,d in OFFSETS.items() if int(WALK_OPCODES[d]) == payload[0])
+        x,y,z = gs.position
+        destination = (x+dx,y+dy,z)
+        sent.append(destination)
+        if len(sent)>1:
+            gs.position = destination
+        ctrl.last_command = 0
+
+    ctrl.wait_position = wait
+    state.game_proxy.inject_to_server = dispatch
+    asyncio.run(asyncio.wait_for(ctrl.run(), 1))
+    assert sent == [tuple(target),(10,11,7),tuple(target)]
+    assert ctrl.status == 'complete' and ctrl.laps == 1 and not ctrl.blocked

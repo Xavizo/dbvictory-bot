@@ -249,7 +249,7 @@ class MovementHistory:
             now = self.clock()
             self._event(now, stage, outcome=outcome, target=tuple(target), elapsed_ms=round(elapsed_ms,1))
             if stage == "route_position":
-                if outcome in {"position_unconfirmed", "position_cancelled"}:
+                if outcome in {"position_unconfirmed", "position_cancelled", "position_displaced", "position_observation_gap"}:
                     self._trigger(now, outcome)
                 if outcome != "position_confirmed" and self.pending and self.pending["source"] == "cavebot":
                     self.pending = None

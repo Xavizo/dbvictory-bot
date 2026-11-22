@@ -21,7 +21,7 @@ def test_confirmed_walk_measures_only_position_and_following_map(monkeypatch, ca
 
     async def position(*args):
         now[0] += .030
-        return True
+        return nav.WalkOutcome.ARRIVED
 
     async def current_map():
         now[0] += .017
@@ -64,7 +64,7 @@ def test_unconfirmed_walk_has_no_map_measurement(interrupted, caplog):
     async def position(*args):
         if interrupted:
             raise asyncio.CancelledError()
-        return False
+        return nav.WalkOutcome.TIMEOUT
 
     controller.wait_position = position
     step = controller._confirm_walk([11, 10, 7], [10, 10, 7])
@@ -72,7 +72,7 @@ def test_unconfirmed_walk_has_no_map_measurement(interrupted, caplog):
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(step)
     else:
-        assert asyncio.run(step) is False
+        assert asyncio.run(step) is nav.WalkOutcome.TIMEOUT
     assert controller._map_after_walk is None
     assert "map_ms=- outcome=position_" in caplog.text
 
@@ -146,3 +146,22 @@ def test_map_retry_excludes_time_between_attempts(monkeypatch, caplog):
     asyncio.run(controller.fresh_map())
     assert "map_ms=800.0 outcome=map_timeout" in caplog.text
     assert "map_ms=825.0 outcome=ready" in caplog.text
+
+
+def test_unavailable_position_at_deadline_is_distinct_from_a_timeout():
+    controller = nav.AdaptiveCavebot(SimpleNamespace(game_state=SimpleNamespace(position=(10,10,7))))
+    controller.status = "running"
+    sample = Mock(side_effect=nav.InputsUnavailable("Czekam na próbkę"))
+    controller.guard = sample
+    target, origin = [11,10,7], [10,10,7]
+    async def observe():
+        without_input = await controller._confirm_walk(target, origin, timeout=.02, recover=True)
+        assert without_input is nav.WalkOutcome.OBSERVATION_GAP
+        await controller.handle_walk_failure(without_input, origin, target)
+        assert controller._delayed_departure is None and not controller.blocked
+        controller.guard = lambda: None
+        with_input = await controller._confirm_walk(target, origin, timeout=.02, recover=True)
+        assert with_input is nav.WalkOutcome.TIMEOUT
+        await controller.handle_walk_failure(with_input, origin, target)
+        assert controller.delayed_departure(origin) == tuple(target) and not controller.blocked
+    asyncio.run(observe())

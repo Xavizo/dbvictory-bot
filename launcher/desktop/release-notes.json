@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.17.1",
+    "changes":[
+      {"title":"Ruch po przesunięciu postaci","detail":"Cavebot odróżnia ręczny ruch, zmianę pozycji i przerwę w odczycie od anulowania kroku. Po braku potwierdzenia może dojść do wolnego pola z innej strony."}
+    ]
+  },
+  {
     "version":"v1.17.0",
     "changes":[
       {"title":"Swobodniejsze przejście przez waypoint","detail":"Na otwartej przestrzeni Cavebot może minąć zwykły waypoint o 1–2 pola. Zachowuje kolejność punktów, a przy schodach, drzwiach i oznaczonych celach trzyma się zapisanego dojścia."}
