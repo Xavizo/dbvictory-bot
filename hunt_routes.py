@@ -3,6 +3,7 @@ from collections import Counter, defaultdict
 from functools import lru_cache
 import heapq
 
+from hunt_corridors import crossings, patch, repeat_count, separate_corridors
 from hunt_areas import SIDE, catalogue, checked_sectors, checked_connector, connector_zone, sector
 from map_atlas import MAX_ANCHORS, MAX_EXPANSIONS, navigation_edges
 from navigation_tools import cuttable_web, supported_transition
@@ -153,6 +154,88 @@ def shorten_sweeps(path, clear, *, anchors=None, protected=()):
 
 
 def shorter_draft(atlas,observations,plan,labels):
+    base = _compact_draft(atlas,observations,plan,labels)
+    if not base['complete'] or not base['loop_closed'] or base['return_mode'] != 'closed':
+        return base
+    path = [tuple(p) for p in base['path']]
+    repeated = repeat_count(path)
+    if not repeated or not base['legs']:
+        return base
+    sectors = set(map(sector,path))
+    ground = GroundMap(atlas,atlas.with_recorded_ropes(observations),allowed=sectors)
+    starts = {leg['start'] for leg in base['legs']} | {leg['end'] for leg in base['legs']}
+    linked = {link['from_index'] for link in base['links']}
+    for leg in base['legs']:
+        if leg['from_index'] in linked:
+            starts.update(range(leg['start'],leg['end']+1))
+    walk = [(p,None) for p in path]
+    alt, remap = separate_corridors(walk,ground.clear,pinned=starts,coverage=patch)
+    if alt == walk:
+        return base
+    # One via point can steer a whole leg. Encoding every diagonal turn
+    # as an editable waypoint would make a long sketch hard to maintain.
+    alternatives = []
+    usage = crossings(path)
+    for leg in base['legs']:
+        a,b = leg['start'],leg['end']
+        original = path[a:b+1]
+        segment = [p for p,_ in alt[remap[a]:remap[b]+1]]
+        if segment == original or len(segment) < 3:
+            continue
+        prior = crossings(original)
+        after = crossings(segment)
+        gain = sum(n-(usage[e]==n) for e,n in prior.items())
+        gain -= sum(n-(usage[e]<=prior[e]) for e,n in after.items())
+        if gain <= 0:
+            continue
+        def deviation(i):
+            p = segment[i]
+            distance = min(max(abs(p[0]-q[0]),abs(p[1]-q[1])) for q in original)
+            return distance, -abs(2*i-len(segment)+1)
+        i = max(range(1,len(segment)-1),key=deviation)
+        if deviation(i)[0]:
+            alternatives.append((gain,a,segment[i]))
+    budget = max(2,len(plan['points'])//10)
+    via = {a:p for _,a,p in sorted(alternatives,reverse=True)[:budget]}
+    fields = set(map(patch,path))
+    while via:
+        points = [base['points'][0]]
+        order = {0:0}
+        for leg in base['legs']:
+            if leg['start'] in via:
+                points.append(list(via[leg['start']]))
+            if not leg.get('closing'):
+                order[leg['to_index']] = len(points)
+                points.append(base['points'][leg['to_index']])
+        if len(points)>MAX_ANCHORS:
+            return base
+        links = [dict(from_index=order[l['from_index']],id=l['id']) for l in base['links']]
+        trial = atlas.plan(points,observations,loop=True,links=links)
+        if not trial['complete'] or not trial['loop_closed']:
+            return base
+        missing = fields-set(map(patch,trial['path']))
+        if missing:
+            # The ordinary sketch simulator may take a different diagonal on
+            # either side of a via. Restore any leg that provided lost coverage.
+            reject = [leg['start'] for leg in base['legs'] if leg['start'] in via and
+                      any(patch(p) in missing for p in path[leg['start']:leg['end']+1])]
+            if not reject:
+                return base
+            for index in reject:
+                del via[index]
+            continue
+        after = repeat_count(trial['path'])
+        if (after<repeated and trial['transitions']==base['transitions']
+                and set(map(sector,trial['path']))==sectors
+                and set(map(tuple,trial['avoid_tiles']))<=set(map(tuple,base['avoid_tiles']))
+                and len(trial['path'])<=len(path)+(len(path)-1)//25):
+            trial['corridor_repeats'] = [repeat_count(plan['path']),after]
+            return trial
+        break
+    return base
+
+
+def _compact_draft(atlas,observations,plan,labels):
     """Preview a shorter authored loop with the same entrances, exits and coverage."""
     if not plan['complete'] or not plan['loop_closed'] or plan['return_mode']!='closed':
         return plan
@@ -219,6 +302,28 @@ def simulated(atlas, observations, walk, excluded=frozenset(), allowed=None):
     return dict(points=points, links=links, path=plan['path'], transitions=len(passages), passages=passages)
 
 
+def varied_route(atlas, observations, ground, walk, stops, result):
+    path = result['path']
+    repeats = repeat_count(path)
+    if not repeats:
+        return result
+    selected = set(map(sector,path))
+    def clear(p):
+        return sector(p) in (ground.allowed if ground.allowed is not None else selected) and ground.clear(p)
+    pinned = {i for i,(p,_) in enumerate(walk) if p in stops}
+    other, _ = separate_corridors(walk,clear,pinned=pinned,coverage=sector)
+    if other == walk:
+        return result
+    try:
+        trial = simulated(atlas,observations,other,ground.excluded,ground.allowed)
+    except ValueError:
+        return result
+    if (trial['passages']==result['passages'] and selected<=set(map(sector,trial['path']))
+            and len(trial['path'])<=len(path)+(len(path)-1)//25 and repeat_count(trial['path'])<repeats):
+        return trial
+    return result
+
+
 def propose(atlas, observations, body):
     if not isinstance(body,dict) or body.get('scope') != atlas.scope:
         raise ValueError('Zmieniono atlas. Wczytaj obszary ponownie.')
@@ -262,11 +367,19 @@ def propose(atlas, observations, body):
         cells -= excluded
     if not cells:
         raise ValueError('Pozostaw co najmniej jeden sektor w pętli.')
+    compare = body.get('compare', False)
+    if type(compare) is not bool or compare and (allowed is None or 'approach' in body):
+        raise ValueError('Do porównania pętli wybierz sektory expowiska.')
+    model = None
+    if compare:
+        from hunt_comparison import comparison_model
+        sources = [d for d in info['drafts'] if d['id'] in area['drafts']] if info else []
+        model = comparison_model(atlas, area, sources, cells, observations)
     anchor = body.get('loop_start')
     if anchor is not None and (not position(anchor) or sector(anchor) not in cells|excluded):
         raise ValueError('Początek pętli leży poza wybranym expowiskiem.')
     if key.startswith('manual:') and 'approach' not in body:
-        result = manual_circuit(atlas,observations,area,excluded=excluded,anchor=anchor,allowed=allowed,via=via)
+        result = manual_circuit(atlas,observations,area,excluded=excluded,anchor=anchor,allowed=allowed,via=via,model=model)
         if allowed is None and not excluded and anchor is None:
             remember_check(atlas,area,result)
         return result
@@ -293,10 +406,10 @@ def propose(atlas, observations, body):
                 if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
                     first_seen[tuple(mark['point'])] += mark['count']
     seeds = [tuple(p) for d in atlas.drafts() if d['id'] in area['drafts'] for p in d['points']]
-    return proposed_circuit(atlas, observations, ground, cells, first_seen, seeds, choose_region=allowed is not None, anchor=anchor)
+    return proposed_circuit(atlas, observations, ground, cells, first_seen, seeds, choose_region=allowed is not None, anchor=anchor, model=model)
 
 
-def manual_circuit(atlas, observations, area, *, excluded=frozenset(),anchor=None,allowed=None,via=frozenset()):
+def manual_circuit(atlas, observations, area, *, excluded=frozenset(),anchor=None,allowed=None,via=frozenset(),model=None):
     cells=allowed-via if allowed is not None else set(map(tuple,area['cells']))-excluded
     counts=Counter()
     for mark in area['sightings']:
@@ -304,12 +417,12 @@ def manual_circuit(atlas, observations, area, *, excluded=frozenset(),anchor=Non
             counts[tuple(mark['point'])]+=mark['count']
     rows=atlas.with_recorded_ropes(observations)
     return proposed_circuit(atlas,rows,GroundMap(atlas,rows,excluded,allowed),
-                   cells,counts,[tuple(area['seed'])],choose_region=True,anchor=anchor)
+                   cells,counts,[tuple(area['seed'])],choose_region=True,anchor=anchor,model=model)
 
 
-def proposed_circuit(atlas, observations, ground, cells, sightings, seeds, *, choose_region, anchor):
+def proposed_circuit(atlas, observations, ground, cells, sightings, seeds, *, choose_region, anchor, model=None):
     current = circuit(atlas, observations, ground, cells, sightings, seeds,
-                      choose_region=choose_region, anchor=anchor)
+                      choose_region=choose_region, anchor=anchor, model=model)
     if ground.allowed is None or not current['missing']:
         return current
 
@@ -379,7 +492,7 @@ def round_trip_regions(graph, reverse):
         yield region
 
 
-def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_region=False,anchor=None):
+def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_region=False,anchor=None,model=None):
     travel = ground.allowed if ground.allowed is not None else cells
     ordinary = {(x,y,z) for sx,sy,z in sorted(travel) for x in range(sx,sx+SIDE)
                 for y in range(sy,sy+SIDE) if ground.clear((x,y,z))}
@@ -458,19 +571,26 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
         if link:protected.update((i-1,i))
     path,kept=shorten_sweeps([p for p,_ in walk],ground.clear,protected=protected)
     result=None
+    selected_walk=walk
     if len(path)<len(walk) and len(set(path))>1:
         actions={kept[i]:link for i,(_,link) in enumerate(walk) if link}
         try:
-            trial=simulated(atlas,observations,[(p,actions.get(i)) for i,p in enumerate(path)],ground.excluded,ground.allowed)
+            compact_walk=[(p,actions.get(i)) for i,p in enumerate(path)]
+            trial=simulated(atlas,observations,compact_walk,ground.excluded,ground.allowed)
             visited={sector(p) for p in trial['path']}
             if set(by_sector)<=visited<=travel:
-                result=trial
+                result,selected_walk=trial,compact_walk
         except ValueError:
             pass  # An ambiguous shortcut leaves the original verified walk available.
     if result is None:
         result=simulated(atlas,observations,walk,ground.excluded,ground.allowed)
+    result=varied_route(atlas,observations,ground,selected_walk,{p for p in goals if goals[p]},result)
     visited = {sector(p) for p in result['path']}
     if visited-travel or set(by_sector)-visited:
         raise ValueError('Symulacja zmieniła pokrycie obszaru. Sprawdź granice expowiska.')
-    return dict(**result, entrance=start, covered=len(visited & cells), total=len(cells), via=sorted(travel-cells),excluded=sorted(ground.excluded),
+    full = dict(**result, entrance=start, covered=len(visited & cells), total=len(cells), via=sorted(travel-cells),excluded=sorted(ground.excluded),
                 selected=sorted(cells), missing=sorted(cells-visited), sightings=sum(first_seen.values()))
+    if model is not None:
+        from hunt_comparison import compare_routes
+        full['comparison'] = compare_routes(atlas, observations, ground, graph, goals, walk, full, model)
+    return full

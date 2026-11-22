@@ -15,7 +15,12 @@ type Area={id:string|null;version?:number;name:string;cells:Position[];drafts:st
 type Discovery=Area&{id:string;visits:number;xp:number;eligible:boolean;sightings:Observation[];witnesses?:Witness[];
   needs_recheck?:boolean;check?:{covered?:number;total?:number;missing?:Position[];reason?:string}};
 type Catalogue={scope:string;sector_size:number;areas:Area[];drafts:Draft[];discoveries?:Discovery[]};
-type Circuit={path:Position[];points:Position[];links:{from_index:number;id:string}[];entrance:Position;
+type VariantKind="short"|"respawn"|"full";
+const variantNames:Record<VariantKind,string>={short:"Krótka",respawn:"Pod respawn",full:"Pełna"};
+type Variant={kind:VariantKind;metrics:{seconds:number;xp_hour:number|null;encounters_hour:number;kept_visible:number;repeated_segments:number};
+  geometry:Pick<Circuit,"path"|"points"|"links"|"covered"|"transitions"|"passages">;same_as?:VariantKind};
+type Comparison={variants:Variant[];visits:number;respawn_seconds:number;view_radius:number;observed_return_sectors:number;reference_laps:number;step_seconds:number;fight_seconds:number};
+type Circuit={comparison?:Comparison;path:Position[];points:Position[];links:{from_index:number;id:string}[];entrance:Position;
   covered:number;total:number;missing:Position[];selected:Position[];via?:Position[];passages?:AtlasPassage[];connector?:AtlasConnector;sightings:number;transitions:number};
 const endpoint="http://127.0.0.1:8089/api/map/grounds";
 const label=(n:number|null)=>n===null?"—":n.toLocaleString("pl-PL");
@@ -42,8 +47,12 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const [layer,setLayer]=useState<Observation["kind"]|"spawns"|"live">("spawns");
   const kind=layer==="spawns"||layer==="live"?"first_seen":layer;
   const [focus,setFocus]=useState<GroundLayer["focus"]>(null);
-  const [route,setRoute]=useState<Circuit|null>(null),[approach,setApproach]=useState<Position[]>([]);
-  const [savedDraft,setSavedDraft]=useState(""),[routeError,setRouteError]=useState("");
+  const [baseRoute,setRoute]=useState<Circuit|null>(null),[variant,setVariant]=useState<VariantKind>("full"),[approach,setApproach]=useState<Position[]>([]);
+  const options=baseRoute?.comparison;
+  const activeOption=options?.variants.find(v=>v.kind===variant);
+  const route=baseRoute&&activeOption?{...baseRoute,...activeOption.geometry}:baseRoute;
+  const [saved,setSaved]=useState<Partial<Record<VariantKind,string>>>({}),[routeError,setRouteError]=useState("");
+  const savedDraft=saved[variant];
   const [planning,setPlanning]=useState("");
   const [selection,setSelection]=useState<Position[]|null>(null),[selecting,setSelecting]=useState(false);
   const [confirmedVia,setConfirmedVia]=useState<Position[]|null>(null);
@@ -162,7 +171,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const connector=dirty?undefined:route?.connector;
   const connectorPlaces=connector?[...connector.sectors,...connector.passages.flatMap(t=>[t.entry,t.exit])]:[];
   const connectorFloors=[...new Set(connectorPlaces.map(p=>p[2]))].sort((a,b)=>a-b);
-  const check=route&&!dirty?route:discovery?.check;
+  const check=route&&!dirty?baseRoute:discovery?.check;
   const floorCoverage=useMemo(()=>{
     if(!discovery||!check?.missing?.length)return [];
     const outside=new Set(check.missing.map(p=>p.join(",")));
@@ -183,7 +192,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     setKey(k);setCopy(null);setSpecies("");setLayer("spawns");setError("");setFocus(center(a,location?.[2]??initialFloor));
   }
   function resetRoute(){
-    setRoute(null);setApproach([]);setSavedDraft("");setRouteError("");setSelection(null);setConfirmedVia(null);setPreviousSelection(null);setSelecting(false);baseEntrance.current=null;
+    setRoute(null);setApproach([]);setSaved({});setVariant("full");setRouteError("");setSelection(null);setConfirmedVia(null);setPreviousSelection(null);setSelecting(false);baseEntrance.current=null;
   }
   function selectSectors(a:Position,b:Position){
     if(planning||!selecting||!area||a[2]!==b[2])return;
@@ -202,7 +211,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   }
   async function preview(from?:Position,addConnector=false){
     if(!data||!selected.length||busy||planning||copy||(from&&(!route||dirty)))return;
-    setPlanning(from?"Wyznaczanie dojścia…":"Przeliczanie pętli…");setRouteError("");
+    setPlanning(from?"Wyznaczanie dojścia…":"Porównywanie pętli…");setRouteError("");
     setApproach([]);
     const ctl=new AbortController();previewRequest.current=ctl;
     try{
@@ -210,7 +219,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       const anchor=baseEntrance.current;
       const keepAnchor=anchor&&selected.some(([x,y,z])=>z===anchor[2]&&x<=anchor[0]&&anchor[0]<x+side&&y<=anchor[1]&&anchor[1]<y+side);
       let result=await post(endpoint+"/route",{scope:data.scope,ground:planKey,selected,...(requestedVia.length?{via:requestedVia}:{}),
-        ...(keepAnchor?{loop_start:anchor}:{}),...(from?{approach:from,entrance:route!.entrance}:{})},ctl.signal);
+        ...(keepAnchor?{loop_start:anchor}:{}),...(from?{approach:from,entrance:route!.entrance}:{compare:true})},ctl.signal);
       while(result.ticket){
         await new Promise(resolve=>setTimeout(resolve,350));
         result=await post(endpoint+"/route",{scope:data.scope,ticket:result.ticket},ctl.signal);
@@ -220,7 +229,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
         if(addConnector)setPreviousSelection({sectors:selected,via});
         setConfirmedVia(result.via??[]);
         baseEntrance.current=result.entrance;
-        setRoute(result);setSelecting(false);setSavedDraft("");
+        setRoute(result);setVariant(result.comparison?.visits?"respawn":"full");setSelecting(false);setSaved({});
       }
     }catch(e){if(!ctl.signal.aborted)setRouteError(e instanceof Error?e.message:"Nie udało się wyznaczyć trasy.");}
     finally{if(!ctl.signal.aborted)setPlanning("");}
@@ -230,11 +239,11 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     setPlanning("Zapisywanie szkicu…");setRouteError("");
     try{
       const result=await post("http://127.0.0.1:8089/api/map/drafts",{scope:data.scope,
-        name:(area.name.slice(0,65)+" · pętla atlasu"),points:route.points,links:route.links,loop:true,terrain:{ground:planKey,sectors:route.selected,...(route.via?.length?{via:route.via}:{})}});
+        name:area.name.slice(0,65)+" · "+(options?variantNames[variant]:"pętla atlasu"),points:route.points,links:route.links,loop:true,terrain:{ground:planKey,sectors:route.selected,...(route.via?.length?{via:route.via}:{})}});
       const saved=result.drafts?.find((d:Draft)=>d.id===result.saved_id);
       if(saved)setData(old=>old?{...old,drafts:[{id:saved.id,name:saved.name,terrain:saved.terrain,archived:false,
         laps:0,duration_ms:0,blocked_ms:0,xp_hour:null,senzu_hour:null,latest:null},...old.drafts.filter(d=>d.id!==saved.id)]}:old);
-      setSavedDraft(result.saved_id);
+      setSaved(old=>({...old,[variant]:result.saved_id}));
     }catch(e){setRouteError(e instanceof Error?e.message:"Nie udało się zapisać szkicu.");}
     finally{setPlanning("");}
   }
@@ -305,9 +314,20 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
             <small role="status">Wybrane sektory · {selected.length}{floors.length?" · piętra "+floors.join(", "):""}</small>
             {selecting&&<small>Kliknij sektor lub przeciągnij prostokąt. Zacznij na zielonym, aby odjąć. Ctrl + przeciągnięcie przesuwa mapę.</small>}
           </div>
-          <button className="atlas-primary" disabled={!!planning||busy||!selected.length} onClick={()=>preview()}>{planning==="Przeliczanie pętli…"?planning:route?"Przelicz pętlę":"Zaproponuj pętlę"}</button>
+          <button className="atlas-primary" disabled={!!planning||busy||!selected.length} onClick={()=>preview()}>{planning==="Porównywanie pętli…"?planning:"Porównaj pętle"}</button>
           {routeError&&<p role="alert">{routeError}</p>}
           {dirty&&<small role="status">Wybór zmieniony. Przelicz pętlę przed zapisem.</small>}
+          {route&&!dirty&&options&&<section aria-label="Warianty pętli" className="hunt-variants">
+            {options.variants.map(v=><button key={v.kind} disabled={!!planning} aria-pressed={variant===v.kind}
+              onClick={()=>{setVariant(v.kind);setApproach([]);setRouteError("");}}>
+              <strong>{variantNames[v.kind]}</strong><span>{duration(v.metrics.seconds*1000)} · {v.geometry.covered}/{route.total} sekt.</span>
+              <small>{v.metrics.xp_hour===null?"Za mało danych o XP":`≈ ${v.metrics.xp_hour>=1000000?(v.metrics.xp_hour/1000000).toLocaleString("pl-PL",{maximumFractionDigits:1})+" mln":label(v.metrics.xp_hour)} XP/h`}{v.metrics.kept_visible>0?` · stale w zasięgu: ${v.metrics.kept_visible}`:""}{v.same_as?` · jak ${variantNames[v.same_as]}`:""}</small>
+            </button>)}
+            <details><summary>Założenia szacunku · wizyty z XP {options.visits}</summary>
+              <small>Powtórne przejścia między obszarami 4 × 4 pól · {options.variants.find(v=>v.kind===variant)?.metrics.repeated_segments}. Powrót przez ten sam korytarz może być konieczny w ślepej odnodze.</small>
+              <small>Przyjęty zasięg blokady wynosi {options.view_radius} pól w każdym kierunku na tym samym piętrze. Po upływie czasu spawn może się odnowić dopiero poza tym zasięgiem. Sektory z czasem ponownego spotkania z co najmniej trzech obiegów · {options.observed_return_sectors}. Dla pozostałych model przyjmuje respawn {options.respawn_seconds} s. Liczebność wynika z pierwszych spotkań i grup widzianych razem. Model przyjmuje {options.step_seconds} s na krok i {options.fight_seconds} s walki na potwora. XP pochodzi z wizyt obejmujących wybrane spawny.{options.reference_laps>0&&` Czas i XP dopasowano do ${options.reference_laps} obiegów tej samej wersji szkicu.`}</small>
+            </details>
+          </section>}
           {route&&!dirty&&<><p>Pokrycie {route.covered}/{route.total} sektorów · {route.path.length-1} kroków · przejścia: {route.transitions}</p>
             {connector&&<section aria-label="Proponowany łącznik" className="atlas-connector">
               <strong>Z łącznikiem · {connector.covered}/{route.total} sektorów</strong>

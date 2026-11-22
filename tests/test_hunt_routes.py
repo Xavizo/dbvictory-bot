@@ -189,3 +189,99 @@ def test_same_floor_connector_through_skipped_sector_is_optional(tmp_path):
     assert base['connector']['passages'] == []
     route = propose(atlas, [], dict(request, selected=selected, via=base['connector']['sectors']))
     assert route['covered'] == route['total'] == 2 and route['transitions'] == 0
+
+def test_compare_only_inside_selection_and_preserves_saved_geometry(tmp_path):
+    atlas, req, edges = fixture(tmp_path)
+    sel = [[32,32,7], [40,32,7], [32,32,8]]
+    result = propose(atlas,edges,dict(req,selected=sel,compare=True))
+    options = result['comparison']
+    assert options['visits']==0 and options['respawn_seconds']==60
+    assert [v['kind'] for v in options['variants']]==['short','respawn','full']
+    for opt in options['variants']:
+        g=opt['geometry']
+        assert g['path'][0]==g['path'][-1] and len(g['path'])>2
+        assert g['covered']==len(set(map(sector,g['path'])))
+        assert set(map(sector,g['path']))<=set(map(tuple,sel))
+        assert opt['metrics']['xp_hour'] is None
+        replay=atlas.plan(g['points'],edges,loop=True,links=g['links'])
+        assert replay['loop_closed'] and replay['path']==g['path']
+    assert options['variants'][-1]['geometry']['path']==result['path']
+    assert result['missing']==[(32,32,8)]
+    with pytest.raises(ValueError,match='wybierz sektory'):
+        propose(atlas,edges,dict(req,compare=True))
+
+
+def test_spawn_model_uses_observed_group_and_carries_respawn_between_laps():
+    from hunt_comparison import HuntYield
+    cells={(0,0,7),(8,0,7)}
+    marks=[dict(point=[1,1,7],observer_cell=[0,0,7],count=200)]
+    together=[dict(observer_cell=[0,0,7],points=[[1,1,7],[2,1,7],[3,1,7]])]
+    m=HuntYield(marks,together,cells)
+    assert m.slots[(0,0,7)]==3
+    m.add_visit({(0,0,7):1,(80,80,7):20},1_000_000)
+    assert m.visits==0
+    m.add_visit({(0,0,7):10},1000)
+    tiny=m.estimate([[1,1,7],[2,1,7],[1,1,7]],set())
+    assert tiny['encounters_hour'] == tiny['xp_hour'] == 0 and tiny['kept_visible'] == 3
+    outside = [[x,1,7] for x in range(1,14)]
+    extended = m.estimate(outside+outside[-2::-1],set())
+    assert extended['kept_visible'] == 0 and 100 < extended['encounters_hour'] < 190
+    assert abs(extended['xp_hour']-100*extended['encounters_hour']) <= 6
+    assert 0 in m.visible_slots((9,9,7)) and 0 not in m.visible_slots((10,9,7))
+    assert not m.visible_slots((1,1,8))
+    edge = [[x,1,7] for x in range(1,11)]
+    partial = m.estimate(edge+edge[-2::-1],set())
+    assert partial['kept_visible'] == 2 and 0 < partial['encounters_hour'] < extended['encounters_hour']
+    lower = m.estimate([[1,1,7],[1,1,8],[1,1,7]],{((1,1,7),(1,1,8)),((1,1,8),(1,1,7))})
+    assert lower['kept_visible'] == 0 and lower['encounters_hour'] > 0
+    no_packs=m.estimate([[9,1,7],[10,1,7],[9,1,7]],set())
+    assert no_packs['xp_hour'] is None
+
+def test_restock_evidence_needs_local_kill_departure_and_new_close_contact():
+    from hunt_comparison import observed_returns
+    spot = (0,0,7)
+    def event(kind, second, pos, creature=None):
+        return dict(kind=kind, ms=second*1000, position=pos, monster_position=creature, detail='Mutant')
+    seen = event('first_contact',0,[3,4,7],[4,4,7])
+    killed = event('death',1,[4,4,7],[4,4,7])
+    away = event('waypoint',9,[13,4,7])
+    again = event('first_contact',43,[3,4,7],[5,4,7])
+    assert observed_returns([seen,killed,away,again],{spot:1})=={spot:42}
+    assert not observed_returns([seen,killed,again],{spot:1})
+    assert not observed_returns([seen,killed,event('waypoint',9,[12,4,7]),again],{spot:1})
+    assert not observed_returns([seen,event('death',1,[12,4,7],[12,4,7]),away,again],{spot:1})
+
+
+def test_comparison_uses_parallel_corridor_and_keeps_dead_end_when_forced(tmp_path):
+    from hunt_corridors import repeat_count
+    from hunt_routes import shorter_draft
+    atlas = MapAtlas(tmp_path, '6'*64)
+    upper = [(x,35,7) for x in range(24,57)]
+    lower = [(x,36,7) for x in range(25,56)]
+    points = [list(upper[0]),list(upper[-1]),list(upper[0])]
+    atlas.observe(sample([cell(*p) for p in upper]))
+    forced = atlas.plan(points,[],loop=True)
+    labels = ['Start','Koniec korytarza','Powrót']
+    assert shorter_draft(atlas,[],forced,labels) is forced
+    atlas.observe(sample([cell(*p) for p in lower]))
+    initial = atlas.plan(points,[],loop=True)
+    alternative = shorter_draft(atlas,[],initial,labels)
+    assert repeat_count(alternative['path']) < repeat_count(initial['path'])
+    assert all(p in alternative['points'] for p in points)
+    assert alternative['points'][0] == alternative['points'][-1] == points[0]
+    assert alternative['transitions'] == [] and alternative['loop_closed']
+    assert len(alternative['path']) <= len(initial['path'])+(len(initial['path'])-1)//25
+    assert atlas.plan(alternative['points'],[],links=alternative['links'],loop=True)['path'] == alternative['path']
+
+
+def test_corridor_variation_keeps_both_ends_of_each_action():
+    from hunt_corridors import patch, separate_corridors
+    path = [(x,35,7) for x in range(25,48)]
+    clear = set(path+[(x,36,7) for x in range(26,47)])
+    upstairs = (47,35,6)
+    walk = [(p,None) for p in path]+[(upstairs,'ladder'),(path[-1],'down')]
+    walk.extend((p,None) for p in path[-2::-1])
+    changed, remap = separate_corridors(walk, clear.__contains__,pinned={0,5},coverage=patch)
+    assert changed[remap[5]] == walk[5]
+    assert [(changed[i-1][0],p,action) for i,(p,action) in enumerate(changed) if action] == [
+        (path[-1],upstairs,'ladder'),(upstairs,path[-1],'down')]

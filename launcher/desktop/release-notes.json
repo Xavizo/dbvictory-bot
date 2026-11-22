@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.20.0",
+    "changes":[
+      {"title":"Porównaj pętle na expowisku","detail":"Zaznacz sektory w Atlasie, porównaj krótką, pełną i dopasowaną do respawnu trasę, a potem zapisz wybraną jako szkic. Prognoza uwzględnia blokadę odnowy spawnu w pobliżu postaci."},
+      {"title":"Mniej powrotów tym samym korytarzem","detail":"Przy tworzeniu i optymalizacji pętli Atlas szuka alternatywnego powrotu, zachowując pokrycie terenu i przejścia."}
+    ]
+  },
+  {
     "version":"v1.19.2",
     "changes":[
       {"title":"Przejście przez waypoint po obejściu przeszkody","detail":"Gdy obejście zmieni odcinek trasy, Cavebot ponownie wyznaczy krok do waypointu. Raport postoju zapisuje następne pole trasy i stan ruchu."}
