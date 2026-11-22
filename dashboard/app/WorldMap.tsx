@@ -5,9 +5,11 @@ import {authenticatedFetch} from "@/lib/auth";
 import type {Habitat} from "@/lib/atlasWildlife";
 
 export type Position = [number, number, number];
+export type AtlasPassage={id:string|null;origin:Position;entry:Position;exit:Position;action:string};
+export type AtlasConnector={sectors:Position[];passages:AtlasPassage[];covered:number};
 export type GroundLayer = {cells:Position[]; marks:{position:Position;title:string;exact:boolean;radius?:number;live?:boolean;uncertain?:boolean;minimum?:number}[]; side:number;
   route?:Position[]; approach?:Position[]; missing?:Position[]; planApproach?:(p:Position)=>void;
-  selected?:Position[];selecting?:boolean;selectSectors?:(a:Position,b:Position)=>void;
+  selected?:Position[];via?:Position[];connector?:AtlasConnector;passages?:AtlasPassage[];selecting?:boolean;selectSectors?:(a:Position,b:Position)=>void;
   editing:boolean; toggle:(p:Position)=>void; focus:{floor:number;cells:Position[]}|null};
 type Sector = {x:number; y:number; terrain?:string; atlas?:string};
 type Floor = {floor:number; sectors:Sector[]};
@@ -32,6 +34,25 @@ function RouteLine({path,floor,color,dashed=false}:{path?:Position[];floor:numbe
   },[path,floor]);
   return line?<path d={line} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke"
     strokeDasharray={dashed?"5 3":undefined} strokeLinejoin="round" pointerEvents="none"/>:null;
+}
+
+function ConnectorLayer({proposed,accepted,passages,side,floor}:{proposed?:AtlasConnector;accepted?:Position[];passages?:AtlasPassage[];side:number;floor:number}){
+  const arrows=new Map<string,AtlasPassage>();
+  for(const t of [...(passages??[]),...(proposed?.passages??[])])
+    if(t.entry[2]===floor&&t.exit[2]!==floor)arrows.set(t.entry.join(",")+"|"+t.exit.join(","),t);
+  return <g aria-label="Łączniki pętli">
+    {[{cells:accepted,dashed:false},{cells:proposed?.sectors,dashed:true}].map(({cells,dashed})=>
+      <g key={String(dashed)} fill="#40cfdb" fillOpacity={dashed ? .14 : .29} stroke="#93faff"
+        strokeWidth="2" strokeDasharray={dashed?"5 3":undefined}>
+        {cells?.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y}
+          width={side} height={side} vectorEffect="non-scaling-stroke"><title>{dashed?"Proponowany":"Dodany"} łącznik · {x}, {y}, {floor}</title></rect>)}
+      </g>)}
+    {[...arrows].map(([key,t])=><g key={key} transform={`translate(${t.entry[0]+.5} ${t.entry[1]+.5})`}>
+      <title>Przejście ({t.entry.join(", ")}) → ({t.exit.join(", ")})</title>
+      <circle r="1.4" fill="#163b45" stroke="#93faff" strokeWidth=".2"/>
+      <text y=".47" textAnchor="middle" fontSize="1.4" fontWeight="bold" fill="#e0ffff">{t.exit[2]>floor?"↓":"↑"}{t.exit[2]}</text>
+    </g>)}
+  </g>;
 }
 
 const Sectors = memo(function Sectors({sectors, overlay}:{sectors:Sector[]; overlay:boolean}) {
@@ -175,6 +196,7 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
       <RouteLine path={ground?.approach} floor={floor} color="#73bfff" dashed/>
       {ground?.route?.[0]?.[2]===floor&&<circle cx={ground.route[0][0]+.5} cy={ground.route[0][1]+.5} r="1.2"
         fill="#173a34" stroke="#59f1bc" strokeWidth=".4"><title>Początek pętli expienia</title></circle>}
+      {ground&&<ConnectorLayer proposed={ground.connector} accepted={ground.via} passages={ground.passages} floor={floor} side={side}/>}
       {grid&&<rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#world-sector-grid)" pointerEvents="none"/>}
       {box&&<rect {...box} fill="#29b86a" fillOpacity=".25" stroke="#a4ffc3" strokeWidth="2" vectorEffect="non-scaling-stroke" pointerEvents="none"/>}
       {selection&&<circle cx={selection[0]+.5} cy={selection[1]+.5} r={Math.max(.8,view.width/190)} fill="none" stroke="white" strokeWidth={2} vectorEffect="non-scaling-stroke"/>}

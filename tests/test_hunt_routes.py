@@ -145,3 +145,47 @@ def test_selected_terrain_persists_across_reopen_and_rejects_outside_interaction
     for invalid in ([], [[33,32,7]], [[0,0,7]]):
         with pytest.raises(ValueError):
             propose(reopened, inside, dict(req, selected=invalid))
+
+
+def test_connector_is_a_preview_until_accepted_and_survives_reload(tmp_path):
+    atlas, request, edges = fixture(tmp_path)
+    selected = [[32,32,z] for z in (7,8,9)]
+    original = atlas.drafts()
+    base = propose(atlas, edges, dict(request, selected=selected))
+    suggestion = base['connector']
+    assert (base['covered'], base['total'], base['transitions'], base['via']) == (1, 3, 0, [])
+    assert sorted(suggestion['sectors']) == [(32,24,z) for z in (7,8,9)]
+    assert suggestion['covered'] == 3
+    assert {t['id'] for t in suggestion['passages']} == {e['id'] for e in edges}
+    assert atlas.drafts() == original
+    route = propose(atlas, edges, dict(request, selected=selected, via=suggestion['sectors'],
+                                       loop_start=base['entrance']))
+    assert route['covered'] == route['total'] == 3 and 'connector' not in route
+    assert route['path'][0] == route['path'][-1] == list(base['entrance'])
+    assert len(route['passages']) == route['transitions'] == 4
+    assert sorted(route['selected']) == list(map(tuple, selected))
+    assert sorted(route['via']) == suggestion['sectors']
+    terrain = dict(ground=request['ground'], sectors=selected, via=list(map(list, route['via'])))
+    ident = atlas.save_draft('Łącznik pięter',route['points'], links=route['links'], terrain=terrain)
+    reopened = MapAtlas(tmp_path, atlas.scope)
+    saved = next(d for d in reopened.drafts() if d['id']==ident)
+    assert saved['terrain'] == terrain
+    replay = reopened.plan(saved['points'], edges, links=saved['links'], loop=True)
+    assert replay['complete'] and replay['loop_closed'] and replay['path'] == route['path']
+    permitted = set(route['selected']) | set(route['via'])
+    assert all(sector(t[k]) in permitted for t in replay['transitions'] for k in ('entry','origin','exit'))
+    assert all(sector(p) in permitted for p in replay['path'])
+    assert 'connector' not in propose(atlas, edges[:1], dict(request, selected=selected))
+    for invalid in ([[320,320,8]], 'wrong', None):
+        with pytest.raises(ValueError):
+            propose(atlas, edges, dict(request, selected=selected, via=invalid))
+
+
+def test_same_floor_connector_through_skipped_sector_is_optional(tmp_path):
+    atlas, request, _ = fixture(tmp_path)
+    selected = [[24,32,7],[40,32,7]]
+    base = propose(atlas, [], dict(request, selected=selected))
+    assert base['covered'] == 1 and base['connector']['sectors'] == [(32,32,7)]
+    assert base['connector']['passages'] == []
+    route = propose(atlas, [], dict(request, selected=selected, via=base['connector']['sectors']))
+    assert route['covered'] == route['total'] == 2 and route['transitions'] == 0

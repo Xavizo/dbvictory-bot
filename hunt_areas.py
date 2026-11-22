@@ -21,6 +21,24 @@ def checked_sectors(rows):
     return frozenset(map(tuple,rows))
 
 
+def connector_zone(cells):
+    """Nearby mapped sectors, including an intermediate floor between selected floors."""
+    lowest, highest = min(p[2] for p in cells), max(p[2] for p in cells)
+    return {(x+dx, y+dy, floor) for x,y,z in cells
+            for dx in (-SIDE, 0, SIDE) for dy in (-SIDE, 0, SIDE)
+            for floor in range(max(lowest, z-1), min(highest, z+1)+1)
+            if 0 <= x+dx < 65535 and 0 <= y+dy < 65535}
+
+
+def checked_connector(rows, cells):
+    if rows == []:
+        return frozenset()
+    via = checked_sectors(rows) - cells
+    if via and not via <= connector_zone(cells):
+        raise ValueError('Łącznik leży poza okolicą wybranego terenu.')
+    return via
+
+
 def observed_position(pos):
     return position(pos) and (pos[0] != 0 or pos[1] != 0)
 

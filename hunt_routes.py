@@ -3,7 +3,7 @@ from collections import Counter, defaultdict
 from functools import lru_cache
 import heapq
 
-from hunt_areas import SIDE, catalogue, checked_sectors, sector
+from hunt_areas import SIDE, catalogue, checked_sectors, checked_connector, connector_zone, sector
 from map_atlas import MAX_ANCHORS, MAX_EXPANSIONS, navigation_edges
 from navigation_tools import cuttable_web, supported_transition
 from transition_learning import position
@@ -215,7 +215,8 @@ def simulated(atlas, observations, walk, excluded=frozenset(), allowed=None):
     if allowed is not None and (any(sector(p) not in allowed for p in plan['path']) or
             any(sector(t[k]) not in allowed for t in plan['transitions'] for k in ('origin','entry','exit'))):
         raise ValueError('Odcinek lub przejście wykracza poza zaznaczony teren.')
-    return dict(points=points, links=links, path=plan['path'], transitions=len(plan['transitions']))
+    passages = [{k:t[k] for k in ('id','origin','entry','exit','action')} for t in plan['transitions']]
+    return dict(points=points, links=links, path=plan['path'], transitions=len(passages), passages=passages)
 
 
 def propose(atlas, observations, body):
@@ -247,11 +248,16 @@ def propose(atlas, observations, body):
         raise ValueError('Można pomijać tylko sektory wybranego expowiska.')
     excluded = frozenset(map(tuple,skip))
     allowed = None
+    via = frozenset()
+    if body.get('via', []) != [] and 'selected' not in body:
+        raise ValueError('Łącznik wymaga zaznaczonego terenu.')
     if 'selected' in body:
         allowed = checked_sectors(body['selected'])
         if not allowed <= cells or excluded:
             raise ValueError('Wybór musi zawierać wyłącznie sektory tego expowiska.')
         cells = allowed
+        via = checked_connector(body.get('via', []), cells)
+        allowed = cells | via
     else:
         cells -= excluded
     if not cells:
@@ -260,7 +266,7 @@ def propose(atlas, observations, body):
     if anchor is not None and (not position(anchor) or sector(anchor) not in cells|excluded):
         raise ValueError('Początek pętli leży poza wybranym expowiskiem.')
     if key.startswith('manual:') and 'approach' not in body:
-        result = manual_circuit(atlas,observations,area,excluded=excluded,anchor=anchor,allowed=allowed)
+        result = manual_circuit(atlas,observations,area,excluded=excluded,anchor=anchor,allowed=allowed,via=via)
         if allowed is None and not excluded and anchor is None:
             remember_check(atlas,area,result)
         return result
@@ -287,18 +293,57 @@ def propose(atlas, observations, body):
                 if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
                     first_seen[tuple(mark['point'])] += mark['count']
     seeds = [tuple(p) for d in atlas.drafts() if d['id'] in area['drafts'] for p in d['points']]
-    return circuit(atlas, observations, ground, cells, first_seen, seeds,choose_region=allowed is not None,anchor=anchor)
+    return proposed_circuit(atlas, observations, ground, cells, first_seen, seeds, choose_region=allowed is not None, anchor=anchor)
 
 
-def manual_circuit(atlas, observations, area, *, excluded=frozenset(),anchor=None,allowed=None):
-    cells=allowed if allowed is not None else set(map(tuple,area['cells']))-excluded
+def manual_circuit(atlas, observations, area, *, excluded=frozenset(),anchor=None,allowed=None,via=frozenset()):
+    cells=allowed-via if allowed is not None else set(map(tuple,area['cells']))-excluded
     counts=Counter()
     for mark in area['sightings']:
         if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
             counts[tuple(mark['point'])]+=mark['count']
     rows=atlas.with_recorded_ropes(observations)
-    return circuit(atlas,rows,GroundMap(atlas,rows,excluded,allowed),
+    return proposed_circuit(atlas,rows,GroundMap(atlas,rows,excluded,allowed),
                    cells,counts,[tuple(area['seed'])],choose_region=True,anchor=anchor)
+
+
+def proposed_circuit(atlas, observations, ground, cells, sightings, seeds, *, choose_region, anchor):
+    current = circuit(atlas, observations, ground, cells, sightings, seeds,
+                      choose_region=choose_region, anchor=anchor)
+    if ground.allowed is None or not current['missing']:
+        return current
+
+    def preview(allowed):
+        terrain = GroundMap(atlas, observations, allowed=allowed)
+        return circuit(atlas, observations, terrain, cells, sightings, seeds,
+                       anchor=current['entrance'])
+
+    # An optional preview must never invalidate the usable part of a route.
+    zone = connector_zone(cells)
+    try:
+        broad = preview(zone)
+    except ValueError:
+        return current
+    missing = set(current['missing'])
+    if not set(broad['missing']) < missing:
+        return current
+    footprint = {sector(p) for p in broad['path']}
+    for passage in broad['passages']:
+        footprint.update(sector(passage[key]) for key in ('origin','entry','exit'))
+    extra = footprint - ground.allowed
+    if not extra:
+        return current
+    try:
+        candidate = preview(ground.allowed | extra)
+    except ValueError:
+        return current
+    uncovered = set(candidate['missing'])
+    if not uncovered < missing:
+        return current
+    current['connector'] = dict(sectors=sorted(extra), covered=candidate['covered'],
+                                passages=[t for t in candidate['passages'] if t['origin'][2] != t['exit'][2]
+                                          or sector(t['entry']) in extra])
+    return current
 
 
 def round_trip_regions(graph, reverse):
@@ -335,14 +380,15 @@ def round_trip_regions(graph, reverse):
 
 
 def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_region=False,anchor=None):
-    # Keep the approach from town outside the circuit, even if it is shorter.
-    ordinary = {(x,y,z) for sx,sy,z in sorted(cells) for x in range(sx,sx+SIDE)
+    travel = ground.allowed if ground.allowed is not None else cells
+    ordinary = {(x,y,z) for sx,sy,z in sorted(travel) for x in range(sx,sx+SIDE)
                 for y in range(sy,sy+SIDE) if ground.clear((x,y,z))}
-    if not ordinary:
+    hunting_tiles = {p for p in ordinary if sector(p) in cells}
+    if not hunting_tiles:
         raise ValueError('W granicach expowiska brakuje zapisanych przechodnich pól.')
-    start = next((p for p in seeds if p in ordinary), min(ordinary))
+    start = next((p for p in seeds if p in hunting_tiles), min(hunting_tiles))
     if anchor is not None:
-        nearby=(p for p in ordinary if p[2]==anchor[2])
+        nearby=(p for p in hunting_tiles if p[2]==anchor[2])
         kept=min(nearby,key=lambda p:((p[0]-anchor[0])**2+(p[1]-anchor[1])**2,p),default=None)
         if kept is not None:
             start,choose_region=kept,False
@@ -352,13 +398,14 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
     # permits entering it. The shared simulator checks it again before saving.
     # Use the two player positions for the boundary. A ladder or rope tile
     # clicked from inside the sector can be just beyond its border.
-    webs = {(x,y,z) for sx,sy,z in cells for x in range(sx,sx+SIDE) for y in range(sy,sy+SIDE)
+    webs = {(x,y,z) for sx,sy,z in travel for x in range(sx,sx+SIDE) for y in range(sy,sy+SIDE)
             if (x,y,z) not in ordinary and ground.web((x,y,z))}
     nodes = ordinary | webs | {q for p,links in ground.links.items() for q in links
-                         if sector(p) in cells and sector(q) in cells}
+                         if sector(p) in travel and sector(q) in travel}
     graph, reverse = {}, defaultdict(list)
     for p in sorted(nodes):
-        graph[p] = [(q,w,link) for q,w,link in ground.neighbors(p) if q in nodes]
+        graph[p] = [(q, w if sector(q) in cells else w+60, link)
+                    for q,w,link in ground.neighbors(p) if q in nodes]
         for q,_,_ in graph[p]:
             reverse[q].append(p)
     regions = round_trip_regions(graph, reverse)
@@ -366,20 +413,20 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
         # An XP sample can fall on the approach or in an isolated room.
         # Compare whole circuits once, without running a path search per seed.
         def score(region):
-            fields = region & ordinary
+            fields = region & hunting_tiles
             return (len({sector(p) for p in fields}), sum(first_seen[p] for p in fields),
                     start in fields, len(fields), min(fields))
-        candidates = (region for region in regions if len(region & ordinary)>=2)
+        candidates = (region for region in regions if region & hunting_tiles and len(region)>=2)
         accessible = max(candidates,key=score,default=None)
         if accessible is None:
             raise ValueError('Brak drugiego dostępnego pola z potwierdzonym powrotem.')
         if start not in accessible:
-            start = min(ordinary & accessible,key=lambda p:(-first_seen[p],p))
+            start = min(hunting_tiles & accessible,key=lambda p:(-first_seen[p],p))
     else:
         # Authored grounds keep their explicitly chosen entrance.
         accessible = next(region for region in regions if start in region)
     by_sector = defaultdict(list)
-    for p in sorted(ordinary & accessible):
+    for p in sorted(hunting_tiles & accessible):
         by_sector[sector(p)].append(p)
     # Aim inside each reachable sector, near first sightings where available.
     # A creature seen across a wall is never treated as a walkable waypoint.
@@ -416,14 +463,14 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
         try:
             trial=simulated(atlas,observations,[(p,actions.get(i)) for i,p in enumerate(path)],ground.excluded,ground.allowed)
             visited={sector(p) for p in trial['path']}
-            if set(by_sector)<=visited<=cells:
+            if set(by_sector)<=visited<=travel:
                 result=trial
         except ValueError:
             pass  # An ambiguous shortcut leaves the original verified walk available.
     if result is None:
         result=simulated(atlas,observations,walk,ground.excluded,ground.allowed)
     visited = {sector(p) for p in result['path']}
-    if visited-cells or set(by_sector)-visited:
+    if visited-travel or set(by_sector)-visited:
         raise ValueError('Symulacja zmieniła pokrycie obszaru. Sprawdź granice expowiska.')
-    return dict(**result, entrance=start, covered=len(visited), total=len(cells),excluded=sorted(ground.excluded),
+    return dict(**result, entrance=start, covered=len(visited & cells), total=len(cells), via=sorted(travel-cells),excluded=sorted(ground.excluded),
                 selected=sorted(cells), missing=sorted(cells-visited), sightings=sum(first_seen.values()))

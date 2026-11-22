@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.19.0",
+    "changes":[
+      {"title":"Połącz piętra w Atlasie","detail":"Atlas pokazuje brakujące sektory i przejścia na mapie. Sprawdź przewidywane pokrycie i kliknij Dodaj łącznik, aby uwzględnić go w pętli."}
+    ]
+  },
+  {
     "version":"v1.18.0",
     "changes":[
       {"title":"Zaznacz teren pętli w Atlasie","detail":"Wybierz zielone sektory na jednym lub kilku piętrach. Atlas sprawdzi przebieg pętli i zapisze wybór ze szkicem."}

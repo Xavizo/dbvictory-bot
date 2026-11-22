@@ -494,10 +494,14 @@ class MapAtlas:
             db.execute("INSERT INTO drafts (id,name,points,updated,loop) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,points=excluded.points,updated=excluded.updated,loop=excluded.loop",(draft_id,name.strip(),json.dumps(points),time.time(),int(loop)))
             db.execute('UPDATE drafts SET labels=?,links=? WHERE id=?',(json.dumps(labels),json.dumps(links),draft_id))
             if terrain is not None:
-                from hunt_areas import checked_sectors
+                from hunt_areas import checked_connector, checked_sectors
                 if not isinstance(terrain,dict) or not isinstance(terrain.get('ground'),str) or not 1<=len(terrain['ground'])<=160:
                     raise ValueError('Brak źródła wyboru terenu.')
-                selection = dict(ground=terrain['ground'], sectors=sorted(checked_sectors(terrain.get('sectors'))))
+                cells = checked_sectors(terrain.get('sectors'))
+                selection = dict(ground=terrain['ground'], sectors=sorted(cells))
+                via = checked_connector(terrain.get('via', []), cells)
+                if via:
+                    selection['via'] = sorted(via)
                 db.execute('UPDATE drafts SET terrain=? WHERE id=?',(json.dumps(selection),draft_id))
             if tags is not None:
                 db.execute('UPDATE drafts SET tags=? WHERE id=?',(json.dumps(validate_tags(tags)),draft_id))

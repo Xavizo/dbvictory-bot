@@ -4,10 +4,11 @@ import {authenticatedFetch} from "@/lib/auth";
 import type {BotState} from "@/lib/api";
 import {spawnAreas,visibleMonsters,type Witness} from "@/lib/spawnAreas";
 import {sectorHabitats} from "@/lib/atlasWildlife";
-import WorldMap,{type GroundLayer,type Position} from "./WorldMap";
+import WorldMap,{type GroundLayer,type Position,type AtlasPassage,type AtlasConnector} from "./WorldMap";
 
 type Observation={kind:"death"|"first_contact"|"first_seen";cell:Position;name:string;count:number;at_monster:boolean;point?:Position;observer_cell?:Position};
-type Terrain={ground:string;sectors:Position[]};
+type Terrain={ground:string;sectors:Position[];via?:Position[]};
+type TerrainChoice={sectors:Position[];via:Position[]};
 type Draft={terrain?:Terrain|null;id:string;name:string;archived:boolean;laps:number;duration_ms:number;blocked_ms:number;xp_hour:number|null;senzu_hour:number|null;
   sightings?:Observation[];witnesses?:Witness[];sighting_laps?:number;latest:{id:string;cells:Position[];observations:Observation[]}|null};
 type Area={id:string|null;version?:number;name:string;cells:Position[];drafts:string[]};
@@ -15,7 +16,7 @@ type Discovery=Area&{id:string;visits:number;xp:number;eligible:boolean;sighting
   needs_recheck?:boolean;check?:{covered?:number;total?:number;missing?:Position[];reason?:string}};
 type Catalogue={scope:string;sector_size:number;areas:Area[];drafts:Draft[];discoveries?:Discovery[]};
 type Circuit={path:Position[];points:Position[];links:{from_index:number;id:string}[];entrance:Position;
-  covered:number;total:number;missing:Position[];selected:Position[];sightings:number;transitions:number};
+  covered:number;total:number;missing:Position[];selected:Position[];via?:Position[];passages?:AtlasPassage[];connector?:AtlasConnector;sightings:number;transitions:number};
 const endpoint="http://127.0.0.1:8089/api/map/grounds";
 const label=(n:number|null)=>n===null?"—":n.toLocaleString("pl-PL");
 const seconds=(ms:number)=>Math.round(ms/1000);
@@ -45,7 +46,8 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const [savedDraft,setSavedDraft]=useState(""),[routeError,setRouteError]=useState("");
   const [planning,setPlanning]=useState("");
   const [selection,setSelection]=useState<Position[]|null>(null),[selecting,setSelecting]=useState(false);
-  const [previousSelection,setPreviousSelection]=useState<Position[]|null>(null);
+  const [confirmedVia,setConfirmedVia]=useState<Position[]|null>(null);
+  const [previousSelection,setPreviousSelection]=useState<TerrainChoice|null>(null);
   const baseEntrance=useRef<Position|null>(null);
   const previewRequest=useRef<AbortController|null>(null);
   useEffect(()=>()=>previewRequest.current?.abort(),[]);
@@ -97,6 +99,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const base=choices.get(key);
   const area=copy??(hasSource&&base?{...base,cells:source!.cells}:base);
   const selected=selection??terrain?.sectors??[];
+  const via=confirmedVia??terrain?.via??[];
   const floors=[...new Set(selected.map(p=>p[2]))].sort((a,b)=>a-b);
   const discovery=data?.discoveries?.find(d=>d.id===key);
   useEffect(()=>{
@@ -152,7 +155,12 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
         ...Array.from(v.lines,([name,count])=>name+" ×"+count)].join("\n")}))};
   },[cells,linked,species,kind,layer,discovery,side]);
   const applied=useMemo(()=>new Set(route?.selected.map(p=>p.join(","))),[route]);
-  const dirty=!!route&&(selected.length!==applied.size||selected.some(p=>!applied.has(p.join(","))));
+  const appliedVia=useMemo(()=>new Set(route?.via?.map(p=>p.join(","))),[route]);
+  const dirty=!!route&&(selected.length!==applied.size||selected.some(p=>!applied.has(p.join(",")))||
+    via.length!==appliedVia.size||via.some(p=>!appliedVia.has(p.join(","))));
+  const connector=dirty?undefined:route?.connector;
+  const connectorPlaces=connector?[...connector.sectors,...connector.passages.flatMap(t=>[t.entry,t.exit])]:[];
+  const connectorFloors=[...new Set(connectorPlaces.map(p=>p[2]))].sort((a,b)=>a-b);
   const check=route&&!dirty?route:discovery?.check;
   const floorCoverage=useMemo(()=>{
     if(!discovery||!check?.missing?.length)return [];
@@ -174,7 +182,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     setKey(k);setCopy(null);setSpecies("");setLayer("spawns");setError("");setFocus(center(a,initialFloor));
   }
   function resetRoute(){
-    setRoute(null);setApproach([]);setSavedDraft("");setRouteError("");setSelection(null);setPreviousSelection(null);setSelecting(false);baseEntrance.current=null;
+    setRoute(null);setApproach([]);setSavedDraft("");setRouteError("");setSelection(null);setConfirmedVia(null);setPreviousSelection(null);setSelecting(false);baseEntrance.current=null;
   }
   function selectSectors(a:Position,b:Position){
     if(planning||!selecting||!area||a[2]!==b[2])return;
@@ -189,17 +197,18 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     if(next.size!==selected.length)changeSelection([...next.values()]);
   }
   function changeSelection(next:Position[]){
-    setPreviousSelection(selected);setSelection(next);setRouteError("");setApproach([]);
+    setPreviousSelection({sectors:selected,via});setSelection(next);setConfirmedVia([]);setRouteError("");setApproach([]);
   }
-  async function preview(from?:Position){
+  async function preview(from?:Position,addConnector=false){
     if(!data||!selected.length||busy||planning||copy||(from&&(!route||dirty)))return;
     setPlanning(from?"Wyznaczanie dojścia…":"Przeliczanie pętli…");setRouteError("");
     setApproach([]);
     const ctl=new AbortController();previewRequest.current=ctl;
     try{
+      const requestedVia=addConnector&&connector?[...via,...connector.sectors]:via;
       const anchor=baseEntrance.current;
       const keepAnchor=anchor&&selected.some(([x,y,z])=>z===anchor[2]&&x<=anchor[0]&&anchor[0]<x+side&&y<=anchor[1]&&anchor[1]<y+side);
-      let result=await post(endpoint+"/route",{scope:data.scope,ground:planKey,selected,
+      let result=await post(endpoint+"/route",{scope:data.scope,ground:planKey,selected,...(requestedVia.length?{via:requestedVia}:{}),
         ...(keepAnchor?{loop_start:anchor}:{}),...(from?{approach:from,entrance:route!.entrance}:{})},ctl.signal);
       while(result.ticket){
         await new Promise(resolve=>setTimeout(resolve,350));
@@ -207,6 +216,8 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       }
       if(from)setApproach(result.path);
       else {
+        if(addConnector)setPreviousSelection({sectors:selected,via});
+        setConfirmedVia(result.via??[]);
         baseEntrance.current=result.entrance;
         setRoute(result);setSelecting(false);setSavedDraft("");
       }
@@ -218,7 +229,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     setPlanning("Zapisywanie szkicu…");setRouteError("");
     try{
       const result=await post("http://127.0.0.1:8089/api/map/drafts",{scope:data.scope,
-        name:(area.name.slice(0,65)+" · pętla atlasu"),points:route.points,links:route.links,loop:true,terrain:{ground:planKey,sectors:route.selected}});
+        name:(area.name.slice(0,65)+" · pętla atlasu"),points:route.points,links:route.links,loop:true,terrain:{ground:planKey,sectors:route.selected,...(route.via?.length?{via:route.via}:{})}});
       const saved=result.drafts?.find((d:Draft)=>d.id===result.saved_id);
       if(saved)setData(old=>old?{...old,drafts:[{id:saved.id,name:saved.name,terrain:saved.terrain,archived:false,
         laps:0,duration_ms:0,blocked_ms:0,xp_hour:null,senzu_hour:null,latest:null},...old.drafts.filter(d=>d.id!==saved.id)]}:old);
@@ -254,7 +265,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       habitats={showMonsters?observations.habitats:undefined} habitatSide={side} habitatName={showMonsters&&observations.habitats?species:""}
       toolbar={<button disabled={!!copy||busy||!!planning} onClick={onClose}>← Świat</button>}
       ground={{cells:area?.cells??[],marks:!showMonsters?[]:layer==="live"?(live?.marks??[]).map(m=>({position:m.position,exact:true,live:true,title:"Widoczne potwory: "+m.count})):observations.marks,side,editing:!!copy,toggle,focus,
-        route:dirty?undefined:route?.path,approach,missing:dirty?undefined:route?.missing,selected:copy?undefined:selected,selecting,selectSectors,
+        route:dirty?undefined:route?.path,connector,via,passages:!dirty&&via.length?route?.passages:undefined,approach,missing:dirty?undefined:route?.missing,selected:copy?undefined:selected,selecting,selectSectors,
         planApproach:route&&!planning&&!dirty&&!selecting?preview:undefined}}/>
     <aside className="hunt-area-panel">
       <h2>Expowiska</h2>
@@ -288,7 +299,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
             <button disabled={!!planning||!area.cells.length} aria-pressed={selecting} onClick={()=>setSelecting(!selecting)}>Wybierz teren</button>
             <button disabled={!!planning||!area.cells.length} onClick={()=>changeSelection(area.cells)}>Całe expowisko</button>
             {!!selected.length&&<button disabled={!!planning} onClick={()=>changeSelection([])}>Wyczyść</button>}
-            {previousSelection&&<button disabled={!!planning} onClick={()=>{setSelection(previousSelection);setPreviousSelection(null);setRouteError("");setApproach([]);}}>Cofnij wybór</button>}
+            {previousSelection&&<button disabled={!!planning} onClick={()=>{setSelection(previousSelection.sectors);setConfirmedVia(previousSelection.via);setPreviousSelection(null);setRouteError("");setApproach([]);}}>Cofnij wybór</button>}
             <small role="status">Wybrane sektory · {selected.length}{floors.length?" · piętra "+floors.join(", "):""}</small>
             {selecting&&<small>Kliknij sektor lub przeciągnij prostokąt. Zacznij na zielonym, aby odjąć. Ctrl + przeciągnięcie przesuwa mapę.</small>}
           </div>
@@ -296,6 +307,13 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
           {routeError&&<p role="alert">{routeError}</p>}
           {dirty&&<small role="status">Wybór zmieniony. Przelicz pętlę przed zapisem.</small>}
           {route&&!dirty&&<><p>Pokrycie {route.covered}/{route.total} sektorów · {route.path.length-1} kroków · przejścia: {route.transitions}</p>
+            {connector&&<section aria-label="Proponowany łącznik" className="atlas-connector">
+              <strong>Z łącznikiem · {connector.covered}/{route.total} sektorów</strong>
+              <small>Turkusowy obrys pokazuje dodatkowy teren przejścia ({connector.sectors.length}).</small>
+              <div>{connectorFloors.map(z=><button key={z} disabled={!!planning} onClick={()=>setFocus({floor:z,cells:connectorPlaces})}>Piętro {z}</button>)}</div>
+              <button className="atlas-primary" disabled={!!planning} onClick={()=>preview(undefined,true)}>Dodaj łącznik</button>
+            </section>}
+            {route.missing.length>0&&!connector&&<small>Atlas nie znalazł w pobliżu łącznika z potwierdzonym powrotem.</small>}
             {!!route.missing.length&&<details><summary>Bez dojścia i powrotu ({route.missing.length})</summary>
               {route.missing.map(p=><button key={p.join(",")} onClick={()=>setFocus({floor:p[2],cells:[p]})}>{p.join(", ")}</button>)}</details>}
             {!!approach.length&&<small>Dojście · {approach.length-1} kroków</small>}
