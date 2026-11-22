@@ -457,7 +457,7 @@ class _Handler(BaseHTTPRequestHandler):
                 elif body.get('operation') in {'delete','restore','configure','set_loop'}:
                     atlas.change_draft(body.get('id'),body['operation'],body.get('combat'),body.get('loop'))
                 elif body.get('operation') is not None:raise ValueError('Nieznana operacja szkicu.')
-                else:draft_id=atlas.save_draft(body.get("name"),body.get("points"),body.get("id"),body.get("loop",True),body.get('expected_updated'),body.get('labels'),body.get('links'),body.get('tags'))
+                else:draft_id=atlas.save_draft(body.get("name"),body.get("points"),body.get("id"),body.get("loop",True),body.get('expected_updated'),body.get('labels'),body.get('links'),body.get('tags'),body.get('terrain'))
             return self._json_response({"scope":atlas.scope,"drafts":atlas.drafts(),"trash":atlas.drafts(deleted=True),"saved_id":draft_id})
         except (BlockingIOError, sqlite3.OperationalError) as exc:
             if isinstance(exc, BlockingIOError) or database_busy(exc):

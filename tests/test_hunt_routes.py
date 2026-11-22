@@ -114,3 +114,34 @@ def test_manual_loop_uses_largest_round_trip_despite_seed_and_one_way_exit(tmp_p
     assert route['covered']==5 and route['total']==6 and route['missing']==[(24,32,6)]
     assert route['path'][0]==route['path'][-1]==[40,32,7]
     assert route['transitions']==0
+
+
+def test_selected_terrain_persists_across_reopen_and_rejects_outside_interactions(tmp_path):
+    atlas, req, edges = fixture(tmp_path)
+    chosen = [[32,32,z] for z in (7,8,9)]
+    limited = propose(atlas, edges, dict(req, selected=chosen))
+    # The ladder can be clicked from the chosen room, but its tile is outside it.
+    assert limited['transitions'] == 0
+    assert limited['covered'] == 1 and len(limited['missing']) == 2
+    inside = [dict(e, entry=[e['origin'][0],33,e['origin'][2]]) for e in edges]
+    atlas.observe(sample([cell(*e['entry'],item=1956) for e in inside]))
+    route = propose(atlas, inside, dict(req, selected=chosen))
+    assert route['covered'] == 3 and route['transitions'] == 4
+    ident = atlas.save_draft('Trzy piętra', route['points'], links=route['links'],
+                             terrain=dict(ground=req['ground'], sectors=chosen))
+    reopened = MapAtlas(tmp_path, atlas.scope)
+    row = next(r for r in reopened.drafts() if r['id'] == ident)
+    replay = reopened.plan(row['points'], inside, links=row['links'], loop=True)
+    sectors = set(map(tuple, chosen))
+    assert replay['complete'] and replay['loop_closed']
+    assert replay['path'] == route['path']
+    assert {sector(p) for p in replay['path']} == sectors
+    assert all(sector(t[k]) in sectors for t in replay['transitions'] for k in ('entry','origin','exit'))
+    reopened.save_draft('Po zmianie nazwy', row['points'], ident, links=row['links'])
+    saved = next(r for r in reopened.drafts() if r['id'] == ident)
+    assert saved['terrain'] == dict(ground=req['ground'], sectors=chosen)
+    # The sketch can generate a fresh loop even before its first lap.
+    assert propose(reopened, inside, dict(req, ground='draft:'+ident, selected=chosen))['covered'] == 3
+    for invalid in ([], [[33,32,7]], [[0,0,7]]):
+        with pytest.raises(ValueError):
+            propose(reopened, inside, dict(req, selected=invalid))

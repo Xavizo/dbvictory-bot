@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.18.0",
+    "changes":[
+      {"title":"Zaznacz teren pętli w Atlasie","detail":"Wybierz zielone sektory na jednym lub kilku piętrach. Atlas sprawdzi przebieg pętli i zapisze wybór ze szkicem."}
+    ]
+  },
+  {
     "version":"v1.17.1",
     "changes":[
       {"title":"Ruch po przesunięciu postaci","detail":"Cavebot odróżnia ręczny ruch, zmianę pozycji i przerwę w odczycie od anulowania kroku. Po braku potwierdzenia może dojść do wolnego pola z innej strony."}

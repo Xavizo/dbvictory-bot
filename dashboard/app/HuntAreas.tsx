@@ -7,19 +7,20 @@ import {sectorHabitats} from "@/lib/atlasWildlife";
 import WorldMap,{type GroundLayer,type Position} from "./WorldMap";
 
 type Observation={kind:"death"|"first_contact"|"first_seen";cell:Position;name:string;count:number;at_monster:boolean;point?:Position;observer_cell?:Position};
-type Draft={id:string;name:string;archived:boolean;laps:number;duration_ms:number;blocked_ms:number;xp_hour:number|null;senzu_hour:number|null;
+type Terrain={ground:string;sectors:Position[]};
+type Draft={terrain?:Terrain|null;id:string;name:string;archived:boolean;laps:number;duration_ms:number;blocked_ms:number;xp_hour:number|null;senzu_hour:number|null;
   sightings?:Observation[];witnesses?:Witness[];sighting_laps?:number;latest:{id:string;cells:Position[];observations:Observation[]}|null};
 type Area={id:string|null;version?:number;name:string;cells:Position[];drafts:string[]};
 type Discovery=Area&{id:string;visits:number;xp:number;eligible:boolean;sightings:Observation[];witnesses?:Witness[];
   needs_recheck?:boolean;check?:{covered?:number;total?:number;missing?:Position[];reason?:string}};
 type Catalogue={scope:string;sector_size:number;areas:Area[];drafts:Draft[];discoveries?:Discovery[]};
 type Circuit={path:Position[];points:Position[];links:{from_index:number;id:string}[];entrance:Position;
-  covered:number;total:number;missing:Position[];excluded?:Position[];sightings:number;transitions:number};
+  covered:number;total:number;missing:Position[];selected:Position[];sightings:number;transitions:number};
 const endpoint="http://127.0.0.1:8089/api/map/grounds";
 const label=(n:number|null)=>n===null?"—":n.toLocaleString("pl-PL");
 const seconds=(ms:number)=>Math.round(ms/1000);
 function duration(ms:number){const s=seconds(ms);return Math.floor(s/60)+" min "+s%60+" s";}
-function proposal(d:Draft):Area{return {id:null,name:d.name,cells:d.latest?.cells??[],drafts:[d.id]};}
+function proposal(d:Draft):Area{return {id:null,name:d.name,cells:Array.from(new Map([...(d.latest?.cells??[]),...(d.terrain?.sectors??[])].map(p=>[p.join(","),p])).values()),drafts:[d.id]};}
 function center(area:Area,floor:number){
   const z=area.cells.some(p=>p[2]===floor)?floor:(area.cells[0]?.[2]??floor);
   return {floor:z,cells:area.cells};
@@ -43,7 +44,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const [route,setRoute]=useState<Circuit|null>(null),[approach,setApproach]=useState<Position[]>([]);
   const [savedDraft,setSavedDraft]=useState(""),[routeError,setRouteError]=useState("");
   const [planning,setPlanning]=useState("");
-  const [excluded,setExcluded]=useState<Position[]>([]),[excluding,setExcluding]=useState(false);
+  const [selection,setSelection]=useState<Position[]|null>(null),[selecting,setSelecting]=useState(false);
   const [previousSelection,setPreviousSelection]=useState<Position[]|null>(null);
   const baseEntrance=useRef<Position|null>(null);
   const previewRequest=useRef<AbortController|null>(null);
@@ -87,9 +88,17 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     for(const d of data?.drafts??[])if(!d.archived)all.set("draft:"+d.id,proposal(d));
     return all;
   },[data]);
-  const area=copy??choices.get(key);
+  const draft=key.startsWith("draft:")?data?.drafts.find(d=>"draft:"+d.id===key):undefined;
+  const terrain=draft?.terrain;
+  const source=terrain?choices.get(terrain.ground):undefined;
+  const sourceCells=useMemo(()=>new Set(source?.cells.map(p=>p.join(","))),[source]);
+  const hasSource=!!source&&!!terrain&&terrain.sectors.every(p=>sourceCells.has(p.join(",")));
+  const planKey=hasSource?terrain!.ground:key;
+  const base=choices.get(key);
+  const area=copy??(hasSource&&base?{...base,cells:source!.cells}:base);
+  const selected=selection??terrain?.sectors??[];
+  const floors=[...new Set(selected.map(p=>p[2]))].sort((a,b)=>a-b);
   const discovery=data?.discoveries?.find(d=>d.id===key);
-  const check=route??discovery?.check;
   useEffect(()=>{
     const first=data?.discoveries?.[0];
     if(first&&!choices.has(key)&&!copy&&!planning){
@@ -142,21 +151,22 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       title:[...(kind==="first_seen"?["Pierwsze wykrycie ("+v.position.join(", ")+")"]:[]),
         ...Array.from(v.lines,([name,count])=>name+" ×"+count)].join("\n")}))};
   },[cells,linked,species,kind,layer,discovery,side]);
-  const applied=useMemo(()=>new Set(route?.excluded?.map(p=>p.join(","))),[route]);
-  const dirty=excluded.length!==applied.size||excluded.some(p=>!applied.has(p.join(",")));
+  const applied=useMemo(()=>new Set(route?.selected.map(p=>p.join(","))),[route]);
+  const dirty=!!route&&(selected.length!==applied.size||selected.some(p=>!applied.has(p.join(","))));
+  const check=route&&!dirty?route:discovery?.check;
   const floorCoverage=useMemo(()=>{
     if(!discovery||!check?.missing?.length)return [];
     const outside=new Set(check.missing.map(p=>p.join(",")));
     const stats=new Map<number,{floor:number;covered:number;total:number}>();
     for(const p of discovery.cells){
-      if(applied.has(p.join(",")))continue;
+      if(route&&!applied.has(p.join(",")))continue;
       const row=stats.get(p[2])??{floor:p[2],covered:0,total:0};
       row.total++;
       if(!outside.has(p.join(",")))row.covered++;
       stats.set(p[2],row);
     }
     return [...stats.values()].sort((a,b)=>a.floor-b.floor);
-  },[discovery,check,applied]);
+  },[discovery,check,applied,route]);
   function pick(k:string){
     const a=choices.get(k);if(!a)return;
     createKey.current="";
@@ -164,44 +174,41 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     setKey(k);setCopy(null);setSpecies("");setLayer("spawns");setError("");setFocus(center(a,initialFloor));
   }
   function resetRoute(){
-    setRoute(null);setApproach([]);setSavedDraft("");setRouteError("");setExcluded([]);setPreviousSelection(null);setExcluding(false);baseEntrance.current=null;
+    setRoute(null);setApproach([]);setSavedDraft("");setRouteError("");setSelection(null);setPreviousSelection(null);setSelecting(false);baseEntrance.current=null;
   }
   function selectSectors(a:Position,b:Position){
-    if(planning||!route||!excluding||!area||a[2]!==b[2])return;
+    if(planning||!selecting||!area||a[2]!==b[2])return;
     const start=[Math.floor(a[0]/side)*side,Math.floor(a[1]/side)*side,a[2]].join(",");
-    const selected=new Map(excluded.map(p=>[p.join(","),p]));
-    const restore=selected.has(start);
+    const next=new Map(selected.map(p=>[p.join(","),p]));
+    const remove=next.has(start);
     for(const p of area.cells){
       if(p[2]!==a[2]||p[0]>Math.max(a[0],b[0])||p[0]+side<=Math.min(a[0],b[0])||
           p[1]>Math.max(a[1],b[1])||p[1]+side<=Math.min(a[1],b[1]))continue;
-      if(restore)selected.delete(p.join(","));else selected.set(p.join(","),p);
+      if(remove)next.delete(p.join(","));else next.set(p.join(","),p);
     }
-    if(selected.size===excluded.length)return;
-    setPreviousSelection(excluded);setExcluded([...selected.values()]);
-    setRouteError("");
+    if(next.size!==selected.length)changeSelection([...next.values()]);
+  }
+  function changeSelection(next:Position[]){
+    setPreviousSelection(selected);setSelection(next);setRouteError("");setApproach([]);
   }
   async function preview(from?:Position){
-    if(!data||busy||planning||copy||(from&&(!route||dirty)))return;
+    if(!data||!selected.length||busy||planning||copy||(from&&(!route||dirty)))return;
     setPlanning(from?"Wyznaczanie dojścia…":"Przeliczanie pętli…");setRouteError("");
     setApproach([]);
     const ctl=new AbortController();previewRequest.current=ctl;
     try{
-      let result=await post(endpoint+"/route",{scope:data.scope,ground:key,
-        ...(excluded.length?{excluded,loop_start:baseEntrance.current}:{}),...(from?{approach:from,entrance:route!.entrance}:{})},ctl.signal);
+      const anchor=baseEntrance.current;
+      const keepAnchor=anchor&&selected.some(([x,y,z])=>z===anchor[2]&&x<=anchor[0]&&anchor[0]<x+side&&y<=anchor[1]&&anchor[1]<y+side);
+      let result=await post(endpoint+"/route",{scope:data.scope,ground:planKey,selected,
+        ...(keepAnchor?{loop_start:anchor}:{}),...(from?{approach:from,entrance:route!.entrance}:{})},ctl.signal);
       while(result.ticket){
         await new Promise(resolve=>setTimeout(resolve,350));
         result=await post(endpoint+"/route",{scope:data.scope,ticket:result.ticket},ctl.signal);
       }
       if(from)setApproach(result.path);
       else {
-        const firstPreview=!baseEntrance.current;
-        if(firstPreview)baseEntrance.current=result.entrance;
-        setRoute(result);setExcluding(false);setSavedDraft("");
-        if(firstPreview&&area&&result.entrance){
-          const floor=result.entrance[2];
-          const outside=new Set([...result.missing,...(result.excluded??[])].map((p:Position)=>p.join(",")));
-          setFocus({floor,cells:area.cells.filter(p=>p[2]===floor&&!outside.has(p.join(",")))});
-        }
+        baseEntrance.current=result.entrance;
+        setRoute(result);setSelecting(false);setSavedDraft("");
       }
     }catch(e){if(!ctl.signal.aborted)setRouteError(e instanceof Error?e.message:"Nie udało się wyznaczyć trasy.");}
     finally{if(!ctl.signal.aborted)setPlanning("");}
@@ -211,7 +218,10 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     setPlanning("Zapisywanie szkicu…");setRouteError("");
     try{
       const result=await post("http://127.0.0.1:8089/api/map/drafts",{scope:data.scope,
-        name:(area.name.slice(0,65)+" · pętla atlasu"),points:route.points,links:route.links,loop:true});
+        name:(area.name.slice(0,65)+" · pętla atlasu"),points:route.points,links:route.links,loop:true,terrain:{ground:planKey,sectors:route.selected}});
+      const saved=result.drafts?.find((d:Draft)=>d.id===result.saved_id);
+      if(saved)setData(old=>old?{...old,drafts:[{id:saved.id,name:saved.name,terrain:saved.terrain,archived:false,
+        laps:0,duration_ms:0,blocked_ms:0,xp_hour:null,senzu_hour:null,latest:null},...old.drafts.filter(d=>d.id!==saved.id)]}:old);
       setSavedDraft(result.saved_id);
     }catch(e){setRouteError(e instanceof Error?e.message:"Nie udało się zapisać szkicu.");}
     finally{setPlanning("");}
@@ -244,8 +254,8 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       habitats={showMonsters?observations.habitats:undefined} habitatSide={side} habitatName={showMonsters&&observations.habitats?species:""}
       toolbar={<button disabled={!!copy||busy||!!planning} onClick={onClose}>← Świat</button>}
       ground={{cells:area?.cells??[],marks:!showMonsters?[]:layer==="live"?(live?.marks??[]).map(m=>({position:m.position,exact:true,live:true,title:"Widoczne potwory: "+m.count})):observations.marks,side,editing:!!copy,toggle,focus,
-        route:route?.path,approach,missing:route?.missing,excluded,excluding,selectSectors,
-        planApproach:route&&!planning&&!dirty&&!excluding?preview:undefined}}/>
+        route:dirty?undefined:route?.path,approach,missing:dirty?undefined:route?.missing,selected:copy?undefined:selected,selecting,selectSectors,
+        planApproach:route&&!planning&&!dirty&&!selecting?preview:undefined}}/>
     <aside className="hunt-area-panel">
       <h2>Expowiska</h2>
       {error&&<p role="alert">{error} {!copy&&<button onClick={()=>setReload(v=>v+1)}>Wczytaj ponownie</button>}</p>}
@@ -274,18 +284,22 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
         </fieldset>:<div><button disabled={busy||!!planning} onClick={()=>{resetRoute();setCopy({...area});}}>{area.id?"Edytuj obszar":"Dostosuj granice"}</button> {!area.id&&<button disabled={busy||!!planning||!area.cells.length} onClick={save}>Zapisz obszar</button>}</div>}
         {!copy&&<section aria-label="Pętla expienia" className="hunt-section"><h3>Trasa</h3>
           {key.startsWith("draft:")&&<button disabled={!!planning} onClick={()=>editCircuit(key.slice(6))}>Edytuj szkic</button>}
-          <button className="atlas-primary" disabled={!!planning||busy||!area.cells.length} onClick={()=>preview()}>{planning==="Przeliczanie pętli…"?planning:route||discovery?.needs_recheck?"Przelicz pętlę":discovery?.check?.total?"Pokaż pętlę":"Zaproponuj pętlę"}</button>
+          <div className="map-exclusions">
+            <button disabled={!!planning||!area.cells.length} aria-pressed={selecting} onClick={()=>setSelecting(!selecting)}>Wybierz teren</button>
+            <button disabled={!!planning||!area.cells.length} onClick={()=>changeSelection(area.cells)}>Całe expowisko</button>
+            {!!selected.length&&<button disabled={!!planning} onClick={()=>changeSelection([])}>Wyczyść</button>}
+            {previousSelection&&<button disabled={!!planning} onClick={()=>{setSelection(previousSelection);setPreviousSelection(null);setRouteError("");setApproach([]);}}>Cofnij wybór</button>}
+            <small role="status">Wybrane sektory · {selected.length}{floors.length?" · piętra "+floors.join(", "):""}</small>
+            {selecting&&<small>Kliknij sektor lub przeciągnij prostokąt. Zacznij na zielonym, aby odjąć. Ctrl + przeciągnięcie przesuwa mapę.</small>}
+          </div>
+          <button className="atlas-primary" disabled={!!planning||busy||!selected.length} onClick={()=>preview()}>{planning==="Przeliczanie pętli…"?planning:route?"Przelicz pętlę":"Zaproponuj pętlę"}</button>
           {routeError&&<p role="alert">{routeError}</p>}
-          {route&&<><p>Pokrycie {route.covered}/{route.total} sektorów · {route.path.length-1} kroków · przejścia: {route.transitions}</p>
-            <div className="map-exclusions"><button disabled={!!planning} aria-pressed={excluding} onClick={()=>setExcluding(!excluding)}>Pomiń sektory{excluded.length?" · "+excluded.length:""}</button>
-              {previousSelection&&<button disabled={!!planning} onClick={()=>{setExcluded(previousSelection);setPreviousSelection(null);}}>Cofnij wybór</button>}
-              {!!excluded.length&&<button disabled={!!planning} onClick={()=>{setPreviousSelection(excluded);setExcluded([]);}}>Wyczyść wybór</button>}
-              {excluding&&<small>Kliknij lub zaznacz prostokąt. Zacznij na pominiętym sektorze, aby go przywrócić. Ctrl + przeciągnięcie przesuwa mapę.</small>}
-              {dirty&&<small role="status">Wybór zmieniony. Przelicz pętlę przed zapisem.</small>}</div>
+          {dirty&&<small role="status">Wybór zmieniony. Przelicz pętlę przed zapisem.</small>}
+          {route&&!dirty&&<><p>Pokrycie {route.covered}/{route.total} sektorów · {route.path.length-1} kroków · przejścia: {route.transitions}</p>
             {!!route.missing.length&&<details><summary>Bez dojścia i powrotu ({route.missing.length})</summary>
               {route.missing.map(p=><button key={p.join(",")} onClick={()=>setFocus({floor:p[2],cells:[p]})}>{p.join(", ")}</button>)}</details>}
             {!!approach.length&&<small>Dojście · {approach.length-1} kroków</small>}
-            <button disabled={!!planning||dirty} onClick={()=>savedDraft?editCircuit(savedDraft):saveCircuit()}>{savedDraft?"Otwórz zapisany szkic":"Zapisz jako nowy szkic"}</button>
+            <button disabled={!!planning||dirty} onClick={()=>savedDraft?editCircuit(savedDraft):saveCircuit()}>{savedDraft?"Otwórz zapisany szkic":route.missing.length?"Zapisz dostępną część jako szkic":"Zapisz jako nowy szkic"}</button>
           </>}
         </section>}
         {!discovery&&linked.length>0&&<details className="hunt-results"><summary>Wyniki obiegów</summary>

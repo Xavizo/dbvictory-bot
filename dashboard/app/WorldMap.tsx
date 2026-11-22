@@ -7,7 +7,7 @@ import type {Habitat} from "@/lib/atlasWildlife";
 export type Position = [number, number, number];
 export type GroundLayer = {cells:Position[]; marks:{position:Position;title:string;exact:boolean;radius?:number;live?:boolean;uncertain?:boolean;minimum?:number}[]; side:number;
   route?:Position[]; approach?:Position[]; missing?:Position[]; planApproach?:(p:Position)=>void;
-  excluded?:Position[];excluding?:boolean;selectSectors?:(a:Position,b:Position)=>void;
+  selected?:Position[];selecting?:boolean;selectSectors?:(a:Position,b:Position)=>void;
   editing:boolean; toggle:(p:Position)=>void; focus:{floor:number;cells:Position[]}|null};
 type Sector = {x:number; y:number; terrain?:string; atlas?:string};
 type Floor = {floor:number; sectors:Sector[]};
@@ -139,12 +139,12 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
     </div>
     {error?<div role="status">{error} <button onClick={()=>setRetry(v=>v+1)}>Ponów</button></div>
       :!result?<p role="status" className="atlas-loading"><i className="atlas-spinner"/>Wczytywanie piętra…</p>:!view?<p>Brak zapisanych pól na tym piętrze.</p>:
-    <svg ref={svg} className={ground?.excluding?"select-sectors":undefined} aria-label="Mapa świata DBVictory" viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
+    <svg ref={svg} className={ground?.selecting?"select-sectors":undefined} aria-label="Mapa świata DBVictory" viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
       onWheel={e=>{const p=point(e.clientX,e.clientY);if(p)zoom(e.deltaY>0?1.25:.8,p);}}
       onPointerDown={e=>{const m=svg.current?.getScreenCTM();if(!m||(e.button!==0&&e.button!==1)||!e.isPrimary)return;
         const panOnly=e.button===1||e.altKey||e.ctrlKey;
         e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);
-        drag.current={camera:view,matrix:m.inverse(),x:e.clientX,y:e.clientY,moved:false,box:!!ground?.excluding&&!panOnly,panOnly};}}
+        drag.current={camera:view,matrix:m.inverse(),x:e.clientX,y:e.clientY,moved:false,box:!!ground?.selecting&&!panOnly,panOnly};}}
       onPointerMove={e=>{const d=drag.current;if(!d)return;
         if(!d.moved && Math.hypot(e.clientX-d.x,e.clientY-d.y)<4)return;
         d.moved=true;const a=new DOMPoint(d.x,d.y).matrixTransform(d.matrix),b=new DOMPoint(e.clientX,e.clientY).matrixTransform(d.matrix);
@@ -158,6 +158,8 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
       <Sectors sectors={result.sectors} overlay={overlay}/>
       {ground&&<g fill="#ffbc61" fillOpacity=".31" stroke="#ffd497" strokeWidth=".2">{ground.cells.filter(p=>p[2]===floor).map(([x,y])=>
         <rect key={x+','+y} x={x} y={y} width={side} height={side}/>)}</g>}
+      {ground?.selected&&<g aria-label="Wybrany teren" fill="#29b86a" fillOpacity=".54" stroke="#a4ffc3" strokeWidth=".38" pointerEvents="none">
+        {ground.selected.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}/>)}</g>}
       {habitats&&<g fill="#ad85f2" fillOpacity=".35" stroke="#e8cbff" strokeWidth=".56">{habitats.filter(h=>h.position[2]===floor).map(h=>
         <rect key={h.position.join(",")} x={h.position[0]} y={h.position[1]} width={habitatSide} height={habitatSide}><title>{h.species.map(([n,k])=>n+" · wykrycia: "+k).join("\n")}</title></rect>)}</g>}
       {ground&&<g>{ground.marks.filter(m=>m.position[2]===floor).map(m=>
@@ -169,15 +171,12 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
         </g>)}</g>}
       {ground?.missing?.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}
         fill="#242734" fillOpacity=".28" stroke="#c0b7c6" strokeOpacity=".7" strokeDasharray="1 1" strokeWidth=".3" pointerEvents="none"><title>Sektor poza wyznaczoną pętlą</title></rect>)}
-      <RouteLine path={ground?.route} floor={floor} color="#59f1bc"/>
+      <RouteLine path={ground?.route} floor={floor} color="#effff7"/>
       <RouteLine path={ground?.approach} floor={floor} color="#73bfff" dashed/>
-      {ground?.excluded?.filter(p=>p[2]===floor).map(([x,y])=><g key={x+","+y} pointerEvents="none">
-        <rect x={x} y={y} width={side} height={side} fill="#351d29" fillOpacity=".82" stroke="#ffa49e" strokeWidth=".4"/>
-        <path d={`M${x+1} ${y+1}l${side-2} ${side-2}m0 -${side-2}l-${side-2} ${side-2}`} fill="none" stroke="#ffa49e" strokeWidth=".35"/></g>)}
       {ground?.route?.[0]?.[2]===floor&&<circle cx={ground.route[0][0]+.5} cy={ground.route[0][1]+.5} r="1.2"
         fill="#173a34" stroke="#59f1bc" strokeWidth=".4"><title>Początek pętli expienia</title></circle>}
       {grid&&<rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#world-sector-grid)" pointerEvents="none"/>}
-      {box&&<rect {...box} fill="#efd1a9" fillOpacity=".22" stroke="#ffdfab" strokeWidth="2" vectorEffect="non-scaling-stroke" pointerEvents="none"/>}
+      {box&&<rect {...box} fill="#29b86a" fillOpacity=".25" stroke="#a4ffc3" strokeWidth="2" vectorEffect="non-scaling-stroke" pointerEvents="none"/>}
       {selection&&<circle cx={selection[0]+.5} cy={selection[1]+.5} r={Math.max(.8,view.width/190)} fill="none" stroke="white" strokeWidth={2} vectorEffect="non-scaling-stroke"/>}
       {player&&player[2]===floor&&<g aria-label={"Twoja postać: "+player.join(", ")} transform={`translate(${player[0]+.5} ${player[1]+.5})`}>
         <title>Twoja postać · {player.join(", ")}</title>
@@ -185,7 +184,7 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
           <path key={color} d="M0 0h.0001" fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" vectorEffect="non-scaling-stroke"/>)}</g>}
     </svg>}
     {loadingLabel&&<div role="status" className="atlas-loading map-work-indicator"><i className="atlas-spinner"/>{loadingLabel}</div>}
-    {selection&&!ground?.editing&&!ground?.excluding&&<div className="map-selection">
+    {selection&&!ground?.editing&&!ground?.selecting&&<div className="map-selection">
       <span>{selection.join(", ")}</span>{here&&<span className="habitat-key">{here.species.map(([n])=>n).join(" · ")}</span>}
       <button onClick={()=>onOpen(selection)}>Otwórz pole</button>
       {ground?.planApproach&&<button onClick={()=>ground.planApproach?.(selection)}>Dojście stąd</button>}

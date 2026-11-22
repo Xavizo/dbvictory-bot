@@ -15,6 +15,12 @@ def sector(pos):
     return (pos[0] // SIDE * SIDE, pos[1] // SIDE * SIDE, pos[2])
 
 
+def checked_sectors(rows):
+    if not isinstance(rows,list) or not rows or not all(position(p) and sector(p)==tuple(p) for p in rows):
+        raise ValueError('Zaznacz co najmniej jeden sektor na siatce expowiska.')
+    return frozenset(map(tuple,rows))
+
+
 def observed_position(pos):
     return position(pos) and (pos[0] != 0 or pos[1] != 0)
 
@@ -107,7 +113,7 @@ def catalogue(atlas):
     archived_ids = {d['id'] for d in archived}
     for d in atlas.drafts()+archived:
         aliases[d['navigation_revision']] = d['id']
-        drafts[d['id']] = dict(id=d['id'],name=d['name'],archived=d['id'] in archived_ids,laps=0,duration_ms=0,blocked_ms=0,
+        drafts[d['id']] = dict(id=d['id'],name=d['name'],terrain=d.get('terrain'),archived=d['id'] in archived_ids,laps=0,duration_ms=0,blocked_ms=0,
                                xp=0,xp_ms=0,senzu=0,senzu_ms=0,latest=None,sighting_laps=0,sightings=Counter(),witnesses=[])
     path = atlas.path.with_name('cavebot-reports-' + atlas.path.name)
     if path.exists():

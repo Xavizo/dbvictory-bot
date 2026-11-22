@@ -363,6 +363,7 @@ class MapAtlas:
                 if 'labels' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN labels TEXT")
                 if 'tags' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
                 if 'links' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN links TEXT NOT NULL DEFAULT '[]'")
+                if "terrain" not in columns:db.execute("ALTER TABLE drafts ADD COLUMN terrain TEXT")
                 self.total=db.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
                 self.floors={r[0] for r in db.execute("SELECT DISTINCT z FROM tiles")}
                 rows=db.execute("SELECT x,y,z,data,seen FROM tiles ORDER BY seen DESC LIMIT ?",(CACHE_TILES,)).fetchall()
@@ -468,11 +469,11 @@ class MapAtlas:
         with self.lock, closing(sqlite3.connect(self.path.as_uri()+"?mode=ro",uri=True,timeout=.2)) as db:
             if self._retry_open:raise BlockingIOError(self.error)
             if self.error:raise ValueError(self.error)
-            rows=[{"id":i,"name":name,"points":json.loads(points),"tags":json.loads(tags),"labels":validate_labels(json.loads(labels) if labels else None,len(json.loads(points))),"updated":updated,"loop":bool(loop),"links":validate_links(json.loads(links),json.loads(points)),"combat":validate_combat(json.loads(combat))}
-                    for i,name,points,updated,loop,combat,labels,links,tags in db.execute("SELECT id,name,points,updated,loop,combat,labels,links,tags FROM drafts WHERE deleted=? ORDER BY updated DESC LIMIT 100",(int(deleted),))]
+            rows=[{"id":i,"name":name,**({"terrain":json.loads(terrain)} if terrain else {}),"points":json.loads(points),"tags":json.loads(tags),"labels":validate_labels(json.loads(labels) if labels else None,len(json.loads(points))),"updated":updated,"loop":bool(loop),"links":validate_links(json.loads(links),json.loads(points)),"combat":validate_combat(json.loads(combat))}
+                    for i,name,points,updated,loop,combat,labels,links,tags,terrain in db.execute("SELECT id,name,points,updated,loop,combat,labels,links,tags,terrain FROM drafts WHERE deleted=? ORDER BY updated DESC LIMIT 100",(int(deleted),))]
             return [{**row,'navigation_revision':navigation_revision(row)} for row in rows]
 
-    def save_draft(self,name,points,draft_id=None,loop=True,expected_updated=None,labels=None,links=None,tags=None):
+    def save_draft(self,name,points,draft_id=None,loop=True,expected_updated=None,labels=None,links=None,tags=None,terrain=None):
         if self.error:raise ValueError(self.error)
         if type(loop)is not bool:raise ValueError("Nieprawidłowa opcja pętli.")
         if not isinstance(name,str) or not 1<=len(name.strip())<=80:raise ValueError("Nazwa szkicu: od 1 do 80 znaków.")
@@ -492,6 +493,12 @@ class MapAtlas:
             draft_id=draft_id or uuid.uuid4().hex
             db.execute("INSERT INTO drafts (id,name,points,updated,loop) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,points=excluded.points,updated=excluded.updated,loop=excluded.loop",(draft_id,name.strip(),json.dumps(points),time.time(),int(loop)))
             db.execute('UPDATE drafts SET labels=?,links=? WHERE id=?',(json.dumps(labels),json.dumps(links),draft_id))
+            if terrain is not None:
+                from hunt_areas import checked_sectors
+                if not isinstance(terrain,dict) or not isinstance(terrain.get('ground'),str) or not 1<=len(terrain['ground'])<=160:
+                    raise ValueError('Brak źródła wyboru terenu.')
+                selection = dict(ground=terrain['ground'], sectors=sorted(checked_sectors(terrain.get('sectors'))))
+                db.execute('UPDATE drafts SET terrain=? WHERE id=?',(json.dumps(selection),draft_id))
             if tags is not None:
                 db.execute('UPDATE drafts SET tags=? WHERE id=?',(json.dumps(validate_tags(tags)),draft_id))
         return draft_id
