@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.16.6",
+    "changes":[
+      {"title":"Powrót na trasę po anulowanym kroku","detail":"Cavebot uwzględnia spóźnione potwierdzenie pozycji. Przy powrocie na otwartym terenie ponownie sprawdza czasowo zablokowane pola i zachowuje zaliczony waypoint."}
+    ]
+  },
+  {
     "version":"v1.16.5",
     "changes":[
       {"title":"Odsuwanie kilku ciał z pajęczyny","detail":"Cavebot sprawdza liczbę ciał po każdym przesunięciu. Gdy ciało pozostaje na przeszkodzie, próbuje innego pola. Raport ruchu pokazuje liczbę ciał przed i po próbie."},

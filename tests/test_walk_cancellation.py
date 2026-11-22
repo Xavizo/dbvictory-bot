@@ -58,6 +58,73 @@ def test_cancel_from_saiyan_walk_releases_position_wait(state, tmp_path, caplog,
     assert "map_ms=- outcome=position_cancelled" in caplog.text
 
 
+def test_gotrunks_cancel_with_late_arrival_does_not_send_a_detour(state, tmp_path):
+    origin, arrived, end = [1055,1281,7], [1055,1282,7], [1055,1283,7]
+    cells = [cell(x,y) for x in range(1054,1058) for y in range(1281,1285)]
+    ctrl, _, _ = setup(state, tmp_path, cells, [origin, end])
+    visited = []
+    gs = state.game_state
+
+    async def dispatch(payload, guard):
+        assert guard()
+        x,y,z = gs.position
+        dx,dy = next(delta for delta, direction in OFFSETS.items() if int(WALK_OPCODES[direction]) == payload[0])
+        tile = (x+dx,y+dy,z)
+        visited.append(tile)
+        if len(visited) == 1:
+            cancel_walk(gs, 1, time.perf_counter())
+            asyncio.get_running_loop().call_later(.047, setattr, gs, 'position', tile)
+        else:
+            gs.position = tile
+        ctrl.last_command = 0
+
+    state.game_proxy.inject_to_server = dispatch
+    asyncio.run(asyncio.wait_for(ctrl.run(), 2))
+    assert ctrl.status == 'complete' and visited == [tuple(arrived), tuple(end)]
+
+
+def test_gotrunks_offroute_retries_after_block_expires(state, tmp_path):
+    origin, waypoint, end = [1055,1282,7], [1055,1281,7], [1054,1280,7]
+    pos = (1056,1282,7)
+    tiles = [cell(*p) for p in (origin, waypoint, end, pos)]
+    ctrl, _, _ = setup(state, tmp_path, tiles, [origin, waypoint, end])
+    ctrl.status = 'running'
+    state.game_state.position = pos
+    now = time.monotonic()
+    ctrl.blocked = {tuple(p):now+10 for p in (origin, waypoint, end)}
+    assert not ctrl.recover_local(ctrl.map_now())
+    ctrl.recovery_next_at = 0
+    ctrl.blocked[tuple(origin)] = now-1
+    tiles[0].update(occupants=1, occupant_types={'monster':1})
+    assert not ctrl.recover_local(ctrl.map_now())
+    ctrl.recovery_next_at = 0
+    tiles[0].update(occupants=0, occupant_types={})
+    assert ctrl.recover_local(ctrl.map_now())
+    assert tuple(origin) not in ctrl.blocked and ctrl.blocked[tuple(waypoint)] > now
+    assert ctrl.path[ctrl.index] == list(pos)
+
+
+def test_gotrunks_displacement_keeps_reached_waypoint_and_route(state, tmp_path):
+    origin, onward = [1055,1281,7], [1055,1284,7]
+    tiles = [cell(x,y) for x in range(1054,1058) for y in range(1281,1285)]
+    ctrl, _, _ = setup(state, tmp_path, tiles, [origin, onward])
+    saved_path = list(ctrl.path)
+    saved_points = list(ctrl.checkpoints)
+    ctrl.status = 'running'
+    ctrl.failures = 2  # two consecutive position_unconfirmed events in the recording
+    state.game_state.position = (1056,1282,7)
+    connect_fake_walk(state, ctrl)
+    assert asyncio.run(ctrl.recover_position(ctrl.map_now()))
+    assert ctrl.path == saved_path and ctrl.checkpoints == saved_points
+    assert state.game_state.position != tuple(origin)
+    assert ctrl.waypoint_progress()['current'] == 1
+    # Navigation reconciles the confirmed temporary step on its next tick.
+    assert asyncio.run(ctrl.recover_position(ctrl.map_now()))
+    assert ctrl.path[ctrl.index] == list(state.game_state.position)
+    asyncio.run(asyncio.wait_for(ctrl.run(), 2))
+    assert ctrl.status == 'complete' and state.game_state.position == tuple(onward)
+
+
 def test_cancelled_route_step_replans_and_finishes_without_manual_resume(state, tmp_path):
     ctrl, _, _ = setup(state, tmp_path)
     origin, rejected = (10, 10, 7), (11, 10, 7)

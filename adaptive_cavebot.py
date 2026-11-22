@@ -46,6 +46,8 @@ OFFSETS={(0,-1):Direction.NORTH,(1,0):Direction.EAST,(0,1):Direction.SOUTH,(-1,0
 MANUAL_MOVES={ClientOpcode.NEW_WALK,ClientOpcode.AUTO_WALK,ClientOpcode.STOP_WALK,ClientOpcode.FOLLOW,*[ClientOpcode(n) for n in (0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d)]}
 WALK_OPCODES={0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d}
 
+# A cancel has no command ID. A fresh position may still confirm that same walk.
+WALK_CANCEL_GRACE_SECONDS = .15
 BODY_ACK_SECONDS = 1.5
 BODY_DROP_RETRY_SECONDS = 10.
 
@@ -868,7 +870,12 @@ class AdaptiveCavebot:
         if self.loop and self.index == self.loop_start and len(self.path) > 1 and self.path[-1] == self.path[self.index]:
             previous = len(self.path) - 2
         landing = self.path[self.index]
-        if previous < 0 or not any(e['origin'] == self.path[previous] and e['exit'] == landing for e in self.edges):
+        # A failed step away from a confirmed waypoint does not undo its arrival.
+        retry_from_waypoint = self.failures > 0 and any(
+            cp['index'] == self.index and cp['waypoint'] == self.last_waypoint for cp in self.checkpoints)
+        after_transition = previous >= 0 and any(
+            e['origin'] == self.path[previous] and e['exit'] == landing for e in self.edges)
+        if not (after_transition or retry_from_waypoint):
             return self.recover_local(sample)
         self.guard()
         pos = list(self.state.game_state.position)
@@ -876,13 +883,12 @@ class AdaptiveCavebot:
             raise ValueError('Recovery: poza lokalnym zasięgiem lub inne piętro — sprawdź drogę powrotną.')
         if sample.get('center') != pos or pos == landing:
             return pos == landing
-        # Keep the landing in the route. Walk only a temporary, ordinary
+        # Keep a reached waypoint or landing in place. Walk only a temporary, ordinary
         # approach, or credit a following tile already reached on this leg.
         limit = self.checkpoint_limit(min(len(self.path), self.index + 9))
         if self.index < self.loop_start:
             limit = min(limit, self.loop_start + 1)
-        now = time.monotonic()
-        self.blocked = {p: expires for p, expires in self.blocked.items() if expires > now}
+        self.expire_movement_blocks()
         unsafe = set(self.blocked)
         unsafe.update(tuple(e['entry']) for e in self.edges if e.get('entry') and e.get('action') == 'step')
         best = None
@@ -897,22 +903,32 @@ class AdaptiveCavebot:
                 self.save_session_cursor()
                 return True
             local = detour(sample['cells'], pos, target, unsafe)
-            if local and len(local) <= 13 and (best is None or len(local) < len(best)):
-                best = local
+            if local and len(local) <= 13:
+                # Prefer continuing forward to revisiting a reached waypoint at equal cost.
+                rank = (len(local), retry_from_waypoint and j == self.index)
+                if best is None or rank < best[0]:
+                    best = (rank, local)
         if not best:
             return False
+        _, path = best
+        step = path[1]
         self._route_command = True
         try:
-            arrived = await self.step(best[1])
+            arrived = await self.step(step)
         except MovementDeferred:
             return False
         finally:
             self._route_command = False
         if not arrived:
-            self.blocked[tuple(best[1])] = time.monotonic() + 1
+            self.blocked[tuple(step)] = time.monotonic() + 1
         else:
             self.recovery_count += 1
         return arrived
+
+    def expire_movement_blocks(self):
+        if self.blocked:
+            now = time.monotonic()
+            self.blocked = {p: until for p, until in self.blocked.items() if until > now}
 
     def recover_local(self,sample):
         """Rejoin the current ordinary leg; local contention waits without stopping combat."""
@@ -927,6 +943,7 @@ class AdaptiveCavebot:
             return True
         if now<self.recovery_next_at:return False
         self.recovery_next_at=now+.25
+        self.expire_movement_blocks()
         if pos != expected and self.tolerate_waypoint(sample, recovering=True):
             self.recovery_attempts.append(now)
             self.recovery_count += 1
@@ -1051,6 +1068,7 @@ class AdaptiveCavebot:
 
     async def wait_position(self,expected,origin,timeout=2.5,intermediate=None,recover=False):
         deadline=time.monotonic()+timeout;motion=self.motion_generation;attempt=self._route_attempt if self._route_command else None
+        cancel_deadline = None
         while time.monotonic()<deadline:
             if self.status!='running':raise ValueError(self.reason)
             try:
@@ -1078,8 +1096,11 @@ class AdaptiveCavebot:
                 if (cancel and checked_at is not None
                         and cancel[0] > checked_at and cancel[1] == tuple(origin)
                         and self._uncertain_walk_origin != cancel[1]):
-                    attempt['cancelled'] = True
-                    return False
+                    if cancel_deadline is None:
+                        cancel_deadline = time.monotonic() + WALK_CANCEL_GRACE_SECONDS
+                    if attempt.get('stair_step') or time.monotonic() >= cancel_deadline:
+                        attempt['cancelled'] = True
+                        return False
             if (self._route_command and self.combat.lure_stop_reason and pos==origin
                     and not self.combat.positioning_step(origin,expected)):
                 raise MovementDeferred('Grupa wymaga walki przed dalszą trasą.')
@@ -1573,7 +1594,7 @@ class AdaptiveCavebot:
                     self.reason = f'Brak potwierdzonego połączenia trasy {tuple(pos)} → {tuple(target)}.'
                     await asyncio.sleep(1)
                     continue
-                now=time.monotonic();self.blocked={p:t for p,t in self.blocked.items() if t>now}
+                self.expire_movement_blocks()
                 tiles={(c['x'],c['y'],c['z']):c for c in sample['cells']}
                 if not step_clear(sample['cells'],pos,target,self.blocked):
                     # Rejoin within the next eight ordinary steps, never skip a transition.
