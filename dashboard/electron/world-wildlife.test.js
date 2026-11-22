@@ -15,6 +15,23 @@ test('world locates each species at its first sighting and keeps different floor
     {position:[8,8,7],species:[['Wolf',2]]}]);
 });
 
+test('atlas centres on stored coordinates after the marker expires',()=>{
+  const state={connected:true,player:{position:[30,40,8]},passive_map:{center:[29,40,8]}};
+  assert.deepEqual(model.atlasLocation(state,[31,40,8]),[31,40,8]);
+  assert.deepEqual(model.atlasLocation(state,null),[30,40,8]);
+  assert.deepEqual(model.atlasLocation({...state,player:{position:[0,0,0]}},null),[29,40,8]);
+  assert.equal(model.atlasLocation({...state,passive_map:{...state.passive_map,preview:true}},null),null);
+});
+
+test('ground selection distinguishes floors, coordinates and overlapping grounds',()=>{
+  const choices=new Map([['above',{cells:[[24,32,6]]}],['draft:route',{cells:[[24,32,7],[32,32,7]]}],['room',{cells:[[24,32,7]]}]]);
+  assert.equal(model.localGround(choices,[31,39,7],8),'room');
+  assert.equal(model.localGround(choices,[31,39,7],8,'route'),'draft:route');
+  assert.equal(model.localGround(choices,[32,39,7],8),'draft:route');
+  assert.equal(model.localGround(choices,[31,39,8],8),'');
+  assert.equal(model.localGround(choices,null,8),'');
+});
+
 test('world position expires and cannot come from an offline preview',()=>{
   const map={status:'ready',center:[23,42,7],captured_at:20};
   const get=(extra={},now=20500,connected=true)=>model.atlasPlayer({connected,passive_map:{...map,...extra}},now);

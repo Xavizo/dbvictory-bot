@@ -29,8 +29,8 @@ test('a discovered ground without a draft previews a loop and saves only on requ
     const body = init.body ? JSON.parse(init.body) : undefined;
     if (body) posts.push(body);
     let result;
-    if (url.includes('/discoveries?')) result = {scope:'test',discoveries:[area],revision:'abc'};
-    else if (url.endsWith('/grounds')) result = {scope:'test',sector_size:8,areas:[],drafts:[]};
+    if (url.includes('/discoveries?')) result = {scope:'test',discoveries:[{...area,id:'manual:other',cells:[[24,32,6]]},area],revision:'abc'};
+    else if (url.endsWith('/grounds')) result = {scope:'test',sector_size:8,areas:[{id:'far',name:'Daleko',cells:[[80,80,7]],drafts:[]}],drafts:[]};
     else if (url.endsWith('/route')) result = {points,path:points,links:[],entrance:points[0],total:body.selected.length,covered:body.selected.length,missing:[],selected:body.selected,transitions:0,sightings:0,via:body.via??[],
       ...(body.selected.length===area.cells.length&&!body.via?{covered:3,missing:[area.cells[3]],connector:{sectors:via,covered:4,passages:[passage]}}:{})};
     else if (url.endsWith('/drafts')) result = {saved_id:'new-id',drafts:[{id:'new-id',name:body.name,terrain:body.terrain}]};
@@ -53,17 +53,22 @@ test('a discovered ground without a draft previews a loop and saves only on requ
     if (!node || typeof node !== 'object') return [];
     return [node,...[node.props?.children].flat(Infinity).flatMap(nodes)];
   }
+  let location=null;
   async function render() {
     let root;
     for (let i=0;i<5;i++) {
       cursor = 0;
-      root = exports.default({initialFloor:7,onOpen:()=>{},onClose:()=>{}});
+      root = exports.default({initialFloor:7,location,onOpen:()=>{},onClose:()=>{}});
       while (effects.length) effects.shift()();
       await new Promise(done => setImmediate(done));
     }
     return nodes(root);
   }
   let panel = await render();
+  const current=()=>panel.find(n=>n.props['aria-label']==='Obszar lub szkic').props.value;
+  assert.equal(current(),'');
+  location=[26,33,7];panel=await render();
+  assert.equal(current(),area.id);
   assert.ok(panel.some(n => n.props.children === 'Możesz przeliczyć pętlę z zapisanej wizyty.'));
   assert.deepEqual(posts, []);
   const button = label => panel.find(n => n.type === 'button' && n.props.children === label);
@@ -85,6 +90,8 @@ test('a discovered ground without a draft previews a loop and saves only on requ
   assert.deepEqual(posts[1].terrain,{ground:area.id,sectors:selected});
   const choose=panel.find(n=>n.props['aria-label']==='Obszar lub szkic');
   choose.props.onChange({target:{value:'draft:new-id'}});panel=await render();
+  location=[80,80,7];panel=await render();
+  assert.equal(current(),'draft:new-id');
   assert.deepEqual(ground().selected,selected);
   assert.deepEqual(ground().cells,area.cells);
   await click('Zaproponuj pętlę');

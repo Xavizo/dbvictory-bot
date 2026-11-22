@@ -3,7 +3,7 @@ import {useEffect,useMemo,useRef,useState} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 import type {BotState} from "@/lib/api";
 import {spawnAreas,visibleMonsters,type Witness} from "@/lib/spawnAreas";
-import {sectorHabitats} from "@/lib/atlasWildlife";
+import {localGround,sectorHabitats} from "@/lib/atlasWildlife";
 import WorldMap,{type GroundLayer,type Position,type AtlasPassage,type AtlasConnector} from "./WorldMap";
 
 type Observation={kind:"death"|"first_contact"|"first_seen";cell:Position;name:string;count:number;at_monster:boolean;point?:Position;observer_cell?:Position};
@@ -34,7 +34,7 @@ async function request(init:RequestInit={},url=endpoint) {
 }
 function post(url:string,body:unknown,signal?:AbortSignal){return request({method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal},url);}
 
-export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state,player}:{initialFloor:number;onOpen:(p:Position)=>void;onClose:()=>void;state?:BotState|null;player?:Position|null}){
+export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state,player,location=player}:{initialFloor:number;onOpen:(p:Position)=>void;onClose:()=>void;state?:BotState|null;player?:Position|null;location?:Position|null}){
   const [initialFloor]=useState(playerFloor);
   const [data,setData]=useState<Catalogue|null>(null),[key,setKey]=useState(""),[copy,setCopy]=useState<Area|null>(null);
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[reload,setReload]=useState(0);
@@ -57,12 +57,11 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     request({signal:ctl.signal}).then((info:Catalogue)=>{
       if(ctl.signal.aborted)return;
       setData(info);
-      const saved=info.discoveries?.[0]??info.areas[0],draft=info.drafts.find(d=>d.latest)??info.drafts[0];
-      if(saved||draft){const area=saved??proposal(draft);setKey(saved?.id??"draft:"+draft.id);setFocus(center(area,initialFloor));}
     }).catch(e=>{if(!ctl.signal.aborted)setError(e.message);});
     return ()=>ctl.abort();
   },[initialFloor,reload]);
   const scope=data?.scope;
+  const [checkedScope,setCheckedScope]=useState("");
   useEffect(()=>{
     if(!scope)return;
     const ctl=new AbortController();
@@ -77,7 +76,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
           if(next.discoveries)setData(old=>old&&old.scope===scope?{...old,discoveries:next.discoveries}:old);
         }
       }catch{/* Retain the last published suggestions during reconnect. */}
-      finally{loading=false;}
+      finally{loading=false;if(!ctl.signal.aborted)setCheckedScope(scope!);}
     }
     void refreshDiscoveries();
     const interval=setInterval(refreshDiscoveries,20000);
@@ -103,11 +102,13 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const floors=[...new Set(selected.map(p=>p[2]))].sort((a,b)=>a-b);
   const discovery=data?.discoveries?.find(d=>d.id===key);
   useEffect(()=>{
-    const first=data?.discoveries?.[0];
-    if(first&&!choices.has(key)&&!copy&&!planning){
-      setKey(first.id);setLayer("spawns");setSpecies("");setFocus(center(first,initialFloor));resetRoute();
+    if(!data||checkedScope!==data.scope||copy||planning||choices.has(key))return;
+    const match=localGround(choices,location,data.sector_size,state?.adaptive_cavebot?.draft_id);
+    if(key||match){
+      resetRoute();setKey(match);setLayer("spawns");setSpecies("");
+      setFocus(match?center(choices.get(match)!,location![2]):null);
     }
-  },[data?.discoveries,choices,key,copy,planning,initialFloor]);
+  },[data,checkedScope,choices,key,copy,planning,location,state?.adaptive_cavebot?.draft_id]);
   const linked=useMemo(()=>data?.drafts.filter(d=>area?.drafts.includes(d.id))??[],[area?.drafts,data]);
   const cells=useMemo(()=>new Set(area?.cells.map(p=>p.join(","))),[area?.cells]);
   const side=data?.sector_size??8;
@@ -179,7 +180,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     const a=choices.get(k);if(!a)return;
     createKey.current="";
     resetRoute();
-    setKey(k);setCopy(null);setSpecies("");setLayer("spawns");setError("");setFocus(center(a,initialFloor));
+    setKey(k);setCopy(null);setSpecies("");setLayer("spawns");setError("");setFocus(center(a,location?.[2]??initialFloor));
   }
   function resetRoute(){
     setRoute(null);setApproach([]);setSavedDraft("");setRouteError("");setSelection(null);setConfirmedVia(null);setPreviousSelection(null);setSelecting(false);baseEntrance.current=null;
@@ -261,7 +262,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     finally{setBusy(false);}
   }
   return <div className="hunt-atlas-layout">
-    <WorldMap initialFloor={initialFloor} player={player} onOpen={onOpen} loadingLabel={planning||undefined}
+    <WorldMap initialFloor={initialFloor} player={player} location={location} onOpen={onOpen} loadingLabel={planning||undefined}
       habitats={showMonsters?observations.habitats:undefined} habitatSide={side} habitatName={showMonsters&&observations.habitats?species:""}
       toolbar={<button disabled={!!copy||busy||!!planning} onClick={onClose}>← Świat</button>}
       ground={{cells:area?.cells??[],marks:!showMonsters?[]:layer==="live"?(live?.marks??[]).map(m=>({position:m.position,exact:true,live:true,title:"Widoczne potwory: "+m.count})):observations.marks,side,editing:!!copy,toggle,focus,
@@ -272,11 +273,12 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       {error&&<p role="alert">{error} {!copy&&<button onClick={()=>setReload(v=>v+1)}>Wczytaj ponownie</button>}</p>}
       {!data&&!error&&<p role="status" className="atlas-loading"><i className="atlas-spinner"/>Wczytywanie…</p>}
       {data&&<label><select aria-label="Obszar lub szkic" disabled={!!copy||busy||!!planning} value={key} onChange={e=>pick(e.target.value)}>
+        {!area&&<option value="" disabled>Wybierz expowisko</option>}
         {!!data.discoveries?.length&&<optgroup label="Z ręcznej gry">{data.discoveries.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</optgroup>}
         {!!data.areas.length&&<optgroup label="Zapisane expowiska">{data.areas.map(a=><option key={a.id} value={a.id!}>{a.name}</option>)}</optgroup>}
         <optgroup label="Propozycje ze szkiców">{data.drafts.filter(d=>!d.archived).map(d=><option key={d.id} value={"draft:"+d.id}>{d.name}</option>)}</optgroup>
       </select></label>}
-      {data&&!area&&<p>Expowiska pojawią się tutaj podczas ręcznej gry, gdy atlas zarejestruje walki z przyrostem XP.</p>}
+      {data&&!choices.size&&!area&&<p>Expowiska pojawią się tutaj podczas ręcznej gry, gdy atlas zarejestruje walki z przyrostem XP.</p>}
       {area&&<>
         {!copy&&!area.id&&!area.cells.length&&<p>Brak pełnego obiegu. Możesz zaznaczyć sektory ręcznie.</p>}
         {discovery?<div>

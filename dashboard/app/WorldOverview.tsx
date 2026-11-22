@@ -2,10 +2,11 @@
 import {useEffect,useMemo,useState} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 import {sectorHabitats,type MapSighting} from "@/lib/atlasWildlife";
-import WorldMap,{type Position} from "./WorldMap";
+import WorldMap,{type Position,type WorldViewport} from "./WorldMap";
 
 type ObservedArea={sightings?:MapSighting[]};
-export default function WorldOverview({initialFloor,player,onOpen,onGrounds}:{initialFloor:number;player:Position|null;
+export default function WorldOverview({initialFloor,player,location,viewport,onOpen,onGrounds}:{initialFloor:number;player:Position|null;
+  location:Position|null;viewport:{current:WorldViewport|null};
   onOpen:(p:Position)=>void;onGrounds:()=>void}){
   const [enabled,enable]=useState(false),[species,choose]=useState("");
   const [sample,setSample]=useState<{rows:MapSighting[];side:number}|null>(null);
@@ -34,7 +35,7 @@ export default function WorldOverview({initialFloor,player,onOpen,onGrounds}:{in
   },[enabled,retry]);
   const index=useMemo(()=>sectorHabitats(sample?.rows??[],sample?.side??8),[sample]);
   const habitats=useMemo(()=>index.habitats.filter(h=>!species||h.species.some(([n])=>n===species)),[index,species]);
-  return <WorldMap initialFloor={initialFloor} player={player} onOpen={onOpen}
+  return <WorldMap initialFloor={initialFloor} player={player} location={location} viewport={viewport} onOpen={onOpen}
     habitats={enabled&&!loading?habitats:undefined} habitatSide={sample?.side} habitatName={enabled?species:""}
     loadingLabel={enabled&&loading?"Wczytywanie gatunków…":undefined}
     toolbar={<><button onClick={onGrounds}>Expowiska</button>

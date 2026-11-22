@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.19.1",
+    "changes":[
+      {"title":"Świat otwiera się przy postaci","detail":"Ctrl + kółko przełącza piętra w tym samym kadrze. Expowiska otwierają lokalny obszar, a podświetlenie zbadanych pól możesz włączyć w Warstwach."}
+    ]
+  },
+  {
     "version":"v1.19.0",
     "changes":[
       {"title":"Połącz piętra w Atlasie","detail":"Atlas pokazuje brakujące sektory i przejścia na mapie. Sprawdź przewidywane pokrycie i kliknij Dodaj łącznik, aby uwzględnić go w pętli."}
