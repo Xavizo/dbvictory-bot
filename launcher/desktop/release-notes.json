@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.21.0",
+    "changes":[
+      {"title":"Wspólna mapa stref i potworów","detail":"Atlas pokazuje razem sektory zapisane podczas ręcznej gry i obiegów. Kliknij sektor, aby zobaczyć gatunki odnotowane przy pierwszym wykryciu."},
+      {"title":"Pętla z własnego wyboru stref","detail":"Zaznacz teren na kilku piętrach, także z różnych expowisk. Porównaj trzy warianty i zapisz wybraną pętlę ze szkicem."}
+    ]
+  },
+  {
     "version":"v1.20.1",
     "changes":[{"title":"Sektory expowiska przy postaci","detail":"Atlas podąża za zmianą expowiska i piętra. Ręczny wybór obszaru i edycja terenu zachowują aktualny szkic."}]
   },

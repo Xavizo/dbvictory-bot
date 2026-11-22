@@ -3,7 +3,8 @@ import {memo, useEffect, useMemo, useRef, useState} from "react";
 import type {PointerEvent as ReactPointerEvent, ReactNode} from "react";
 import {stepFloor} from "@/lib/atlasModel";
 import {authenticatedFetch} from "@/lib/auth";
-import type {Habitat} from "@/lib/atlasWildlife";
+import {zonePaths,type Habitat} from "@/lib/atlasWildlife";
+import type {WorldZones} from "@/lib/useWorldZones";
 
 export type Position = [number, number, number];
 export type AtlasPassage={id:string|null;origin:Position;entry:Position;exit:Position;action:string};
@@ -70,9 +71,9 @@ const Sectors = memo(function Sectors({sectors, overlay}:{sectors:Sector[]; over
   </g>)}</>;
 });
 
-type Props={initialFloor:number;onOpen:(p:Position)=>void;ground?:GroundLayer;toolbar?:ReactNode;
+type Props={initialFloor:number;onOpen:(p:Position)=>void;ground?:GroundLayer;toolbar?:ReactNode;zones?:WorldZones;
   player?:Position|null;location?:Position|null;viewport?:{current:WorldViewport|null};habitats?:Habitat[];habitatName?:string;habitatSide?:number;loadingLabel?:string};
-export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player,location=player,viewport,habitats,habitatName,habitatSide=8,loadingLabel}:Props) {
+export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player,location=player,viewport,zones,habitats,habitatName,habitatSide=8,loadingLabel}:Props) {
   const [floor,setFloor]=useState(()=>viewport?.current?.floor??location?.[2]??initialFloor), [retry,setRetry]=useState(0);
   const [result,setResult]=useState<Floor|null>(null), [error,setError]=useState("");
   const [overlay,setOverlay]=useState(false), [grid,setGrid]=useState(false);
@@ -123,7 +124,8 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
     return {x:x-4,y:y-4,width:right-x+8,height:bottom-y+8};
   },[result]);
   const view=camera??bounds;
-  const here=selection&&habitats?.find(h=>h.position[2]===selection[2]&&h.position[0]===Math.floor(selection[0]/habitatSide)*habitatSide&&h.position[1]===Math.floor(selection[1]/habitatSide)*habitatSide);
+  const zoneLayer=useMemo(()=>zones?zonePaths(zones.cells,floor,zones.side):null,[zones,floor]);
+  const here=selection&&(zones?.habitats??habitats)?.find(h=>h.position[2]===selection[2]&&h.position[0]===Math.floor(selection[0]/habitatSide)*habitatSide&&h.position[1]===Math.floor(selection[1]/habitatSide)*habitatSide);
   function showHabitat(){
     if(!habitats?.length)return;
     const points=habitats.map(h=>h.position);
@@ -209,7 +211,11 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
       <defs><pattern id="world-sector-grid" x={0} y={0} width={64} height={64} patternUnits="userSpaceOnUse">
         <path d="M64 0H0V64" fill="none" stroke="white" strokeOpacity={.55} vectorEffect="non-scaling-stroke"/></pattern></defs>
       <Sectors sectors={result.sectors} overlay={overlay}/>
-      {ground&&<g fill="#ffbc61" fillOpacity=".31" stroke="#ffd497" strokeWidth=".2">{ground.cells.filter(p=>p[2]===floor).map(([x,y])=>
+      {zoneLayer&&<g aria-label="Odkryte strefy expienia" pointerEvents="none">
+        <path d={zoneLayer.fill} fill="#ffbc61" fillOpacity=".20" stroke={view.width<=256?"#ffd497":"none"} strokeWidth=".6" vectorEffect="non-scaling-stroke"/>
+        <path d={zoneLayer.outline} fill="none" stroke="#ffcf88" strokeWidth="1.5" vectorEffect="non-scaling-stroke"/>
+      </g>}
+      {ground&&!zones&&<g fill="#ffbc61" fillOpacity=".31" stroke="#ffd497" strokeWidth=".2">{ground.cells.filter(p=>p[2]===floor).map(([x,y])=>
         <rect key={x+','+y} x={x} y={y} width={side} height={side}/>)}</g>}
       {ground?.selected&&<g aria-label="Wybrany teren" fill="#29b86a" fillOpacity=".54" stroke="#a4ffc3" strokeWidth=".38" pointerEvents="none">
         {ground.selected.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}/>)}</g>}
@@ -239,7 +245,7 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
     </svg>}
     {loadingLabel&&<div role="status" className="atlas-loading map-work-indicator"><i className="atlas-spinner"/>{loadingLabel}</div>}
     {selection&&!ground?.editing&&!ground?.selecting&&<div className="map-selection">
-      <span>{selection.join(", ")}</span>{here&&<span className="habitat-key">{here.species.map(([n])=>n).join(" · ")}</span>}
+      <span>{selection.join(", ")}</span>{zones&&zoneLayer?.cells.has(Math.floor(selection[0]/zones.side)*zones.side+","+Math.floor(selection[1]/zones.side)*zones.side)&&<span>Odkryta strefa</span>}{here&&<span className="habitat-key">{here.species.map(([n])=>n).join(" · ")}</span>}
       <button onClick={()=>onOpen(selection)}>Otwórz pole</button>
       {ground?.planApproach&&<button onClick={()=>ground.planApproach?.(selection)}>Dojście stąd</button>}
       <button aria-label="Zamknij dane pola" onClick={()=>select(null)}>×</button></div>}

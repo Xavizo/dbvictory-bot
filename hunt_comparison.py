@@ -177,18 +177,21 @@ def observed_returns(events, slots):
     return {cell:median(gaps) for cell,gaps in intervals.items()}
 
 
-def comparison_model(atlas, area, sources, selected, observations):
+def comparison_model(atlas, area, sources, selected, observations, *, manual_sources=()):
     manual = str(area.get('id','')).startswith('manual:')
-    evidence = [area] if manual else sources
+    visits_from = [area] if manual else manual_sources
+    evidence = list(visits_from) + list(sources)
     marks = [m for s in evidence for m in s.get('sightings',())]
     witnesses = [g for s in evidence for g in s.get('witnesses',())]
     model = HuntYield(marks, witnesses, selected)
-    if manual:
+    if visits_from:
         from manual_hunts import storage
         path = storage(atlas)
         if path.exists():
             with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-                for raw, in db.execute('SELECT data FROM visits WHERE ground=?',(area['id'],)):
+                keys = [item['id'] for item in visits_from]
+                query = 'SELECT data FROM visits WHERE ground IN ('+','.join('?' for _ in keys)+')'
+                for raw, in db.execute(query,keys):
                     row = json.loads(raw)
                     counts = Counter()
                     for p, _, _, n in row['sightings']:

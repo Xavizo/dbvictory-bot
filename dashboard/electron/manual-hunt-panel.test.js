@@ -56,12 +56,12 @@ test('a discovered ground without a draft previews a loop and saves only on requ
     if (!node || typeof node !== 'object') return [];
     return [node,...[node.props?.children].flat(Infinity).flatMap(nodes)];
   }
-  let location=null;
+  let location=null,world=null;
   async function render() {
     let root;
     for (let i=0;i<5;i++) {
       cursor = 0;
-      root = exports.default({initialFloor:7,location,onOpen:()=>{},onClose:()=>{}});
+      root = exports.default({initialFloor:7,location,world,onOpen:()=>{},onClose:()=>{}});
       while (effects.length) effects.shift()();
       await new Promise(done => setImmediate(done));
     }
@@ -155,4 +155,29 @@ test('a discovered ground without a draft previews a loop and saves only on requ
   assert.equal(current(),'far');
   location=[26,33,7];panel=await render();
   assert.equal(current(),area.id);
+  const combined=[...area.cells,[48,32,7],[24,32,6]];
+  world={scope:'test',revision:'combined',side:8,cells:combined,habitats:[{position:[48,32,7],species:[['Wolf',1]]}]};
+  panel=await render();
+  const openWorld=()=>panel.find(n=>n.props['aria-label']==='Obszar lub szkic').props.onChange({target:{value:'world'}});
+  openWorld();panel=await render();
+  assert.equal(current(),'world');
+  assert.ok(!button('Całe expowisko'));
+  assert.ok(!button('Edytuj obszar'));
+  assert.deepEqual(ground().selected,[]);
+  assert.ok(panel.some(n=>n.type==='option'&&n.props.value==='Wolf'));
+  await click('Zaznacz strefy przy postaci');
+  assert.deepEqual(ground().selected,area.cells);
+  await drag([48,33,7],[48,33,7]);
+  location=[80,80,7]; panel=await render();
+  assert.equal(current(),'world');
+  assert.deepEqual(ground().selected,[...area.cells,[48,32,7]]);
+  await click('Porównaj pętle');
+  assert.equal(posts.at(-1).ground,'world');
+  await click('Zapisz jako nowy szkic');
+  assert.deepEqual(posts.at(-1).terrain,{ground:'world',sectors:[...area.cells,[48,32,7]]});
+  panel.find(n=>n.props['aria-label']==='Obszar lub szkic').props.onChange({target:{value:'draft:new-id'}});panel=await render();
+  assert.deepEqual(ground().selected,[...area.cells,[48,32,7]]);
+  await click('Porównaj pętle');
+  assert.equal(posts.at(-1).ground,'world');
+
 });

@@ -331,7 +331,19 @@ def propose(atlas, observations, body):
     if not isinstance(key,str):
         raise ValueError('Wybierz expowisko.')
     info = catalogue(atlas) if not key.startswith('manual:') else None
-    if key.startswith('draft:'):
+    manual_sources = []
+    if key == 'world':
+        from hunt_world import world_zones
+        from manual_hunts import discoveries
+        chosen = checked_sectors(body.get('selected'))
+        known = world_zones(atlas)['cells']
+        manual_sources = [g for g in discoveries(atlas) if any(tuple(c) in chosen for c in g['cells'])]
+        related = [d['id'] for d in info['drafts'] if
+                   any(tuple(m['observer_cell']) in chosen for m in d['sightings'])
+                   or any(tuple(c) in chosen for c in (d.get('terrain') or {}).get('sectors', ()))
+                   or any(tuple(c) in chosen for c in (d.get('latest') or {}).get('cells', ()))]
+        area = dict(cells=known, drafts=related)
+    elif key.startswith('draft:'):
         source = next((d for d in info['drafts'] if d['id']==key[6:] and not d['archived']), None)
         if not source or not (source['latest'] or source.get('terrain')):
             raise ValueError('Do propozycji ze szkicu potrzebny jest pełny obieg.')
@@ -374,7 +386,7 @@ def propose(atlas, observations, body):
     if compare:
         from hunt_comparison import comparison_model
         sources = [d for d in info['drafts'] if d['id'] in area['drafts']] if info else []
-        model = comparison_model(atlas, area, sources, cells, observations)
+        model = comparison_model(atlas, area, sources, cells, observations, manual_sources=manual_sources)
     anchor = body.get('loop_start')
     if anchor is not None and (not position(anchor) or sector(anchor) not in cells|excluded):
         raise ValueError('Początek pętli leży poza wybranym expowiskiem.')
@@ -400,11 +412,11 @@ def propose(atlas, observations, body):
         return simulated(atlas, observations, [(a,None), *route],excluded)
 
     first_seen = Counter()
-    for d in info['drafts']:
-        if d['id'] in area['drafts']:
-            for mark in d['sightings']:
-                if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
-                    first_seen[tuple(mark['point'])] += mark['count']
+    evidence = [d for d in info['drafts'] if d['id'] in area['drafts']] + manual_sources
+    for source in evidence:
+        for mark in source['sightings']:
+            if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
+                first_seen[tuple(mark['point'])] += mark['count']
     seeds = [tuple(p) for d in atlas.drafts() if d['id'] in area['drafts'] for p in d['points']]
     return proposed_circuit(atlas, observations, ground, cells, first_seen, seeds, choose_region=allowed is not None, anchor=anchor, model=model)
 

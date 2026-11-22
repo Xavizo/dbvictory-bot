@@ -3,8 +3,9 @@ import {useEffect,useMemo,useRef,useState} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 import type {BotState} from "@/lib/api";
 import {spawnAreas,visibleMonsters,type Witness} from "@/lib/spawnAreas";
+import type {WorldZones} from "@/lib/useWorldZones";
 import {localGround,sectorHabitats} from "@/lib/atlasWildlife";
-import WorldMap,{type GroundLayer,type Position,type AtlasPassage,type AtlasConnector} from "./WorldMap";
+import WorldMap,{type GroundLayer,type Position,type AtlasPassage,type AtlasConnector,type WorldViewport} from "./WorldMap";
 
 type Observation={kind:"death"|"first_contact"|"first_seen";cell:Position;name:string;count:number;at_monster:boolean;point?:Position;observer_cell?:Position};
 type Terrain={ground:string;sectors:Position[];via?:Position[]};
@@ -39,9 +40,9 @@ async function request(init:RequestInit={},url=endpoint) {
 }
 function post(url:string,body:unknown,signal?:AbortSignal){return request({method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal},url);}
 
-export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state,player,location=player}:{initialFloor:number;onOpen:(p:Position)=>void;onClose:()=>void;state?:BotState|null;player?:Position|null;location?:Position|null}){
+export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state,player,location=player,world=null,worldError="",retryWorld,viewport,startInWorld=false}:{world?:WorldZones|null;worldError?:string;retryWorld?:()=>void;viewport?:{current:WorldViewport|null};startInWorld?:boolean;initialFloor:number;onOpen:(p:Position)=>void;onClose:()=>void;state?:BotState|null;player?:Position|null;location?:Position|null}){
   const [initialFloor]=useState(playerFloor);
-  const [data,setData]=useState<Catalogue|null>(null),[key,setKey]=useState(""),[copy,setCopy]=useState<Area|null>(null);
+  const [data,setData]=useState<Catalogue|null>(null),[key,setKey]=useState(startInWorld?"world":""),[copy,setCopy]=useState<Area|null>(null);
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[reload,setReload]=useState(0);
   const [showMonsters,setShowMonsters]=useState(true),[species,setSpecies]=useState("");
   const [layer,setLayer]=useState<Observation["kind"]|"spawns"|"live">("spawns");
@@ -54,14 +55,14 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const [saved,setSaved]=useState<Partial<Record<VariantKind,string>>>({}),[routeError,setRouteError]=useState("");
   const savedDraft=saved[variant];
   const [planning,setPlanning]=useState("");
-  const [selection,setSelection]=useState<Position[]|null>(null),[selecting,setSelecting]=useState(false);
+  const [selection,setSelection]=useState<Position[]|null>(null),[selecting,setSelecting]=useState(startInWorld);
   const [confirmedVia,setConfirmedVia]=useState<Position[]|null>(null);
   const [previousSelection,setPreviousSelection]=useState<TerrainChoice|null>(null);
   const baseEntrance=useRef<Position|null>(null);
   const previewRequest=useRef<AbortController|null>(null);
   useEffect(()=>()=>previewRequest.current?.abort(),[]);
   const createKey=useRef("");
-  const [pinned,setPinned]=useState(false);
+  const [pinned,setPinned]=useState(startInWorld);
   useEffect(()=>{
     const ctl=new AbortController();setError("");
     request({signal:ctl.signal}).then((info:Catalogue)=>{
@@ -92,22 +93,26 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     const interval=setInterval(refreshDiscoveries,20000);
     return ()=>{ctl.abort();clearInterval(interval);};
   },[scope]);
+  const activeWorld=world?.scope===scope?world:null;
   const choices=useMemo(()=>{
     const all=new Map<string,Area>();
+    if(activeWorld)all.set("world",{id:"world",name:"Strefy świata",cells:activeWorld.cells,drafts:[]});
     for(const a of data?.areas??[])if(a.id)all.set(a.id,a);
     for(const a of data?.discoveries??[])all.set(a.id,a);
     for(const d of data?.drafts??[])if(!d.archived)all.set("draft:"+d.id,proposal(d));
     return all;
-  },[data]);
+  },[data,activeWorld]);
   const draft=key.startsWith("draft:")?data?.drafts.find(d=>"draft:"+d.id===key):undefined;
   const terrain=draft?.terrain;
   const source=terrain?choices.get(terrain.ground):undefined;
   const sourceCells=useMemo(()=>new Set(source?.cells.map(p=>p.join(","))),[source]);
   const hasSource=!!source&&!!terrain&&terrain.sectors.every(p=>sourceCells.has(p.join(",")));
-  const planKey=hasSource?terrain!.ground:key;
   const base=choices.get(key);
-  const area=copy??(hasSource&&base?{...base,cells:source!.cells}:base);
+  const area=copy??(hasSource&&terrain?.ground!=="world"&&base?{...base,cells:source!.cells}:base);
   const selected=selection??terrain?.sectors??[];
+  const cells=useMemo(()=>new Set(area?.cells.map(p=>p.join(","))),[area?.cells]);
+  const planKey=activeWorld&&selected.some(p=>!cells.has(p.join(",")))?"world":hasSource?terrain!.ground:key;
+  const worldLayer=key==="world"||hasSource&&terrain?.ground==="world";
   const via=confirmedVia??terrain?.via??[];
   const floors=[...new Set(selected.map(p=>p[2]))].sort((a,b)=>a-b);
   const discovery=data?.discoveries?.find(d=>d.id===key);
@@ -118,14 +123,13 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const localKey=useMemo(()=>sx===null||sy===null||z===undefined?"":localGround(choices,[sx,sy,z],side,activeDraft),
     [choices,sx,sy,z,side,activeDraft]);
   useEffect(()=>{
-    if(!scope||checkedScope!==scope||copy||planning||busy||selecting||selection!==null||baseRoute)return;
+    if(key==="world"||!scope||checkedScope!==scope||copy||planning||busy||selecting||selection!==null||baseRoute)return;
     const exists=choices.has(key);
     if(exists&&(pinned||!localKey)||localKey===key)return;
     resetRoute();setKey(localKey);setPinned(false);setLayer("spawns");setSpecies("");
     setFocus(localKey?center(choices.get(localKey)!,z!):null);
   },[scope,checkedScope,choices,key,localKey,pinned,copy,planning,busy,selecting,selection,baseRoute,z]);
   const linked=useMemo(()=>data?.drafts.filter(d=>area?.drafts.includes(d.id))??[],[area?.drafts,data]);
-  const cells=useMemo(()=>new Set(area?.cells.map(p=>p.join(","))),[area?.cells]);
   const [,expire]=useState(0);
   const captured=state?.passive_map?.captured_at;
   useEffect(()=>{
@@ -138,6 +142,10 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
   const live=layer==="live"?visibleMonsters(state,cells,side,Date.now()):null;
   const observations=useMemo(()=>{
     const names=new Map<string,number>(), locations=new Map<string,{position:Position;lines:Map<string,number>}>();
+    if(worldLayer&&activeWorld){
+      for(const h of activeWorld.habitats)for(const [n,count] of h.species)names.set(n,(names.get(n)??0)+count);
+      return {names,marks:[],habitats:species?activeWorld.habitats.filter(h=>h.species.some(([n])=>n===species)):undefined};
+    }
     const filtered:Observation[]=[];
     const rows=discovery?discovery.sightings:linked.flatMap(d=>(kind==="first_seen"?d.sightings:d.latest?.observations)??[]);
     for(const k of rows){
@@ -168,7 +176,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     return {names,habitats:species&&layer==="first_seen"?sectorHabitats(filtered,side).habitats:undefined,marks:Array.from(locations.values(),v=>({position:v.position,exact:kind==="first_seen",
       title:[...(kind==="first_seen"?["Pierwsze wykrycie ("+v.position.join(", ")+")"]:[]),
         ...Array.from(v.lines,([name,count])=>name+" ×"+count)].join("\n")}))};
-  },[cells,linked,species,kind,layer,discovery,side]);
+  },[cells,linked,species,kind,layer,discovery,side,worldLayer,activeWorld]);
   const applied=useMemo(()=>new Set(route?.selected.map(p=>p.join(","))),[route]);
   const appliedVia=useMemo(()=>new Set(route?.via?.map(p=>p.join(","))),[route]);
   const dirty=!!route&&(selected.length!==applied.size||selected.some(p=>!applied.has(p.join(",")))||
@@ -197,7 +205,8 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     setPinned(!automatic);
     createKey.current="";
     resetRoute();
-    setKey(k);setCopy(null);setSpecies("");setLayer("spawns");setError("");setFocus(center(a,location?.[2]??initialFloor));
+    if(k==="world")setSelecting(true);
+    setKey(k);setCopy(null);setSpecies("");setLayer("spawns");setError("");setFocus(k==="world"?null:center(a,location?.[2]??initialFloor));
   }
   function resetRoute(){
     setRoute(null);setApproach([]);setSaved({});setVariant("full");setRouteError("");setSelection(null);setConfirmedVia(null);setPreviousSelection(null);setSelecting(false);baseEntrance.current=null;
@@ -207,7 +216,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     const start=[Math.floor(a[0]/side)*side,Math.floor(a[1]/side)*side,a[2]].join(",");
     const next=new Map(selected.map(p=>[p.join(","),p]));
     const remove=next.has(start);
-    for(const p of area.cells){
+    for(const p of activeWorld?.cells??area.cells){
       if(p[2]!==a[2]||p[0]>Math.max(a[0],b[0])||p[0]+side<=Math.min(a[0],b[0])||
           p[1]>Math.max(a[1],b[1])||p[1]+side<=Math.min(a[1],b[1]))continue;
       if(remove)next.delete(p.join(","));else next.set(p.join(","),p);
@@ -247,7 +256,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     setPlanning("Zapisywanie szkicu…");setRouteError("");
     try{
       const result=await post("http://127.0.0.1:8089/api/map/drafts",{scope:data.scope,
-        name:area.name.slice(0,65)+" · "+(options?variantNames[variant]:"pętla atlasu"),points:route.points,links:route.links,loop:true,terrain:{ground:planKey,sectors:route.selected,...(route.via?.length?{via:route.via}:{})}});
+        name:(key==="world"?"Strefy · "+route.entrance.join(", "):area.name.slice(0,65))+" · "+(options?variantNames[variant]:"pętla atlasu"),points:route.points,links:route.links,loop:true,terrain:{ground:planKey,sectors:route.selected,...(route.via?.length?{via:route.via}:{})}});
       const saved=result.drafts?.find((d:Draft)=>d.id===result.saved_id);
       if(saved)setData(old=>old?{...old,drafts:[{id:saved.id,name:saved.name,terrain:saved.terrain,archived:false,
         laps:0,duration_ms:0,blocked_ms:0,xp_hour:null,senzu_hour:null,latest:null},...old.drafts.filter(d=>d.id!==saved.id)]}:old);
@@ -279,18 +288,21 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     finally{setBusy(false);}
   }
   return <div className="hunt-atlas-layout">
-    <WorldMap initialFloor={initialFloor} player={player} location={location} onOpen={onOpen} loadingLabel={planning||undefined}
+    <WorldMap viewport={viewport} zones={copy?undefined:activeWorld??undefined} initialFloor={initialFloor} player={player} location={location} onOpen={onOpen} loadingLabel={planning||undefined}
       habitats={showMonsters?observations.habitats:undefined} habitatSide={side} habitatName={showMonsters&&observations.habitats?species:""}
       toolbar={<button disabled={!!copy||busy||!!planning} onClick={onClose}>← Świat</button>}
       ground={{cells:area?.cells??[],marks:!showMonsters?[]:layer==="live"?(live?.marks??[]).map(m=>({position:m.position,exact:true,live:true,title:"Widoczne potwory: "+m.count})):observations.marks,side,editing:!!copy,toggle,focus,
         route:dirty?undefined:route?.path,connector,via,passages:!dirty&&via.length?route?.passages:undefined,approach,missing:dirty?undefined:route?.missing,selected:copy?undefined:selected,selecting,selectSectors,
         planApproach:route&&!planning&&!dirty&&!selecting?preview:undefined}}/>
     <aside className="hunt-area-panel">
-      <h2>Expowiska</h2>
+      <h2>Planowanie pętli</h2>
+      {worldError&&<p role="alert">{worldError} <button onClick={retryWorld}>Ponów</button></p>}
+      {data&&key==="world"&&!activeWorld&&!worldError&&<p role="status">Wczytywanie stref…</p>}
       {error&&<p role="alert">{error} {!copy&&<button onClick={()=>setReload(v=>v+1)}>Wczytaj ponownie</button>}</p>}
       {!data&&!error&&<p role="status" className="atlas-loading"><i className="atlas-spinner"/>Wczytywanie…</p>}
       {data&&<label><select aria-label="Obszar lub szkic" disabled={!!copy||busy||!!planning} value={key} onChange={e=>pick(e.target.value)}>
-        {!area&&<option value="" disabled>Wybierz expowisko</option>}
+        {!area&&key!=="world"&&<option value="" disabled>Wybierz expowisko</option>}
+        {(activeWorld||key==="world")&&<option value="world">Wszystkie odkryte strefy</option>}
         {pinned&&localKey&&<option value="@local">Przy postaci (automatycznie) · {choices.get(localKey)?.name}</option>}
         {!!data.discoveries?.length&&<optgroup label="Z ręcznej gry">{data.discoveries.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</optgroup>}
         {!!data.areas.length&&<optgroup label="Zapisane expowiska">{data.areas.map(a=><option key={a.id} value={a.id!}>{a.name}</option>)}</optgroup>}
@@ -312,12 +324,13 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
           <p>Kliknij sektor {side} × {side}, aby dodać go do obszaru lub usunąć. Przeciągnij mapę, aby ją przesunąć.</p>
           <details><summary>Przypisane szkice ({copy.drafts.length})</summary>{data?.drafts.filter(d=>!d.archived||choices.get(key)?.drafts.includes(d.id)).map(d=><label key={d.id}><input type="checkbox" checked={copy.drafts.includes(d.id)} onChange={e=>setCopy({...copy,drafts:e.target.checked?[...copy.drafts,d.id]:copy.drafts.filter(i=>i!==d.id)})}/>{d.name}{d.archived?" (kosz)":""}</label>)}</details>
           <button onClick={save} disabled={!copy.name.trim()||!copy.cells.length||!copy.drafts.length}>Zapisz obszar</button> <button onClick={()=>{setCopy(null);setError("");}}>Anuluj</button>
-        </fieldset>:<div><button disabled={busy||!!planning} onClick={()=>{resetRoute();setCopy({...area});}}>{area.id?"Edytuj obszar":"Dostosuj granice"}</button> {!area.id&&<button disabled={busy||!!planning||!area.cells.length} onClick={save}>Zapisz obszar</button>}</div>}
+        </fieldset>:key==="world"?null:<div><button disabled={busy||!!planning} onClick={()=>{resetRoute();setCopy({...area});}}>{area.id?"Edytuj obszar":"Dostosuj granice"}</button> {!area.id&&<button disabled={busy||!!planning||!area.cells.length} onClick={save}>Zapisz obszar</button>}</div>}
         {!copy&&<section aria-label="Pętla expienia" className="hunt-section"><h3>Trasa</h3>
           {key.startsWith("draft:")&&<button disabled={!!planning} onClick={()=>editCircuit(key.slice(6))}>Edytuj szkic</button>}
           <div className="map-exclusions">
             <button disabled={!!planning||!area.cells.length} aria-pressed={selecting} onClick={()=>setSelecting(!selecting)}>Wybierz teren</button>
-            <button disabled={!!planning||!area.cells.length} onClick={()=>changeSelection(area.cells)}>Całe expowisko</button>
+            {key==="world"&&localKey&&<button disabled={!!planning} title={choices.get(localKey)?.name} onClick={()=>{changeSelection(choices.get(localKey)!.cells);setSelecting(true);}}>Zaznacz strefy przy postaci</button>}
+            {!worldLayer&&<button disabled={!!planning||!area.cells.length} onClick={()=>changeSelection(area.cells)}>Całe expowisko</button>}
             {!!selected.length&&<button disabled={!!planning} onClick={()=>changeSelection([])}>Wyczyść</button>}
             {previousSelection&&<button disabled={!!planning} onClick={()=>{setSelection(previousSelection.sectors);setConfirmedVia(previousSelection.via);setPreviousSelection(null);setRouteError("");setApproach([]);}}>Cofnij wybór</button>}
             <small role="status">Wybrane sektory · {selected.length}{floors.length?" · piętra "+floors.join(", "):""}</small>
@@ -356,9 +369,9 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
           <dt>Obiegi</dt><dd>{d.laps}</dd><dt>Średni obieg</dt><dd>{duration(d.duration_ms/d.laps)}</dd>
           <dt>XP/h</dt><dd>{label(d.xp_hour)}</dd><dt>Senzu/h</dt><dd>{label(d.senzu_hour)}</dd>
           <dt>Blokady / obieg</dt><dd>{seconds(d.blocked_ms/d.laps)} s</dd></dl>:<p>Brak pełnych obiegów.</p>}</div>)}</details>}
-        <h3>Potwory</h3><select aria-label="Rodzaj obserwacji" value={layer} onChange={e=>{setLayer(e.target.value as typeof layer);setSpecies("");}}>
+        <h3>Potwory</h3>{!worldLayer&&<select aria-label="Rodzaj obserwacji" value={layer} onChange={e=>{setLayer(e.target.value as typeof layer);setSpecies("");}}>
           <option value="spawns">Przybliżone spawny</option><option value="live">Widoczne teraz</option><option value="first_seen">Pierwsze wykrycia na mapie</option>
-          {!discovery&&<><option value="death">Pokonane potwory</option><option value="first_contact">Dołączenie do walki lub grupy</option></>}</select>
+          {!discovery&&<><option value="death">Pokonane potwory</option><option value="first_contact">Dołączenie do walki lub grupy</option></>}</select>}
         <label><input type="checkbox" checked={showMonsters} onChange={e=>setShowMonsters(e.target.checked)}/> Pokaż na mapie</label>
         {layer==="live"?<p>{live?"Na widocznych polach expowiska: "+live.count+" · piętro "+live.floor+(live.unknown?" · nierozpoznane: "+live.unknown:""):"Brak świeżego widoku tego expowiska."}</p>:observations.names.size?<><select aria-label="Gatunek potwora" value={species} onChange={e=>setSpecies(e.target.value)}><option value="">Wszystkie gatunki</option>
           {Array.from(observations.names).sort(([a],[b])=>a.localeCompare(b)).map(([n,count])=><option key={n} value={n}>{layer==="spawns"?n:n+" ×"+count}</option>)}</select>

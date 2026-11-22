@@ -24,6 +24,7 @@ export function localGround(choices:Map<string,{cells:Position[]}>,p:Position|nu
   const x=Math.floor(p[0]/side)*side,y=Math.floor(p[1]/side)*side;
   let best="",size=Infinity,foundDiscovery=false;
   for(const [key,area] of choices){
+    if(key==="world")continue;
     if(!area.cells.some(c=>c[0]===x&&c[1]===y&&c[2]===p[2]))continue;
     if(activeDraft&&key==="draft:"+activeDraft)return key;
     // Discoveries arrive newest first. An older overlapping visit can cover fewer rooms.
@@ -58,4 +59,19 @@ export function sectorHabitats(rows:MapSighting[],side:number){
   const habitats:Habitat[]=Array.from(sectors.values(),v=>({position:v.position,
     species:[...v.counts].sort(([a,n],[b,m])=>m-n||a.localeCompare(b,"pl"))}));
   return {names:[...names].sort((a,b)=>a.localeCompare(b,"pl")),habitats};
+}
+
+/** One filled path for the floor; the outer boundary stays legible when zoomed out. */
+export function zonePaths(cells:Position[],floor:number,side:number) {
+  const floorCells=new Set(cells.filter(p=>p[2]===floor).map(([x,y])=>x+","+y));
+  const fill:string[]=[],outline:string[]=[];
+  for(const key of floorCells){
+    const [x,y]=key.split(",").map(Number);
+    fill.push(`M${x} ${y}h${side}v${side}h-${side}z`);
+    if(!floorCells.has(x+","+(y-side)))outline.push(`M${x} ${y}h${side}`);
+    if(!floorCells.has(x+","+(y+side)))outline.push(`M${x} ${y+side}h${side}`);
+    if(!floorCells.has((x-side)+","+y))outline.push(`M${x} ${y}v${side}`);
+    if(!floorCells.has((x+side)+","+y))outline.push(`M${x+side} ${y}v${side}`);
+  }
+  return {fill:fill.join(""),outline:outline.join(""),cells:floorCells};
 }
