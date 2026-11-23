@@ -773,6 +773,19 @@ test('reconfirming a moved adjacent stair approach binds the existing floor chan
   assert.throws(()=>model.exports.selectTransition(distant,[],edge,1),/Nie dopisano/,'a repair must not append a distant transition to the end');
 });
 
+test('a new stair uses the closest anchor or the specified occurrence and keeps later links',()=>{
+  const edge={id:'down',origin:[12,11,4],entry:[12,10,4],exit:[12,10,5],action:'step'};
+  const points=[[3,3,4],[12,12,4],[20,20,4],[30,30,4],[31,30,3]];
+  const links=[{from_index:3,id:'other'}];
+  const auto=model.exports.selectTransition(points,links,edge);
+  assert.deepEqual(auto.points,[...points.slice(0,2),edge.origin,edge.exit,...points.slice(2)]);
+  assert.deepEqual(auto.links,[{from_index:2,id:'down'},{from_index:5,id:'other'}]);
+  const manual=model.exports.selectTransition(points,links,edge,undefined,0);
+  assert.deepEqual(manual.sourceIndices,[0,null,null,1,2,3,4]);
+  assert.throws(()=>model.exports.selectTransition(points,links,edge,undefined,3),/istniejącym/);
+  assert.deepEqual(model.exports.insertAnchor(points,points.length-1,[32,31,3]),[...points,[32,31,3]]);
+});
+
 test('unmatched recorded uses identify the item and field instead of a generic route error',()=>{
   const points=[[10,10,7],[11,10,7]];
   const plan={path:points,complete:true,gaps:[],transitions:[],requires_action_review:true,requires_path_review:false,

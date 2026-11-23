@@ -151,7 +151,7 @@ function AnnotationEditor({cell,scope,enabled,initialKind,onClose}:{cell:Passive
 }
 
 export type TileMenuPosition = {key:string;x:number;y:number;scope:string|null|undefined;petRef?:string};
-export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,waypoints=[],onRemoveWaypoint,onTransition,routeLocked=false}:{position:TileMenuPosition;cell:PassiveMapCell;scope?:string|null;editable:boolean;onClose:()=>void;onCopy:()=>void;waypoints?:number[];onRemoveWaypoint?:(index:number)=>void;onTransition?:()=>void;routeLocked?:boolean}) {
+export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,waypoints=[],onRemoveWaypoint,onTransition,onInsertWaypoint,routeLocked=false}:{position:TileMenuPosition;cell:PassiveMapCell;scope?:string|null;editable:boolean;onClose:()=>void;onCopy:()=>void;waypoints?:number[];onRemoveWaypoint?:(index:number)=>void;onTransition?:()=>void;onInsertWaypoint?:()=>void;routeLocked?:boolean}) {
   const ref=useRef<HTMLDivElement>(null);
   const [editing,setEditing]=useState<AnnotationKind|"pet"|null>(null);
   const [petName,setPetName]=useState("");
@@ -204,6 +204,7 @@ export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,way
     <div className="tile-menu-heading"><strong>({cell.x}, {cell.y}, {cell.z})</strong><button aria-label="Zamknij menu pola" onClick={onClose}>×</button></div>
     {editing===null ? <>
       {onTransition && <button role="menuitem" disabled={routeLocked} onClick={()=>{onTransition();onClose();}}>Dodaj przejście do trasy…</button>}
+      {!onTransition && onInsertWaypoint && <button role="menuitem" disabled={routeLocked} onClick={()=>{onInsertWaypoint();onClose();}}>Wstaw waypoint…</button>}
       {onRemoveWaypoint && waypoints.map(index=><button role="menuitem" className="tile-menu-delete" key={index} disabled={routeLocked} onClick={()=>{onRemoveWaypoint(index);onClose();}}>Usuń waypoint {index+1}</button>)}
       <button role="menuitem" onClick={()=>{onCopy();onClose();}}>Kopiuj dane pola</button>
       {sameCreature && (cell.pet_manual ?

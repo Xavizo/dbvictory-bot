@@ -536,7 +536,11 @@ class _Handler(BaseHTTPRequestHandler):
                     result=shortened
                 else:
                     optimized,original=recording_points({'observed_path':[{'pos':p} for p in result['path'][:result['return_start']+1]]},observations,optimize=True,keep_positions=[p for p,label in zip(points,labels) if label]+[p for link in result['links'] for p in points[link['from_index']:link['from_index']+2]])
-                    result=atlas.plan(optimized,observations,original,loop=loop,links=remap_links(result['links'],points,optimized))
+                    candidate=atlas.plan(optimized,observations,original,loop=loop,links=remap_links(result['links'],points,optimized))
+                    if (candidate['complete'] and candidate['return_mode']==result['return_mode']
+                            and candidate['transitions']==result['transitions']
+                            and (len(candidate['points'])<=len(points) or len(candidate['path'])<len(result['path']))):
+                        result=candidate
             if recording is not None:
                 from map_atlas import review_recorded_actions
                 interactions=review_recorded_actions(recording,result['transitions'])

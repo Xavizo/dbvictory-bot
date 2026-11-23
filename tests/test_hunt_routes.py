@@ -41,6 +41,19 @@ def test_proposal_covers_three_floors_and_saves_as_separate_playable_geometry(tm
     assert approach['transitions']==2
 
 
+def test_dense_anchors_are_removed_on_replay_while_labels_and_actions_stay(tmp_path):
+    from hunt_routes import sparse_waypoints
+    atlas, _, edges = fixture(tmp_path)
+    points=[[x,32,7] for x in range(26,35)]+[[34,32,8],[35,32,8],[36,32,8],[36,32,7],[26,32,7]]
+    links=[dict(from_index=8,id='7-8'),dict(from_index=11,id='8-7')]
+    original=atlas.plan(points,edges,loop=True,links=links)
+    sparse=sparse_waypoints(atlas,edges,original,protected=[3])
+    assert sparse['complete'] and sparse['loop_closed'] and points[3] in sparse['points']
+    assert len(sparse['points']) < len(points) and sparse['path']==original['path']
+    assert sparse['transitions']==original['transitions']
+    assert atlas.plan(sparse['points'],edges,loop=True,links=sparse['links'])['path']==sparse['path']
+
+
 def test_one_way_exit_does_not_claim_coverage_or_implicit_return(tmp_path):
     atlas, request, edges = fixture(tmp_path)
     route = propose(atlas,edges[:-1],request)

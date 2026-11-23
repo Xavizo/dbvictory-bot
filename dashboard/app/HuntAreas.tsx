@@ -368,8 +368,8 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
                 onClick={()=>setFocus({floor:row.floor,cells:route.selected.filter(p=>p[2]===row.floor)})}>Piętro {row.floor} · {row.covered}/{row.total}</button>)}
             </div>}
             {connector&&<section aria-label="Proponowany łącznik" className="atlas-connector">
-              <strong>Z łącznikiem · {connector.covered}/{route.total} sektorów</strong>
-              <small>Turkusowy obrys pokazuje dodatkowy teren przejścia ({connector.sectors.length}).</small>
+              <strong>Pełna pętla z łącznikiem · {connector.covered}/{route.total} sektorów</strong>
+              <small>Dodatkowe sektory: {connector.sectors.length}. Teren zostanie dołączony po zatwierdzeniu.</small>
               <div>{connectorFloors.map(z=><button key={z} disabled={!!planning} onClick={()=>setFocus({floor:z,cells:connectorPlaces})}>Piętro {z}</button>)}</div>
               <button className="atlas-primary" disabled={!!planning} onClick={()=>preview(undefined,true)}>Dodaj łącznik</button>
             </section>}

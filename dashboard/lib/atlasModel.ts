@@ -119,7 +119,7 @@ export function finishAnchorEdit(points:Pos[],index:number,target:Pos,moved:bool
   return index===0 && !moved?closeRoute(points):moveAnchor(points,index,target);
 }
 export function insertAnchor(points:Pos[],after:number,target:Pos):Pos[] {
-  if(after<0 || after>=points.length-1 || [points[after],points[after+1]].some(p=>positionKey(p)===positionKey(target)))return points;
+  if(after<0 || after>=points.length || [points[after],points[after+1]].some(p=>p && positionKey(p)===positionKey(target)))return points;
   return [...points.slice(0,after+1),[...target],...points.slice(after+1)];
 }
 export function removeAnchor(points:Pos[],index:number):Pos[] {
@@ -138,15 +138,26 @@ export function remapLinks(links:RouteLink[],before:Pos[],after:Pos[]):RouteLink
   for(const link of [...links].sort((a,b)=>a.from_index-b.from_index)){const a=before[link.from_index],b=before[link.from_index+1];if(!a||!b)continue;
     for(let i=cursor;i<after.length-1;i++)if(positionKey(a)===positionKey(after[i])&&positionKey(b)===positionKey(after[i+1])){result.push({...link,from_index:i});cursor=i+1;break;}}return result;
 }
-export function selectTransition(points:Pos[],links:RouteLink[],edge:RouteTransition,segment?:number){
+export function nearestInsertion(points:Pos[],links:RouteLink[],spot:Pos){
+  let best:number|undefined, distance=Infinity;
+  const linked=new Set(links.map(l=>l.from_index));
+  points.forEach((p,i)=>{
+    if(p[2]!==spot[2] || linked.has(i))return;
+    const d=Math.max(Math.abs(p[0]-spot[0]),Math.abs(p[1]-spot[1]));
+    if(d<distance){best=i;distance=d;}
+  });
+  return best;
+}
+export function selectTransition(points:Pos[],links:RouteLink[],edge:RouteTransition,segment?:number,after?:number){
   const same=(a:Pos|undefined,b:Pos)=>!!a&&positionKey(a)===positionKey(b);
   const adjacent=(p:Pos)=>p[2]===edge.entry[2]&&Math.max(Math.abs(p[0]-edge.entry[0]),Math.abs(p[1]-edge.entry[1]))<=1;
   const candidates=points.flatMap((p,i)=>same(p,edge.entry)||(same(p,edge.origin)||adjacent(p))&&same(points[i+1],edge.exit)?[i]:[]);
-  const preferred=segment===undefined?undefined:[segment,segment+1].find(i=>candidates.includes(i));
+  if(after!==undefined && (!points[after] || points[after][2]!==edge.entry[2] || links.some(l=>l.from_index===after)))throw Error('Wybierz waypoint na piętrze wejścia poza istniejącym przejściem.');
+  const preferred=after!==undefined?(candidates.includes(after)?after:undefined):segment===undefined?undefined:[segment,segment+1].find(i=>candidates.includes(i));
   const unlinked=candidates.filter(i=>!links.some(l=>l.from_index===i));
-  if(preferred===undefined&&(unlinked.length>1||!unlinked.length&&candidates.length>1))throw Error('To pole występuje w trasie kilka razy. Najpierw kliknij komunikat konkretnego błędnego odcinka.');
-  const existing=preferred??unlinked[0]??(candidates.length===1?candidates[0]:undefined);
-  if(segment!==undefined&&preferred===undefined)throw Error('To przejście nie pasuje do wskazanego odcinka. Nie dopisano punktów na końcu trasy.');
+  if(after===undefined&&preferred===undefined&&(unlinked.length>1||!unlinked.length&&candidates.length>1))throw Error('To pole występuje w trasie kilka razy. Najpierw kliknij komunikat konkretnego błędnego odcinka.');
+  const existing=preferred??(after===undefined?(unlinked[0]??(candidates.length===1?candidates[0]:undefined)):undefined);
+  if(after===undefined&&segment!==undefined&&preferred===undefined)throw Error('To przejście nie pasuje do wskazanego odcinka. Nie dopisano punktów na końcu trasy.');
   let next=points.map(p=>[...p] as Pos),sourceIndices:(number|null)[]=points.map((_,i)=>i),index:number;
   if(existing!==undefined){
     index=existing;
@@ -160,12 +171,16 @@ export function selectTransition(points:Pos[],links:RouteLink[],edge:RouteTransi
     }
     if(!same(next[index+1],edge.exit)){next.splice(index+1,0,[...edge.exit]);sourceIndices.splice(index+1,0,null);}
   }else{
-    next=appendTransition(points,edge);index=next.length-2;
-    sourceIndices=next.map((p,i)=>i<points.length&&same(p,points[i])?i:null);
+    const anchor=after??nearestInsertion(points,links,edge.origin);
+    if(anchor===undefined && points.length)throw Error('Brak waypointu na piętrze wejścia. Dodaj punkt podejścia.');
+    index=anchor??-1;
+    if(!same(next[index],edge.origin)){index++;next.splice(index,0,[...edge.origin]);sourceIndices.splice(index,0,null);}
+    if(!same(next[index+1],edge.exit)){next.splice(index+1,0,[...edge.exit]);sourceIndices.splice(index+1,0,null);}
   }
   // Map by occurrence, not just coordinates: a loop can visit the same stairs twice.
   const kept=links.flatMap(link=>{const i=sourceIndices.indexOf(link.from_index);
     return i>=0&&sourceIndices[i+1]===link.from_index+1&&same(next[i],points[link.from_index])&&same(next[i+1],points[link.from_index+1])?[{...link,from_index:i}]:[];});
+  if(links.some(l=>l.from_index!==existing&&!kept.some(k=>k.id===l.id&&sourceIndices[k.from_index]===l.from_index)))throw Error('Ta zmiana rozdzieliłaby inne przejście. Wybierz sąsiedni waypoint.');
   return {points:next,sourceIndices,from_index:index,mode:existing===undefined?'append' as const:'repair' as const,links:[...kept.filter(l=>l.from_index!==index),{from_index:index,id:edge.id}].sort((a,b)=>a.from_index-b.from_index)};
 }
 export function rememberEdit(history:RouteEdit[],points:Pos[],center:Pos,labels?:string[],links?:RouteLink[]):RouteEdit[] {

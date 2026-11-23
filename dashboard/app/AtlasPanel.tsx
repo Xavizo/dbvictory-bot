@@ -7,7 +7,7 @@ import {waypointKind,visibleWaypointProgress} from "@/lib/cavebotModel";
 import {authenticatedFetch} from "@/lib/auth";
 import {readAtlasWhenReady,createAtlasRegionReader} from "@/lib/atlasLoading";
 import type {BotState,PassiveMapCell} from "@/lib/api";
-import {atlasCenter,visibleAtlasCells,routeLines,simulationStep,simulationReport,fastSimulationNext,atlasViewport,panCenter,routeSegments,routeColor,directionMarkers,transitionChoices,transitionDestination,segmentLane,stepFloor,atlasWheel,isRouteClosed,canCloseNearby,draftFingerprint,hasDraftChanges,closeRoute,finishAnchorEdit,insertAnchor,removeAnchor,appendTransition,rememberEdit,remapLabels,unresolvedLegs,undoShortcut,remapLinks,selectTransition,type RouteLink,type RouteTransition,type RouteEdit} from "@/lib/atlasModel";
+import {atlasCenter,visibleAtlasCells,routeLines,simulationStep,simulationReport,fastSimulationNext,atlasViewport,panCenter,routeSegments,routeColor,directionMarkers,transitionChoices,transitionDestination,segmentLane,stepFloor,atlasWheel,isRouteClosed,canCloseNearby,draftFingerprint,hasDraftChanges,closeRoute,finishAnchorEdit,insertAnchor,removeAnchor,appendTransition,rememberEdit,remapLabels,unresolvedLegs,undoShortcut,remapLinks,nearestInsertion,selectTransition,type RouteLink,type RouteTransition,type RouteEdit} from "@/lib/atlasModel";
 import AtlasRouteOverview from "./AtlasRouteOverview";
 import DraftTags from "./DraftTags";
 import type {DraftTag} from "@/lib/cavebotModel";
@@ -86,6 +86,8 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   const [mapWaiting,setMapWaiting]=useState(false),[draftWaiting,setDraftWaiting]=useState(false),[draftLoadError,setDraftLoadError]=useState("");
   const workingPlan=optimization?.candidate??plan;
   const [history,setHistory]=useState<RouteEdit[]>([]),[transitionSpot,setTransitionSpot]=useState<Pos|null>(null);
+  const [insertAfter,setInsertAfter]=useState<number>();
+  const [pointDialog,setPointDialog]=useState(false);
   const [editSegment,setEditSegment]=useState<number|undefined>(undefined),[transitionNotice,setTransitionNotice]=useState("");
   const [transitionExit,setTransitionExit]=useState<Pos|null>(null);
   const atlasReader=useRef<ReturnType<typeof createAtlasRegionReader<Atlas>>|null>(null);
@@ -126,8 +128,8 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   function showStage(index:number,route:Pos[]){setSegmentIndex(index);setFollow(false);frameRoute(route,true);}
   function toggleStage(index:number){setHiddenSegments(old=>old.includes(index)?old.filter(i=>i!==index):[...old,index]);}
   const viewCenter=useRef(center);viewCenter.current=center;
-  const transitionOptions=transitionSpot?transitionChoices(compatible?atlas?.route_transitions??[]:[],transitionSpot,editSegment!==undefined?points[editSegment]:points.find((p,i)=>points[i+1]?.join(',')===transitionSpot.join(','))??points.at(-1)):[];
-  function transitionChoice(edge:RouteTransition){try{const edit=selectTransition(points,links,edge,editSegment);return {label:edit.mode==='repair'?`Przypisz do odcinka ${edit.from_index+1} → ${edit.from_index+2}`:`Dodaj na końcu · punkty ${edit.from_index+1} → ${edit.from_index+2}`,error:''};}catch(e){return {label:'Wybierz właściwy odcinek',error:(e as Error).message};}}
+  const transitionOptions=transitionSpot?transitionChoices(compatible?atlas?.route_transitions??[]:[],transitionSpot,insertAfter!==undefined?points[insertAfter]:editSegment!==undefined?points[editSegment]:points.find((p,i)=>points[i+1]?.join(',')===transitionSpot.join(','))??points[nearestInsertion(points,links,transitionSpot)??-1]):[];
+  function transitionChoice(edge:RouteTransition){try{const edit=selectTransition(points,links,edge,editSegment,insertAfter);return {label:edit.mode==='repair'?`Przypisz do odcinka ${edit.from_index+1} → ${edit.from_index+2}`:`Wstaw przejście · punkty ${edit.from_index+1} → ${edit.from_index+2}`,error:''};}catch(e){return {label:'Wybierz właściwy odcinek',error:(e as Error).message};}}
   const transitionCell=transitionSpot && cells.find(c=>c.x===transitionSpot[0] && c.y===transitionSpot[1] && c.z===transitionSpot[2]);
   const selectedCell=selected && cells.find(c=>c.x===selected[0] && c.y===selected[1] && c.z===selected[2]);
   const menuPosition=tileMenu?.key.split(',').map(Number);
@@ -200,18 +202,26 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
     return x>=0 && y>=0 && x<65535 && y<65535 ? [x,y,center[2]]:null;
   }
   function append(p:Pos){const old=stroke.current.at(-1);if(stroke.current.length<2048 && (!old || old[2]!==p[2] || Math.max(Math.abs(old[0]-p[0]),Math.abs(old[1]-p[1]))>=4)){stroke.current.push(p);setPoints([...stroke.current]);}}
-  function updatePoints(next:Pos[],before:RouteEdit={points,center,labels,links}){setRecording("");setSimulation(null);if(next.length>2048){setError("Limit 2048 punktów. Usuń jeden punkt przed domknięciem.");return;}
+  function insertPoint(p:Pos,after=insertAfter??nearestInsertion(points,links,p)){
+    if(after===undefined && points.length){setError("Brak waypointu na tym piętrze.");return;}
+    const next=after===undefined?[p]:insertAnchor(points,after,p);
+    if(next===points){setError("Ten punkt jest już na wskazanym odcinku.");return;}
+    const index=(after??-1)+1;
+    updatePoints(next,undefined,{labels:[...labels.slice(0,index),"",...labels.slice(index)],
+      links:links.map(l=>l.from_index>=index?{...l,from_index:l.from_index+1}:l)});
+  }
+  function updatePoints(next:Pos[],before:RouteEdit={points,center,labels,links},inserted?:{labels:string[];links:RouteLink[]}){setRecording("");setSimulation(null);if(next.length>2048){setError("Limit 2048 punktów. Usuń jeden punkt przed domknięciem.");return;}
     if(JSON.stringify(next)!==JSON.stringify(before.points))setHistory(h=>rememberEdit(h,before.points,before.center,before.labels,before.links??links));
-    setTransitionSpot(null);setLastOptimization(null);setLabels(remapLabels(before.points,next,before.labels??labels));clearPlan();setPoints(next);const chosen=remapLinks(before.links??links,before.points,next);setLinks(chosen);if(next.length>1)void propose(next,undefined,loop,chosen);}
+    setTransitionSpot(null);setLastOptimization(null);setLabels(inserted?.labels??remapLabels(before.points,next,before.labels??labels));clearPlan();setPoints(next);const chosen=inserted?.links??remapLinks(before.links??links,before.points,next);setLinks(chosen);if(next.length>1)void propose(next,undefined,loop,chosen);}
   function undoEdit(){const previous=history.at(-1);if(!previous)return;setHistory(h=>h.slice(0,-1));setTransitionSpot(null);clearPlan();setLastOptimization(null);setLabels(previous.labels??previous.points.map(()=>""));setPoints(previous.points);setLinks(previous.links??[]);setCenter(previous.center);if(previous.points.length>1)void propose(previous.points,undefined,loop,previous.links??[]);}
   useEffect(()=>{if(!active)return;const key=(e:KeyboardEvent)=>{const target=e.target as HTMLElement;
     if(undoShortcut(e.key,e.ctrlKey,e.shiftKey,target?.tagName ?? "",!!target?.isContentEditable) && history.length){e.preventDefault();e.stopPropagation();undoEdit();}
   };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[active,history,atlas,loop]);
-  function openTransition(p:Pos){const cell=cells.find(c=>c.x===p[0] && c.y===p[1] && c.z===p[2]);
-    if(cell?.navigation?.some(f=>f.kind!=="web") || atlas?.route_transitions?.some(t=>t.entry.every((n,i)=>n===p[i]))){setTransitionSpot(p);return true;}return false;}
+  function openTransition(p:Pos,after?:number){const cell=cells.find(c=>c.x===p[0] && c.y===p[1] && c.z===p[2]);
+    if(cell?.navigation?.some(f=>f.kind!=="web") || atlas?.route_transitions?.some(t=>t.entry.every((n,i)=>n===p[i]))){setPointDialog(false);setInsertAfter(after);setTransitionSpot(p);return true;}return false;}
   async function useTransition(edge:RouteTransition,replace?:RouteLink){if(!scope || !compatible||busy)return;
     const id=++generation.current;setBusy(true);setError("");
-    try {const {points:next,links:chosen,sourceIndices,from_index}=replace?replaceFloorLink(points,links,replace,edge):selectTransition(points,links,edge,editSegment);
+    try {const {points:next,links:chosen,sourceIndices,from_index}=replace?replaceFloorLink(points,links,replace,edge):selectTransition(points,links,edge,editSegment,insertAfter);
       if(next.length>2048)throw Error("Limit 2048 punktów — usuń punkt przed dodaniem przejścia.");
       const result:Plan=await request("/api/map/plan",{scope,points:next,links:chosen,loop});if(id!==generation.current)return;
       if(replace && !result.complete){
@@ -384,11 +394,15 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
     {overview && !draw && <AtlasRouteOverview segments={segments} hidden={hiddenSegments} floor={center[2]} onFloor={route=>{setFollow(false);frameRoute(route,true);}}/>}
     <div className={`atlas-layout ${sidebar?"":"map-expanded"}`}><div className="atlas-map-column">
 
-      {transitionSpot && <div className="atlas-transition-backdrop" onClick={e=>{if(e.target===e.currentTarget&&!busy)setTransitionSpot(null);}}><div className="atlas-transition-picker" role="dialog" aria-modal="true" aria-label="Dodaj przejście między poziomami" onKeyDown={e=>{if(e.key==='Escape'&&!busy){e.stopPropagation();setTransitionSpot(null);}}}><header><strong>Przejście {pointText(transitionSpot)}</strong><button autoFocus disabled={busy} onClick={()=>setTransitionSpot(null)} aria-label="Zamknij wybór przejścia">×</button></header>
+      {transitionSpot && <div className="atlas-transition-backdrop" onClick={e=>{if(e.target===e.currentTarget&&!busy)setTransitionSpot(null);}}><div className="atlas-transition-picker" role="dialog" aria-modal="true" aria-label={pointDialog?"Wstaw waypoint":"Dodaj przejście między poziomami"} onKeyDown={e=>{if(e.key==='Escape'&&!busy){e.stopPropagation();setTransitionSpot(null);}}}><header><strong>{pointDialog?"Waypoint":"Przejście"} {pointText(transitionSpot)}</strong><button autoFocus disabled={busy} onClick={()=>setTransitionSpot(null)} aria-label="Zamknij wybór przejścia">×</button></header>
         
-        {transitionOptions.length?transitionOptions.map(t=>{const choice=transitionChoice(t);return <button key={t.id} data-transition-choice={t.id} disabled={busy||!!choice.error} title={choice.error||undefined} onClick={()=>useTransition(t)}>{choice.label} · {t.exit[2]<t.entry[2]?"↑":t.exit[2]>t.entry[2]?"↓":"→"} {t.exit[2]}<small>{choice.error||(t.action==="use_with_then_step"?`Odkop, jeśli zasypana, i wejdź · narzędzia ${(t.tool_ids??[t.tool_id]).map(id=>id===3457?"łopata":`AiO (${id})`).join(" / ")}`:transitionActions[t.action as TransitionAction])} · wyjście {pointText(t.exit)}</small></button>;}):<p role="status">Brak przejścia pasującego do zapisanej mapy. Podejdź do obiektu, aby odświeżyć pole. Jeśli wyjście nie było jeszcze obserwowane, przejdź ręcznie i zatrzymaj się na chwilę po drugiej stronie.</p>}
-        {!!transitionOptions.length&&<small>Zmienia tylko szkic. Piętro i zoom pozostają bez zmian.</small>}
-        {transitionCell?.kind==="clear" && transitionCell.navigation?.every(f=>["rope_spot","ladder"].includes(f.kind)) && <button disabled={busy} onClick={()=>updatePoints([...points,transitionSpot])}>Dodaj zwykły punkt na tym polu</button>}
+        {!!points.length && <label>Wstaw po waypoincie <select aria-label="Wstaw po waypoincie" value={insertAfter??""} onChange={e=>setInsertAfter(e.target.value===""?undefined:Number(e.target.value))}>
+          <option value="">Automatycznie · dopasuj odcinek</option>
+          {points.map((p,i)=>p[2]===transitionSpot[2] && !links.some(l=>l.from_index===i) && <option key={i} value={i}>#{i+1} · {pointText(p)}{labels[i]?" · "+labels[i]:""}</option>)}
+        </select></label>}
+        {pointDialog?null:transitionOptions.length?transitionOptions.map(t=>{const choice=transitionChoice(t);return <button key={t.id} data-transition-choice={t.id} disabled={busy||!!choice.error} title={choice.error||undefined} onClick={()=>useTransition(t)}>{choice.label} · {t.exit[2]<t.entry[2]?"↑":t.exit[2]>t.entry[2]?"↓":"→"} {t.exit[2]}<small>{choice.error||(t.action==="use_with_then_step"?`Odkop, jeśli zasypana, i wejdź · narzędzia ${(t.tool_ids??[t.tool_id]).map(id=>id===3457?"łopata":`AiO (${id})`).join(" / ")}`:transitionActions[t.action as TransitionAction])} · wyjście {pointText(t.exit)}</small></button>;}):<p role="status">Brak przejścia pasującego do zapisanej mapy. Podejdź do obiektu, aby odświeżyć pole. Jeśli wyjście nie było jeszcze obserwowane, przejdź ręcznie i zatrzymaj się na chwilę po drugiej stronie.</p>}
+        {!pointDialog&&!!transitionOptions.length&&<small>Zmienia tylko szkic. Piętro i zoom pozostają bez zmian.</small>}
+        {(pointDialog || transitionCell?.kind==="clear" && transitionCell.navigation?.every(f=>["rope_spot","ladder"].includes(f.kind))) && <button disabled={busy} onClick={()=>insertPoint(transitionSpot)}>{pointDialog?"Wstaw waypoint":"Dodaj zwykły punkt na tym polu"}</button>}
         {error && <p role="alert">{error}</p>}
       </div></div>}
       {transitionNotice&&<p className="atlas-transition-notice" role="status">{transitionNotice}{transitionExit&&<button onClick={()=>focusIssue(transitionExit)}>Pokaż wyjście · {transitionExit[2]}</button>}<button aria-label="Zamknij informację o przejściu" onClick={()=>setTransitionNotice("")}>×</button></p>}
@@ -422,7 +436,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
         </g>;})}
         {plan && unresolvedLegs(plan).flatMap((leg,i)=>hiddenSegments.includes(pointStages[(plan.gaps[0]?.segment??0)+i])?[]:lines(leg,center[2]).filter(line=>line.length>1).map((line,j)=><polyline key={`unresolved${i}-${j}`} points={line.map(xy).join(" ")} fill="none" stroke="#e2b174" strokeWidth={.1} strokeDasharray=".2 .2" opacity={.65}><title>Odcinek bez wyznaczonej drogi</title></polyline>))}
         {draw && drawMode==="points" && plan?.legs?.filter(leg=>!hiddenSegments.includes(pointStages[leg.from_index])).flatMap(leg=>routeLines(plan.path.slice(leg.start,leg.end+1),center[2]).map((line,i)=><polyline key={`insert${leg.from_index}-${i}`} points={line.map(xy).join(" ")} fill="none" stroke="transparent" strokeWidth={.6} pointerEvents="stroke" style={{cursor:"copy"}}
-          onPointerDown={e=>{if(e.button!==0 || e.ctrlKey || panMode || busy)return;const p=locate(e);if(!p || points.some(a=>a.every((n,i)=>n===p[i])))return;e.stopPropagation();if(openTransition(p))return;updatePoints(insertAnchor(points,leg.from_index,p));}}>
+          onPointerDown={e=>{if(e.button!==0 || e.ctrlKey || panMode || busy)return;const p=locate(e);if(!p || points.some(a=>a.every((n,i)=>n===p[i])))return;e.stopPropagation();if(openTransition(p,leg.from_index))return;if(!links.some(l=>l.from_index===leg.from_index))insertPoint(p,leg.from_index);}}>
           <title>{`Kliknij, aby wstawić punkt między ${leg.from_index+1} i ${leg.to_index+1}`}</title>
         </polyline>))}
         {!draw&&transfers.map((m,i)=>{const ids=m.indices.map(n=>`T${n+1}`).join('/'),direction=m.out?(m.target[2]<m.pos[2]?'↑':m.target[2]>m.pos[2]?'↓':'→'):'z ',label=`${ids} ${direction}${m.target[2]}`;
@@ -491,6 +505,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   return <section className={`atlas-panel ${embedded?"atlas-embedded":""} ${browseOnly?"atlas-browse":""}`} aria-label="Waypointy i edytor trasy">
     {tileMenu && menuCell && <TileContextMenu key={`${tileMenu.key}:${menuCell.items.map(i=>i.id).join(',')}`} position={tileMenu} cell={menuCell} scope={scope} editable={canAnnotate} onClose={()=>setTileMenu(null)} onCopy={copyMenuCell}
       waypoints={browseOnly?[]:points.flatMap((p,i)=>p.join(',')===tileMenu.key?[i]:[])}
+      onInsertWaypoint={!browseOnly&&menuCell.kind==="clear"?()=>{setPointDialog(true);setInsertAfter(undefined);setTransitionSpot([menuCell.x,menuCell.y,menuCell.z]);}:undefined}
       onRemoveWaypoint={browseOnly?undefined:index=>updatePoints(removeAnchor(points,index))}
       onTransition={!browseOnly&&(menuCell.navigation?.some(f=>f.kind!=="web")||atlas?.route_transitions?.some(t=>t.entry.join(',')===tileMenu.key))?()=>openTransition([menuCell.x,menuCell.y,menuCell.z]):undefined}
       routeLocked={busy||!!optimization||!!recorder?.active||simPlaying}/>}

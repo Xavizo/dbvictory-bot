@@ -153,7 +153,68 @@ def shorten_sweeps(path, clear, *, anchors=None, protected=()):
     return shortened,kept
 
 
-def shorter_draft(atlas,observations,plan,labels):
+def sparse_waypoints(atlas, observations, plan, protected=()):
+    """Remove editable anchors while keeping the walked corridor, coverage and actions."""
+    points, legs = plan['points'], plan['legs']
+    if not plan['complete'] or len(points) < 4 or len(legs) != len(points)-1:
+        return plan
+    offsets = [0, *(leg['end'] for leg in legs)]
+    pins = {0, len(points)-1, *protected}
+    for link in plan['links']:
+        pins.update((link['from_index'], link['from_index']+1))
+    # Limit the distance to the next editable anchor, even on a straight road.
+    last = 0
+    for i in range(1,len(points)):
+        if i in pins or offsets[i]-offsets[last] >= 14:
+            pins.add(i)
+            last = i
+    if len(pins) == 2 and points[0] == points[-1]:
+        pins.add(len(points)//2)
+    def same_corridor(original, replay):
+        if original == replay:
+            return True
+        return (len(original)==len(replay) and set(map(patch,original))==set(map(patch,replay))
+                and all(p[2]==q[2] and max(abs(p[0]-q[0]),abs(p[1]-q[1]))<=1
+                        for p,q in zip(original,replay)))
+
+    while len(pins) < len(points):
+        keep = sorted(pins)
+        order = {old:new for new,old in enumerate(keep)}
+        links = [dict(link, from_index=order[link['from_index']]) for link in plan['links']]
+        trial = atlas.plan([points[i] for i in keep], observations, links=links, loop=plan['loop'])
+        split = set()
+        for k,(a,b) in enumerate(zip(keep,keep[1:])):
+            if b <= a+1:
+                continue
+            leg = trial['legs'][k] if k < len(trial['legs']) else None
+            if leg is None or not same_corridor(plan['path'][offsets[a]:offsets[b]+1],
+                                                trial['path'][leg['start']:leg['end']+1]):
+                split.add((a+b)//2)
+        if not split:
+            if (trial['complete'] and trial['return_mode']==plan['return_mode']
+                    and trial['transitions']==plan['transitions'] and trial['avoid_tiles']==plan['avoid_tiles']
+                    and len(trial['path'])==len(plan['path']) and set(map(patch,trial['path']))==set(map(patch,plan['path']))):
+                return trial
+            return plan
+        pins.update(split)
+    return plan
+
+
+def shorter_draft(atlas, observations, plan, labels):
+    result = _shorter_draft(atlas, observations, plan, labels)
+    labelled = {tuple(p) for p,label in zip(plan['points'],labels) if label}
+    def simplify(candidate):
+        protected = [i for i,p in enumerate(candidate['points']) if tuple(p) in labelled]
+        return sparse_waypoints(atlas, observations, candidate, protected)
+    sparse = simplify(result)
+    if result is not plan and len(sparse['path']) > len(plan['path']):
+        original = simplify(plan)
+        if len(original['points']) < len(plan['points']) and len(original['points']) <= len(sparse['points']):
+            return original
+    return sparse
+
+
+def _shorter_draft(atlas,observations,plan,labels):
     base = _compact_draft(atlas,observations,plan,labels)
     if not base['complete'] or not base['loop_closed'] or base['return_mode'] != 'closed':
         return base
@@ -324,6 +385,29 @@ def varied_route(atlas, observations, ground, walk, stops, result):
     return result
 
 
+def compact_proposal(atlas, observations, result, model):
+    variants = result.get('comparison',{}).get('variants',())
+    geometries = [result, *(v['geometry'] for v in variants)]
+    compact = {}
+    for route in geometries:
+        points = route.get('points', [])
+        if len(points) < 4:
+            continue
+        key = tuple(map(tuple,points)), tuple((l['from_index'],l['id']) for l in route['links'])
+        if key not in compact:
+            plan = atlas.plan(points,observations,links=route['links'],loop=points[0]==points[-1])
+            if plan['path'] != route['path']:
+                continue
+            sparse = sparse_waypoints(atlas,observations,plan)
+            compact[key] = sparse['points'], sparse['links'], sparse['path']
+        route['points'], route['links'], route['path'] = compact[key]
+    for variant in variants:
+        route = variant['geometry']
+        actions = {(tuple(t['origin']),tuple(t['exit'])) for t in route['passages']}
+        variant['metrics'] = dict(model.estimate(route['path'],actions),repeated_segments=repeat_count(route['path']))
+    return result
+
+
 def propose(atlas, observations, body):
     if not isinstance(body,dict) or body.get('scope') != atlas.scope:
         raise ValueError('Zmieniono atlas. Wczytaj obszary ponownie.')
@@ -394,7 +478,7 @@ def propose(atlas, observations, body):
         result = manual_circuit(atlas,observations,area,excluded=excluded,anchor=anchor,allowed=allowed,via=via,model=model)
         if allowed is None and not excluded and anchor is None:
             remember_check(atlas,area,result)
-        return result
+        return compact_proposal(atlas, observations, result, model)
     observations = atlas.with_recorded_ropes(observations)
     ground = GroundMap(atlas,observations,excluded,allowed=None if 'approach' in body else allowed)
     if 'approach' in body:
@@ -418,7 +502,8 @@ def propose(atlas, observations, body):
             if tuple(mark['observer_cell']) in cells and sector(mark['point']) in cells:
                 first_seen[tuple(mark['point'])] += mark['count']
     seeds = [tuple(p) for d in atlas.drafts() if d['id'] in area['drafts'] for p in d['points']]
-    return proposed_circuit(atlas, observations, ground, cells, first_seen, seeds, choose_region=allowed is not None, anchor=anchor, model=model)
+    result = proposed_circuit(atlas, observations, ground, cells, first_seen, seeds, choose_region=allowed is not None, anchor=anchor, model=model)
+    return compact_proposal(atlas, observations, result, model)
 
 
 def manual_circuit(atlas, observations, area, *, excluded=frozenset(),anchor=None,allowed=None,via=frozenset(),model=None):
@@ -490,6 +575,19 @@ def proposed_circuit(atlas, observations, ground, cells, sightings, seeds, *, ch
     uncovered = set(candidate['missing'])
     if not uncovered < missing:
         return current
+    # A broad search can also take an incidental shortcut through an unselected
+    # sector. Offer only the terrain needed for the demonstrated coverage.
+    stair_sectors = {sector(t['entry']) for t in candidate['passages']}
+    for cell in sorted(extra,key=lambda p:(p in stair_sectors,p))[:8]:
+        if len(extra) == 1:
+            break
+        reduced = extra-{cell}
+        try:
+            trial = preview(ground.allowed | reduced)
+        except ValueError:
+            continue
+        if set(trial['missing']) <= uncovered:
+            extra, candidate, uncovered = reduced, trial, set(trial['missing'])
     current['connector'] = dict(sectors=sorted(extra), covered=candidate['covered'],
                                 passages=[t for t in candidate['passages'] if t['origin'][2] != t['exit'][2]
                                           or sector(t['entry']) in extra])

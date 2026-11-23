@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.24.0",
+    "changes":[
+      {"title":"Rzadsze waypointy w pętlach Atlasu","detail":"Planer sprawdza pokrycie i przebieg po usunięciu zbędnych punktów. W zapisanym szkicu użyj opcji Optymalizuj trasę, aby zobaczyć propozycję."},
+      {"title":"Wstaw waypoint lub schody na wybranym odcinku","detail":"W menu pola wybierz waypoint, po którym ma pojawić się nowy punkt. Przy schodach Atlas dopasowuje odcinek lub najbliższy waypoint. Teren przy schodach za granicą zaznaczenia można dodać jako łącznik."}
+    ]
+  },
+  {
     "version":"v1.23.1",
     "changes":[{"title":"Odmowy przy użyciu Hunter Knife","detail":"Panel liczy odebrane komunikaty o braku własności po użyciu noża. Po odmowie podczas automatycznej obróbki Cavebot zwalnia postój."}]
   },
