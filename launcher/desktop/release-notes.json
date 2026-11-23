@@ -1,5 +1,9 @@
 [
   {
+    "version":"v1.25.1",
+    "changes":[{"title":"Plan poprawek Hunter Knife i sesji","detail":"Baza wiedzy zawiera odtworzenia utraty ciała po kroku, opóźnionego Loot i milczącego panelu oraz kryteria wydania poprawek."}]
+  },
+  {
     "version":"v1.25.0",
     "changes":[
       {"title":"Baza wiedzy vBota w MCP","detail":"Osobne zasoby opisują wszystkie moduły vBota, współpracę z OTClientem i wyniki prób dotyczących panelu oraz logowania DBVictory."}

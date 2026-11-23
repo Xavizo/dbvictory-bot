@@ -2,6 +2,8 @@
 
 Stan kodu DBVictory `b03ad36`, vBot 4.8 `09d6816`, OTCv8 `aacfe3f`. Ten dokument odróżnia obserwacje w źródłach, odtworzenia z atrapami, pomiar lokalny i propozycje zmian. Audyt dotyczy architektury. Wersja, która udostępnia bazę wiedzy przez MCP, nie zmienia procesu łączenia ani logiki gry. [Pełny katalog](modules.md) · [Integracja z klientem](architecture.md)
 
+[Plan wdrożenia, wyniki symulacji i instrukcja uruchomienia](#plan-wdrożenia-i-kryteria-wydania)
+
 ## Pierwsze decyzje i ich koszt
 
 | Kolejność | Decyzja | Efekt dla użytkownika | Warunek przyjęcia |
@@ -59,3 +61,52 @@ W praktyce mobilizacja wszystkich modułów co 10 ms nie jest warunkiem płynno�
 4. Oddzielić zalety architektury od zgodności z konkretną grą. W vBocie próg alarmu many korzysta w jednej gałęzi z HP, funkcje przełącznika HealBota zapisują profil ataku, a leczenie przedmiotem może być opóźniane podczas lootu. Z tego wynikają trzy testy domenowe: niska mana przy pełnym HP, zapis profilu leczenia bez zmiany walki i natychmiastowa szansa na leczenie przy aktywnym loocie. [Alarmy](https://github.com/Vithrax/vBot/blob/09d6816c817f881735ecf78e87e052fcf7c02816/vBot/alarms.lua#L179-L190) · [Zapis leczenia](https://github.com/Vithrax/vBot/blob/09d6816c817f881735ecf78e87e052fcf7c02816/vBot/HealBot.lua#L513-L523) · [Leczenie i loot](https://github.com/Vithrax/vBot/blob/09d6816c817f881735ecf78e87e052fcf7c02816/vBot/HealBot.lua#L621-L647)
 
 **Decyzja końcowa.** Zachować działający silnik i potwierdzenia DBVictory. Najwięcej przemawia za dokładniejszym stanem gotowości, usunięciem podwójnej inicjalizacji oraz budzeniem domen po obserwacjach. Rozważyć inny model połączenia dopiero po potwierdzeniu, jaki kontrakt faktycznie udostępnia producent klienta. Ani obecność otwartego okna, ani zgodność rodziny silnika gry sama tego nie rozstrzyga.
+
+## Plan wdrożenia i kryteria wydania
+
+Punktem odniesienia jest v1.25.0 (`b7706c1`). Plan przyznaje pierwszeństwo Hunter Knife, ponieważ w aktualnej logice udało się powtórzyć dwie konkretne usterki. Poniższe czasy pochodzą z wirtualnego zegara i określonych sekwencji wejściowych. Kryteria pilotażu są propozycją do oceny przyszłych wydań.
+
+### Etapy
+
+| Etap | Zmiana i zależności | Kiedy można wydać |
+|---|---|---|
+| 1. Hunter Knife +1 i ruch | Oddzielić przypisanie własnego ciała od pojedynczej próby użycia. Po pewnym niewysłaniu ponownie sprawdzić zasięg, tożsamość sesji, bieżącą warstwę i położenie noża. Aktywny cel może nadal otrzymywać ataki. Krok utrzymujący zasięg może się odbyć. Przypadek kroku oddalającego obsłużyć krótkim odroczeniem ruchu lub przy pierwszym potwierdzonym powrocie do zasięgu. Nie prowadzić postaci za znikającym ciałem. | Dokładnie jedno potwierdzone użycie na ciało w kontroli, po kroku w bok i po powrocie. Zero prób spoza zasięgu. Przy niepewnym wyniku najpierw uzgodnić stan pola. Odmowa własności lub zmiana sesji kończy próbę. |
+| 2. Grupy ciał i pomiar całej próby | Zatrzymać fakty o śmierci, ciele i osobistym Loot do końca okna korelacji. Brak kompletu dowodów nie musi zatrzymywać postaci przez cały ten czas. Rozróżnić moment wyboru, faktycznego przekazania, rezultatu transportu i zmiany widocznego stosu. Oba pierwsze etapy można połączyć w jedno wydanie noża. | Wszystkie pięć znanych niepowodzeń przechodzi w trybie akceptacyjnym. Dwie zgodne wiadomości pozwalają rozpoznać dwa własne ciała. Niepełne, spóźnione poza okno lub sprzeczne dowody nie dają prawa do użycia. Stare ciało, brak dropu, odmowa i timeout mają osobne wyniki. |
+| 3. Świeżość panelu | Odróżnić otwarty kanał od aktualnej wiadomości. Po ciszy oznaczyć dane jako stare, uruchomić pojedynczy odczyt awaryjny lub ponowne połączenie panelu. Anulować zbędne próby po poprawnej ramce. Niezależny etap od zmian mechaniki gry. | Zdrowy strumień nie generuje prób awaryjnych. Milczący kanał przed pierwszą ramką i po niej odzyskuje łączność lub pokazuje powód. Spóźnione odpowiedzi nie nadpisują świeższego stanu. |
+| 4. Jedna aktywacja modułów na logowanie | Połączyć dwie ścieżki startu w jednym koordynatorze. Powiązać każdą oczekującą pracę z generacją sesji i wymaganiami konkretnej domeny. Analiza i pomiary nie włączają zapisanych akcji. | Gotowa sesja uruchamia listę dozwolonych akcji raz. Rozłączenie, brak gotowości i stary callback po podmianie sesji dają zero uruchomień. Blokada ruchu lub brak aktualnej mapy nie zatrzymują oceny leczenia przy świeżym HP. |
+| 5. Koszt odczytów i start klienta | Najpierw bufor opisów akcji i wiarygodność indeksu ekwipunku. Porównać 0, 1 i 2 okna panelu przy takim samym odtworzeniu. Po etapach 3–4 pokazać w launcherze osobno okno klienta, gotowość panelu, logowanie i świeże dane. Możliwość oficjalnego połączenia z grą już w toku sprawdzać oddzielnie. | Brak starych opisów po edycji i brak użycia poprzedniego slotu po przełożeniu noża. Zimny start, otwarty klient i relog mają osobne wyniki. Zielony status wymaga świeżych danych właściwej sesji. |
+
+### Co pokazują nowe symulacje
+
+| Wejście do próby offline | Wynik dla v1.25.0 | Znaczenie |
+|---|---|---|
+| Aktywna walka z następnym mobem, własne odsłonięte ciało obok, postać stoi | Jedna próba wysłana do lokalnej atrapy i jedna potwierdzona zmiana ciała | Kontrola pozytywna dla tej samej sekwencji zabicia oraz XP. |
+| Jak wyżej, ale krok przed końcowym sprawdzeniem, wciąż 1 SQM od ciała | Próba odrzucona przed wysłaniem, przypisanie skasowane, zero oskórowań | Powtarzalne pominięcie leży w obsłudze ruchu. Serwer nie brał udziału w tym wyniku. |
+| Krok poza zasięg i powrót po 700 ms od początku scenariusza | Brak wysłania poza zasięgiem, a po powrocie nadal zero oskórowań | Należy zachować informację o własności wystarczająco długo, by ocenić możliwość użycia po powrocie. |
+| Dwa lub cztery świeże ciała na jednej kratce, osobisty Loot kompletny po 100 ms | Rozpoznanie całej grupy po 300 ms przy klatkach co 50 lub 100 ms i po 500 ms przy klatkach co 250 ms | Mierzony etap kończy się na rozpoznaniu. Nie obejmuje użycia, cooldownu ani kolejnego kroku. |
+| Dwa potwierdzone zgony i dwa nowe ciała, drugi osobisty Loot po 1200 ms | 0 rozpoznanych w każdej z trzech częstotliwości mapy. Przed drugim wpisem kolejki śmierci, pojawień i pierwszego Loot są już puste | Komplet do skojarzenia przychodzi wewnątrz okna 1500 ms. Kandydat został wcześniej wyczyszczony. |
+| Dwa zgony i ciała, ale tylko jeden własny Loot lub drugi po 1800 ms | Brak przypisania w każdym wariancie | Zachować tę ostrożność także po naprawie opóźnionych poprawnych wpisów. |
+| Nieustalony wynik wysłania, zmiana ciała po 600 ms albo brak późniejszej zmiany | Jedna próba w każdym przebiegu. Zmiana po 600 ms dała jedno potwierdzenie, brak zmiany zakończył się bez potwierdzenia. | Sam brak zmiany w pojedynczej klatce nie pozwala wysłać noża ponownie. |
+| Panel, pięć przebiegów z wirtualnym zegarem | Ruchomy strumień odświeża HP. Jawne zamknięcie uruchamia próbę odczytu HTTP. Otwarty kanał milczący przez 15 s nie podejmuje żadnej próby, także przed pierwszą ramką | Uzasadnia etap 3 niezależnie od stanu serwera gry. |
+| Logowanie, pięć przebiegów z obydwoma callbackami | Gotowość natychmiastowa/opóźniona daje po dwa wywołania procedury startu listy. Rozłączenie lub zastąpienie A przez B daje po jednym starym wywołaniu. Brak gotowego wyjścia transportu daje dwa | Odbiorcą był licznik procedury. Nie ustalono wysłania podwójnych komend do gry. |
+
+### Jak uruchomić ponownie
+
+Polecenia uruchamia się z głównego katalogu kopii roboczej, korzystając ze środowiska Pythona projektu i Node z zależnościami panelu. Atrapy mapy, zegara, logowania i odbiorcy działają lokalnie. Zestaw akceptacyjny ma początkowo ujawniać usterki.
+
+```powershell
+python -m pytest -q -rx tests/test_hunter_knife.py tests/test_hunter_knife_movement_replay.py tests/test_hunter_knife_group_replay.py
+python -m pytest -q --runxfail tests/test_hunter_knife_movement_replay.py tests/test_hunter_knife_group_replay.py
+node tests/simulations/panel_readiness.cjs --acceptance
+python tests/simulations/session_readiness.py --acceptance
+```
+
+Bez `--acceptance` dwie ostatnie symulacje wypisują przebieg także dla obecnej wersji. Po przebudowie ścieżek logowania trzeba połączyć ich wejścia testowe z nowym koordynatorem i zachować te same zdarzenia i oczekiwane wyniki. Testy izolacji walki, ruchu i leczenia oraz odzyskania waypointu pozostają częścią pełnej regresji. [Ruch przy ciele](../../tests/test_hunter_knife_movement_replay.py) · [Serie i spóźnione dowody](../../tests/test_hunter_knife_group_replay.py) · [Milczący panel](../../tests/simulations/panel_readiness.cjs) · [Zmiana sesji](../../tests/simulations/session_readiness.py) · [Niezależne domeny](../../tests/test_automation_domains.py)
+
+### Pilotaż i wycofanie
+
+W 699 raportach ruchu, 23 nagraniach i 173 raportach okrążeń nie znaleziono ani jednej próby z kompletem czasów od rozpoznania do efektu. W 7 okrążeniach znaleziono 36 wpisów postojów wzmiankujących Hunter Knife. Nie pozwalają one policzyć skuteczności noża ani czasu serwera.
+
+Przy pierwszym pilotażu zebrać co najmniej po 30 jednoznacznych własnych ciał dla gry ręcznej i Cavebota w podobnych warunkach. Osobno podać ciała dostępne, pominięte po ruchu, przypisane niejednoznacznie, próby wysłane, potwierdzone i odmowy. Porównać medianę, p95 i liczbę próbek dla czasu od gotowego ciała do próby oraz od potwierdzenia do następnego kroku. Schowane ciała i utrata zasięgu wymagają odrębnych grup. Liczba 30 jest propozycją na pierwszy pomiar. Nie przyjmujemy czasu serwerowego z symulacji.
+
+Wydawać etapy oddzielnie. Dla etapu noża warunkiem przejścia są zielone testy akceptacyjne, brak podwójnych użyć oraz poprawne zachowanie przy odmowie i nieznanym wyniku. Jeśli wystąpi powtórzenie po niepewnym wysłaniu albo użycie na niejednoznacznym ciele, zatrzymać pilotaż modułu Hunter Knife, zachować raport i wrócić do poprzedniego przetestowanego wydania przy najbliższym bezpiecznym starcie. Wyników pilotażu nie należy wyprowadzać z samego faktu, że launcher zainstalował aktualizację.
