@@ -10,7 +10,7 @@ Unsupported custom modes stop parsing; no byte searching through opaque data.
 import struct
 
 
-def parse_talk(data, pos):
+def parse_talk(data, pos, *, loot_channel=None):
     def text(offset, limit):
         length = struct.unpack_from('<H', data, offset)[0]
         start, end = offset + 2, offset + 2 + length
@@ -26,7 +26,11 @@ def parse_talk(data, pos):
         return value, end
     try:
         statement = struct.unpack_from('<I', data, pos)[0]
-        sender, pos = text(pos+4, 64)
+        empty_sender = data[pos+4:pos+6] == b'\x00\x00'
+        if empty_sender and loot_channel is not None:
+            sender, pos = '', pos+6
+        else:
+            sender, pos = text(pos+4, 64)
         level, mode = struct.unpack_from('<HB', data, pos)
         pos += 3
         kind = None
@@ -40,7 +44,9 @@ def parse_talk(data, pos):
         elif mode in (6, 14):
             kind = 'private'
         elif mode in (7, 8, 13, 15):
-            struct.unpack_from('<H', data, pos)  # channel ID
+            channel, = struct.unpack_from('<H', data, pos)
+            if channel == loot_channel and level == 0 and not sender:
+                kind = 'personal_loot'
             pos += 2
         elif mode == 9:
             struct.unpack_from('<I', data, pos)  # RVR channel timestamp
@@ -48,6 +54,8 @@ def parse_talk(data, pos):
         elif mode in (10, 11, 12):
             pass  # RVR replies and broadcast; no alert category
         else:
+            return None
+        if not sender and kind != 'personal_loot':
             return None
         message, end = text(pos, 4096)
         return end, {'statement': statement, 'sender': sender, 'kind': kind, 'text': message[:512]}

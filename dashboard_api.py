@@ -993,6 +993,12 @@ def _build_state_json() -> str:
         "automation_pause_kind": st.automation_pause_kind,
         "potion_diagnostics": st.potion_diagnostics.snapshot(),
         "senzu_usage": gs.senzu_usage.snapshot() if getattr(gs, "senzu_usage", None) else None,
+        "hunter_knife": {
+            "status": gs.hunter_knife.status if getattr(gs, "hunter_knife", None) else "Wyłączony",
+            "processed": gs.hunter_knife.done if getattr(gs, "hunter_knife", None) else 0,
+            "personal_loot": getattr(gs, "knife_loot_count", 0),
+            "unclassified_loot": getattr(gs, "knife_candidate_count", 0),
+        },
         "barrier_band": st.band_scheduler.snapshot(),
         "speed_up": st.speed_scheduler.snapshot() if getattr(st,"speed_scheduler",None) else None,
         "commands": st.game_proxy.command_snapshot() if st.game_proxy and hasattr(st.game_proxy,'command_snapshot') else None,

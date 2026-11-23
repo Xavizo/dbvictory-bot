@@ -1580,6 +1580,12 @@ class AdaptiveCavebot:
                 manual_position=pos
                 self.domains.movement_state="waiting"
                 await asyncio.sleep(.05);continue
+            knife = getattr(self.state.game_state, "hunter_knife", None)
+            if not self.combat_only and knife and knife.hold():
+                self.domains.movement_state = "waiting"
+                self.reason = "Hunter Knife · czekam przy ciele."
+                await asyncio.sleep(.05)
+                continue
             if not self.combat_only and pos!=self.path[self.index]:
                 if self.combat.config['enabled'] and self.combat.anchor is not None and pos[2]==self.path[self.index][2]:
                     # Chase/retreat owns this temporary excursion; its return

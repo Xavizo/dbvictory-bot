@@ -5,6 +5,7 @@ import RouteReplayPanel from "./RouteReplayPanel";
 import MovementHistoryPanel from "./MovementHistoryPanel";
 import CavebotReports from "./CavebotReports";
 import SpeedUpPanel from "./SpeedUpPanel";
+import HunterKnifePanel from "./HunterKnifePanel";
 import ProfilePicker from "./ProfilePicker";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
@@ -1108,7 +1109,7 @@ export default function Dashboard() {
   }
   const potion=state?.actions.find(a=>a.name==="auto_potions");
 
-  const actions=(state?.actions ?? []).filter(a=>!["auto_potions","auto_barrier_band","speed_up","cavebot","cavebot2","adaptive_cavebot"].includes(a.name));
+  const actions=(state?.actions ?? []).filter(a=>!["auto_potions","auto_barrier_band","speed_up","auto_hunter_knife","cavebot","cavebot2","adaptive_cavebot"].includes(a.name));
   const shownActions=actions.filter(a=>(`${actionTitles[a.name] ?? ""} ${a.name} ${a.description}`).toLowerCase().includes(search.toLowerCase()) &&
     (actionFilter==="all" || (actionFilter==="running" ? a.running : actionFilter==="enabled" ? a.enabled : !a.enabled)));
 
@@ -1122,6 +1123,7 @@ export default function Dashboard() {
         <div className="empty-panel"><h2>Czekam na ustawienia reguł</h2><p>Pojawią się po połączeniu panelu z botem.</p></div>}
       <BarrierBandPanel state={state} onRefresh={refresh}/>
       <SpeedUpPanel state={state} onRefresh={refresh}/>
+      <HunterKnifePanel state={state} onRefresh={refresh}/>
       <ProfilePicker kind="bot" state={state} onRefresh={refresh}/>
       <details className="additional-actions"><summary>Pozostałe akcje <span>{actions.filter(a=>a.enabled).length} włączonych</span></summary>
       <div className="action-toolbar"><label className="search-field"><span aria-hidden="true">⌕</span><input aria-label="Szukaj akcji" placeholder="Szukaj akcji…" value={search} onChange={e=>setSearch(e.target.value)}/></label>

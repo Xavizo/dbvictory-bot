@@ -3,7 +3,7 @@ import {useState} from "react";
 import {toggleAction, type BotState} from "@/lib/api";
 import {authenticatedFetch} from "@/lib/auth";
 export const actionTitles:Record<string,string> = {
-  auto_barrier_band:"Barrier Band",auto_potions:"Leczenie · HP / Ki",aoe_spell:"Atak obszarowy",auto_combat:"Automatyczna walka",auto_login_transform:"Transformacja po logowaniu",
+  auto_hunter_knife:"Hunter Knife",auto_barrier_band:"Barrier Band",auto_potions:"Leczenie · HP / Ki",aoe_spell:"Atak obszarowy",auto_combat:"Automatyczna walka",auto_login_transform:"Transformacja po logowaniu",
   auto_rune_and_spell:"Runy i zaklęcia",auto_senzu:"Leczenie Senzu",auto_targeting:"Wybór celu",auto_targeting2:"Wybór celu · v2",
   cavebot:"Cavebot · wyłączony",cavebot2:"Cavebot 2 · wyłączony",adaptive_cavebot:"Cavebot",eat_food:"Jedzenie",full_light:"Pełne oświetlenie",
   item_id_spy:"Identyfikacja przedmiotów",mana_recovery_20:"Odnawianie Ki · 20%",mana_recovery_70:"Odnawianie Ki · 70%",

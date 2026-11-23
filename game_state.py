@@ -90,6 +90,11 @@ class GameState:
         # Creatures: {id: {"health": 0-100}}
         self.creatures: dict[int, dict] = {}
 
+        # The server names channels per session; a numerical channel alone is not ownership.
+        self.personal_loot_channel = None
+        self.knife_feedback = deque(maxlen=96)
+        self.knife_loot_count = 0
+        self.knife_candidate_count = 0
         # Chat messages ring buffer
         self.messages: deque = deque(maxlen=50)
 
@@ -569,13 +574,33 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
                     return -1
         return pos + _cm_size
 
+    if opcode == ServerOpcode.OPEN_CHANNEL and pos + 4 <= len(data):
+        channel, length = struct.unpack_from('<HH', data, pos)
+        if 0 < length <= 64 and pos + 4 + length <= len(data):
+            label = data[pos+4:pos+4+length]
+            if label.strip().lower() == b'loot':
+                gs.personal_loot_channel = channel
+            elif channel == gs.personal_loot_channel:
+                gs.personal_loot_channel = None
+        # Channel descriptions can have version-specific trailing fields.
+        return -1
+    if opcode == ServerOpcode.CLOSE_CHANNEL and pos + 2 <= len(data):
+        if struct.unpack_from('<H', data, pos)[0] == gs.personal_loot_channel:
+            gs.personal_loot_channel = None
+        return pos + 2
     # Only known sequential boundaries; never fallback-scan chat inside map data.
     if opcode == ServerOpcode.TALK:
         from chat_messages import parse_talk
-        parsed = parse_talk(data, pos)
+        parsed = parse_talk(data, pos, loot_channel=gs.personal_loot_channel)
         if parsed is None:
             return -1
         end, message = parsed
+        if message['kind'] == 'personal_loot':
+            from hunter_knife import loot_species
+            species = loot_species(message['text'])
+            if species:
+                gs.knife_feedback.append(('loot', species))
+            return end
         callback = getattr(gs, "alert_chat_callback", None)
         if callback and message['kind'] is not None:
             try:
