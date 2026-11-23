@@ -1008,6 +1008,7 @@ def _build_state_json() -> str:
         "recordings": _cb.list_recordings(),
     }
 
+    knife = getattr(gs, "hunter_knife", None)
     return json.dumps({
         "connected": st.connected,
         "login_startup": {"phase": st.login_startup.phase} if getattr(st, "login_startup", None) else None,
@@ -1021,11 +1022,13 @@ def _build_state_json() -> str:
         "potion_diagnostics": st.potion_diagnostics.snapshot(),
         "senzu_usage": gs.senzu_usage.snapshot() if getattr(gs, "senzu_usage", None) else None,
         "hunter_knife": {
-            "status": gs.hunter_knife.panel_status() if getattr(gs, "hunter_knife", None) else "Wyłączony",
-            "processed": gs.hunter_knife.done if getattr(gs, "hunter_knife", None) else 0,
-            "unattributed": getattr(getattr(gs, "hunter_knife", None), "unattributed", 0),
-            "last_timing_ms": gs.hunter_knife.last_timing_ms if getattr(gs, "hunter_knife", None) else None,
-            "from_combat": gs.hunter_knife.queue.from_combat if getattr(gs, "hunter_knife", None) else 0,
+            "status": knife.panel_status() if knife else "Wyłączony",
+            "processed": knife.done if knife else 0,
+            "unattributed": getattr(knife, "unattributed", 0),
+            "last_issue": getattr(knife, "last_issue", None),
+            "unassigned_bodies": getattr(knife.queue, "unassigned_bodies", 0) if knife else 0,
+            "last_timing_ms": knife.last_timing_ms if knife else None,
+            "from_combat": knife.queue.from_combat if knife else 0,
             "personal_loot": getattr(gs, "knife_loot_count", 0),
             "unclassified_loot": getattr(gs, "knife_candidate_count", 0),
             "denied": getattr(gs, "knife_denials", 0),

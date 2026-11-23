@@ -92,6 +92,7 @@ class SkinningQueue:
         self.stacks = {}
         self.baseline = {}
         self.births = []
+        self.interrupted_births = set()
         self.deaths = []
         self.loot = []
         self.last_event = None
@@ -102,6 +103,7 @@ class SkinningQueue:
         self.other_death_at = float("-inf")
         self.last_combat_sample = None
         self.from_combat = 0
+        self.unassigned_bodies = 0
         self.combat_claims = {}
 
     def possible_work(self, position, now, *, include_owned=True):
@@ -191,6 +193,9 @@ class SkinningQueue:
         cutoff = now - MAX_WAIT
         self.xp_gains = [t for t in self.xp_gains if t >= cutoff]
         self.births = [b for b in self.births if b[0] >= cutoff]
+        # A later look at the same tile cannot identify the same corpse after a gap.
+        self.interrupted_births.intersection_update((t, p) for t, p, _, _ in self.births)
+        self.interrupted_births.update((t, p) for t, p, _, _ in self.births if p not in current)
         self.deaths = [d for d in self.deaths if d[0] >= cutoff]
         self.loot = [l for l in self.loot if l[0] >= cutoff]
         self.combat_claims = {k: v for k, v in self.combat_claims.items() if k[0] >= cutoff}
@@ -199,62 +204,93 @@ class SkinningQueue:
         self.settle(now)
 
     def settle(self, now):
-        """Apply personal credits to the last observed stack without recounting a map frame."""
+        """Resolve independent species without separating deaths that share a tile."""
         if self.last_event is None:
             return
-        current = self.baseline
-        # Keep unmatched evidence for the entire correlation window. Closing
-        # this batch must leave later kills and credits for their own batch.
-        times = [row[0] for rows in (self.births, self.deaths, self.loot) for row in rows]
-        if not times:
-            self.last_event = None
-            return
+        # A Loot entry names a species, while a new corpse identifies only its
+        # tile. Death observations connect those two kinds of evidence.
+        neighbors = {name: set() for _, name in self.loot}
+        neighbors.update((point, set()) for _, point, _, _ in self.births)
+        for _, name, point, _ in self.deaths:
+            neighbors.setdefault(name, set()).add(point)
+            neighbors.setdefault(point, set()).add(name)
+
+        unresolved = set(neighbors)
+        # An unnamed death or an unaccounted new corpse could belong to any
+        # species. Preserve the original shared correlation window in that case.
+        ambiguous = "" in neighbors or any(not neighbors[p] for _, p, _, _ in self.births)
+        while unresolved:
+            if ambiguous:
+                group = unresolved.copy()
+                unresolved.clear()
+            else:
+                group = set()
+                pending = [unresolved.pop()]
+                while pending:
+                    key = pending.pop()
+                    group.add(key)
+                    linked = unresolved.intersection(neighbors[key])
+                    unresolved.difference_update(linked)
+                    pending.extend(linked)
+            self._settle_group(group, now)
+        self.last_event = max((r[0] for rows in (self.deaths, self.loot, self.births) for r in rows),
+                              default=None)
+
+    def _settle_group(self, group, now):
+        deaths = [d for d in self.deaths if d[1] in group]
+        personal = [l for l in self.loot if l[1] in group]
+        appeared = [b for b in self.births if b[1] in group]
+        times = [row[0] for rows in (deaths, personal, appeared) for row in rows]
         deadline = min(times) + EVIDENCE_WINDOW
-        deaths = [d for d in self.deaths if d[0] <= deadline]
-        personal = [l for l in self.loot if l[0] <= deadline]
-        appeared = [b for b in self.births if b[0] <= deadline]
+        deaths = [d for d in deaths if d[0] <= deadline]
+        personal = [l for l in personal if l[0] <= deadline]
+        appeared = [b for b in appeared if b[0] <= deadline]
         quiet = now - max(t for t in times if t <= deadline)
         if quiet < SOLO_SETTLE:
             return
         credit = Counter(name for _, name in personal)
-        observed = defaultdict(list)
-        for _, name, point, _ in deaths:
-            observed[name].append(point)
+        observed = Counter(name for _, name, _, _ in deaths)
+        positions = Counter(point for _, _, point, _ in deaths)
         births = Counter()
-        for _, point, n, _ in appeared:
+        first_seen = {}
+        for at, point, n, _ in appeared:
             births[point] += n
-        complete = (credit == Counter(name for _, name, _, _ in deaths)
-                    and births == Counter(p for _, _, p, _ in deaths))
+            first_seen[point] = min(at, first_seen.get(point, at))
+        complete = bool(deaths) and "" not in observed and credit == observed and births == positions
         if not complete and now <= deadline:
             return
         if quiet < SETTLE and (self.other_player_at >= now - EVIDENCE_WINDOW
                                or self.other_death_at >= now - EVIDENCE_WINDOW
                                or any(not name or not cid for _, name, _, cid in deaths)):
             return
-        grants = Counter()
-        if "" not in observed:
-            for name, points in observed.items():
-                if credit[name] == len(points):
-                    grants.update(points)
-        claimed = Counter(p for at, p in self.combat_claims if at <= deadline)
-        for p, n in grants.items():
+        # An observed death may have fallen beyond the readable map. At expiry
+        # a visible tile can still be used if all personal credits match and
+        # every locally observed body is accounted for by an identified death.
+        matched = "" not in observed and credit == observed and not (births - positions)
+        interrupted = {p for t, p, _, _ in appeared if (t, p) in self.interrupted_births}
+        claimed = Counter(p for at, p in self.combat_claims if p in group and at <= deadline)
+        for p, n in births.items():
             remaining = n - claimed[p]
+            if remaining <= 0 or p not in self.baseline or p in interrupted:
+                continue
             owned = self.stacks[p].fresh if p in self.stacks else 0
-            if remaining > 0 and n == births[p] and current.get(p) == owned + remaining:
-                first_seen = next(at for at, pos, _, _ in appeared if pos == p)
-                self.stacks[p] = OwnedStack(owned + remaining, now + MAX_WAIT, first_seen, now)
-        self.deaths = [d for d in self.deaths if d[0] > deadline]
-        self.loot = [l for l in self.loot if l[0] > deadline]
-        self.births = [b for b in self.births if b[0] > deadline]
-        self.combat_claims = {k: v for k, v in self.combat_claims.items() if k[0] > deadline}
-        self.last_event = max((t for t in times if t > deadline), default=None)
+            available = max(0, self.baseline[p] - owned)
+            if matched and positions[p] == n and available == remaining:
+                self.stacks[p] = OwnedStack(owned + remaining, now + MAX_WAIT, first_seen[p], now)
+            else:
+                self.unassigned_bodies += min(remaining, available)
+        self.deaths = [d for d in self.deaths if d[0] > deadline or d[1] not in group]
+        self.loot = [l for l in self.loot if l[0] > deadline or l[1] not in group]
+        self.births = [b for b in self.births if b[0] > deadline or b[1] not in group]
+        self.combat_claims = {k: v for k, v in self.combat_claims.items() if k[0] > deadline or k[1] not in group}
 
     def _claim_combat_bodies(self, current, creatures, now):
         # Match before releasing the Loot batch. Late matching Loot cannot grant
         # the same body again, even after it was already skinned.
         used_targets = set(self.combat_claims.values())
         for at, p, count, cid in self.births:
-            if (now-at < SOLO_SETTLE or not cid or count != 1 or creatures.get(cid, {}).get("health", 0) > 0
+            if (now-at < SOLO_SETTLE or (at, p) in self.interrupted_births or not cid or count != 1
+                    or creatures.get(cid, {}).get("health", 0) > 0
                     or cid in used_targets
                     or self.other_player_at >= at - 1.5 or abs(self.other_death_at - at) <= 1.5
                     or any(abs(t-at) <= 1.5 and dead_id != cid for t, _, _, dead_id in self.deaths)

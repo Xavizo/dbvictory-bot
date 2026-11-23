@@ -1,5 +1,13 @@
 [
   {
+    "version":"v1.26.1",
+    "changes":[
+      {"title":"Hunter Knife po walce z grupą","detail":"Własne ciało można rozpoznać, kiedy wskazują na nie zgodne dane z pola i walki. Spóźniony Loot innego gatunku na sąsiednim polu nie wstrzymuje tej próby."},
+      {"title":"Cavebot czeka przy kilku własnych ciałach","detail":"Przy aktywnej walce potwierdzona obróbka kolejnego ciała daje czas na następne. Jeśli efekt nie nadchodzi, ruch może ruszyć dalej."},
+      {"title":"Diagnostyka pominiętych ciał","detail":"Na karcie noża widać liczbę ciał bez ustalonego właściciela i ostatnią trudność przy użyciu. Jeśli Cavebot właśnie próbował rzucić czar, pokazuje także odstęp między próbami."}
+    ]
+  },
+  {
     "version":"v1.26.0",
     "changes":[
       {"title":"Jedna inicjalizacja po zalogowaniu","detail":"Panel rozróżnia oczekiwanie na dane i gotową sesję. Ponowny sygnał logowania nie uruchamia modułów drugi raz."},

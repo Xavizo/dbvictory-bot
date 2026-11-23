@@ -1,5 +1,6 @@
 """Hunter Knife 5908 automation using the existing session, map and item actions."""
 import asyncio
+import logging
 from dataclasses import dataclass
 import time
 
@@ -12,6 +13,7 @@ from protocol import build_move_item_packet, build_use_item_ex_packet
 
 NAME = "auto_hunter_knife"
 INPUTS = ("map", "position", "target", "death", "loot", "inventory", "health")
+ATTEMPT_VALID_FOR = .55
 WAITING_FOR_BODY = "Czekam na świeże ciało po Twojej walce"
 
 
@@ -39,6 +41,7 @@ class Attempt:
     drop: tuple | None
     before_on_source: int
     receipt: CommandReceipt | None = None
+    recent_spell: tuple[str, int] | None = None
 
 
 class KnifeAutomation:
@@ -52,10 +55,13 @@ class KnifeAutomation:
         self.done = 0
         self.unattributed = 0
         self.last_timing_ms = None
+        self.last_issue = None
         self.status = "Sprawdzam mapę i wyposażenie"
         self.tool_ready = False
         self.last_map = 0
         self.actionable = False
+        self.group_progress_at = None
+        self.deferred_tiles = set()
 
     def panel_status(self):
         return self.status
@@ -75,9 +81,17 @@ class KnifeAutomation:
 
     def hold(self):
         now = time.monotonic()
-        return (self.tool_ready and now - self.last_map < .65 and not self.fighting()
-                and (self.actionable or self.pending is not None
-                     or self.queue.possible_work(self.game.position, now, include_owned=False)))
+        if not self.tool_ready or now - self.last_map >= .65:
+            return False
+        if self.fighting():
+            # Only a group of confirmed, usable bodies can briefly defer the next
+            # route step in combat. A missing acknowledgement cannot renew it.
+            return (self.group_progress_at is not None
+                    and now - self.group_progress_at < ATTEMPT_VALID_FOR
+                    and (self.actionable or (self.pending is not None and self.pending.drop is None
+                                             and distance(self.pending.source, self.game.position) <= 1)))
+        return (self.actionable or self.pending is not None
+                or self.queue.possible_work(self.game.position, now, include_owned=False))
 
     def rejected(self, received_at):
         if self.pending and self.pending.sent <= received_at:
@@ -85,7 +99,15 @@ class KnifeAutomation:
 
     def abandon(self, reason):
         if self.pending:
-            self.queue.stacks.pop(self.pending.source, None)
+            attempt = self.pending
+            self.last_issue = dict(position=attempt.source, reason=reason,
+                                   action="uncover" if attempt.drop else "skin")
+            recent_spell = getattr(attempt, "recent_spell", None)
+            if recent_spell:
+                words, elapsed_ms = recent_spell
+                self.last_issue.update(spell=words, since_spell_ms=elapsed_ms)
+            logging.getLogger(__name__).info("Hunter Knife 5908: %s", self.last_issue)
+            self.queue.stacks.pop(attempt.source, None)
         self.pending = None
         self.status = reason
 
@@ -117,6 +139,8 @@ class KnifeAutomation:
                 confirm(a.receipt, "corpse_transformed")
                 self.queue.consumed(a.source)
                 self.done += 1
+                if self.group_progress_at is not None:
+                    self.group_progress_at = now
                 self.pending = None
                 self.status = "Obrobiono ciało"
                 return
@@ -144,6 +168,7 @@ class KnifeAutomation:
         # Confirm a transformation before the new count invalidates the previous claim.
         self.acknowledge(cells, stamp, now)
         if stamp != self.frame:
+            self.deferred_tiles.clear()
             target_id = self.game.attack_target_id
             if self.controller and self.controller.status == "running" and self.controller.combat.config["enabled"]:
                 target_id = self.controller.combat.sent_target or target_id
@@ -156,8 +181,19 @@ class KnifeAutomation:
         fighting = self.fighting()
         if fighting and not self.can_use_during_combat():
             return None
-        for p in sorted(self.queue.stacks, key=lambda p: distance(origin,p)):
-            if distance(origin, p) > 1:
+        candidates = self.candidates(cells, origin, fighting, stamp, now)
+        first = next(candidates, None)
+        self.actionable = first is not None
+        if not fighting or not self.queue.stacks:
+            self.group_progress_at = None
+        elif first and self.group_progress_at is None:
+            if first.before[FRESH] > 1 or next(candidates, None) is not None:
+                self.group_progress_at = now
+        return first
+
+    def candidates(self, cells, origin, fighting, stamp, now):
+        for p in sorted(self.queue.stacks, key=lambda p: distance(origin, p)):
+            if p in self.deferred_tiles or distance(origin, p) > 1:
                 continue
             cell = cells.get(p)
             if not cell or cell.get("occupants", 0) > cell.get("occupant_types", {}).get("self", 0):
@@ -175,9 +211,14 @@ class KnifeAutomation:
                     self.status = "Brak miejsca na odsunięcie ciała"
                     continue
             count = sum(i["id"] == item["id"] for i in cell["items"])
-            self.actionable = True
-            return Attempt(p, item, body_counts(cell["items"]), stamp, now, drop, count)
-        return None
+            attempt = Attempt(p, item, body_counts(cell["items"]), stamp, now, drop, count)
+            spell = getattr(getattr(self.controller, "combat", None), "last_spell_attempt", None)
+            if spell and self.can_use_during_combat():
+                # Context for diagnosis only. A spell attempt does not establish an item cooldown.
+                elapsed = time.time() - spell["at"]
+                if 0 <= elapsed <= 3:
+                    attempt.recent_spell = (spell["words"], round(elapsed * 1000))
+            yield attempt
 
 
 def fresh_sample(bot):
@@ -250,7 +291,7 @@ async def run_knife(bot):
                 def current():
                     if (not enabled() or gs.hunter_knife is not runtime or runtime.pending is not a
                             or (runtime.fighting() and (a.drop or not runtime.can_use_during_combat()))
-                            or gs.hp <= 0 or tuple(bot.position) != original or time.monotonic() - a.sent > .55):
+                            or gs.hp <= 0 or tuple(bot.position) != original or time.monotonic() - a.sent > ATTEMPT_VALID_FOR):
                         return False
                     latest = fresh_sample(bot)
                     if not latest:
@@ -281,13 +322,14 @@ async def run_knife(bot):
                     if attempted(receipt):
                         if isinstance(receipt, CommandReceipt):
                             a.receipt = receipt
-                    elif (enabled() and tuple(bot.position) != original
-                          and bot.position[2] == a.source[2]):
-                        # This attempt never left the queue. The next sample
-                        # independently checks the owned stack and current reach.
+                    elif enabled():
+                        # A local cancellation did not touch the body. Keep its claim;
+                        # require a newer observation before selecting this tile again.
                         runtime.pending = None
                         runtime.actionable = False
-                        runtime.status = "Sprawdzam zasięg po kroku"
+                        runtime.deferred_tiles.add(a.source)
+                        runtime.status = ("Sprawdzam zasięg po kroku" if tuple(bot.position) != original
+                                          else "Pole zmieniło się przed użyciem")
                     else:
                         runtime.abandon("Pole zmieniło się przed użyciem")
             await wait_for_inputs(bot, INPUTS, cursor, .1)
