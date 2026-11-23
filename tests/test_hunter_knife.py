@@ -84,7 +84,7 @@ def test_loot_channel_provenance_and_ownership_rejection():
 
     def message(channel,sender=b""):
         return (bytes([ServerOpcode.TALK])+struct.pack("<I",1)+string(sender)
-                +struct.pack("<HBH",0,7,channel)+string(b"[Mutant Fire Elemental]: nothing."))
+                +struct.pack("<HBH",0,7,channel)+string(b"13:51 [Fury Mutant Fire Elemental]: nothing."))
 
     receive(bytes([ServerOpcode.OPEN_CHANNEL])+struct.pack("<H",41)+string(b"Loot"))
     receive(message(41,b"Someone"))
@@ -97,6 +97,26 @@ def test_loot_channel_provenance_and_ownership_rejection():
     receive(bytes([ServerOpcode.TEXT_MESSAGE,25])+string(b"[Mutant Fire Elemental]: nothing."))
     assert game.knife_candidate_count == 1 and game.knife_loot_count == 1
     assert not runtime.queue.stacks
+
+
+def test_fury_loot_with_display_time_and_channel_state():
+    from types import SimpleNamespace
+    from hunter_knife import loot_species
+    from hunter_knife_action import KnifeAutomation, WAITING_FOR_LOOT
+
+    line = "[Fury Mutant Fire Elemental]: nothing."
+    assert loot_species(line) == loot_species("13:51 " + line) == "fury mutant fire elemental"
+    assert loot_species("24:51 " + line) is None
+    assert loot_species("Gracz: 13:51 " + line) is None
+    assert loot_species("13:51 [Something Else]: nothing.") is None
+    game = SimpleNamespace(personal_loot_channel=None)
+    runtime = KnifeAutomation(game)
+    runtime.status = WAITING_FOR_LOOT
+    assert "rozpoznanie kanału" in runtime.panel_status()
+    game.personal_loot_channel = 0
+    assert "Kanał Loot rozpoznany" in runtime.panel_status()
+    runtime.status = "Brak noża"
+    assert runtime.panel_status() == "Brak noża"
 
 
 def test_status_line_denial_from_manual_and_automatic_uses():

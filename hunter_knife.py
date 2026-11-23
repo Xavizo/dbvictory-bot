@@ -9,7 +9,10 @@ FRESH = 9068
 SPENT = 8141
 ELEMENTALS = frozenset({"fire elemental", "fire elementalis", "mutant fire elemental",
                         "fury mutant fire", "fury mutant fire elemental"})
-LOOT_LINE = re.compile(r"\[([^\[\]\r\n]{1,64})\]: [^\r\n]+")
+LOOT_LINE = re.compile(
+    r"(?:(?:[01][0-9]|2[0-3]):[0-5][0-9][ \t]+)?"
+    r"\[([^\[\]\r\n]{1,64})\]: [^\r\n]+"
+)
 SETTLE = 1.0
 MAX_WAIT = 8.0
 

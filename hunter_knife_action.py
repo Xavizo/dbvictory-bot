@@ -10,6 +10,7 @@ from adaptive_cavebot import tool_location
 from protocol import build_move_item_packet, build_use_item_ex_packet
 
 NAME = "auto_hunter_knife"
+WAITING_FOR_LOOT = "Czekam na własny Loot"
 
 
 def point(cell):
@@ -46,9 +47,16 @@ class KnifeAutomation:
         self.pending = None
         self.frame = 0
         self.done = 0
-        self.status = "Czekam na własny Loot"
+        self.status = "Sprawdzam mapę i wyposażenie"
         self.tool_ready = False
         self.last_map = 0
+
+    def panel_status(self):
+        if self.status != WAITING_FOR_LOOT:
+            return self.status
+        if self.game.personal_loot_channel is None:
+            return "Czekam na rozpoznanie kanału Loot"
+        return "Kanał Loot rozpoznany · czekam na własny wpis o elementalu"
 
     def fighting(self):
         target_id = self.game.attack_target_id
@@ -181,7 +189,7 @@ async def run_knife(bot):
                 except (OSError, ValueError):
                     location = None
                 if location and not runtime.tool_ready:
-                    runtime.status = "Czekam na własny Loot"
+                    runtime.status = WAITING_FOR_LOOT
                 runtime.tool_ready = bool(location)
                 if not location:
                     runtime.status = "Brak noża 5908 w wyposażeniu lub otwartym plecaku"

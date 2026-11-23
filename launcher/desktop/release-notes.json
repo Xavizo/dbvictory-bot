@@ -1,5 +1,9 @@
 [
   {
+    "version":"v1.24.1",
+    "changes":[{"title":"Hunter Knife rozpoznaje wpisy Loot z godziną","detail":"Na karcie noża widać, czy silnik rozpoznał kanał Loot. Wpisy o elementalach mogą zawierać godzinę przed nazwą potwora."}]
+  },
+  {
     "version":"v1.24.0",
     "changes":[
       {"title":"Rzadsze waypointy w pętlach Atlasu","detail":"Planer sprawdza pokrycie i przebieg po usunięciu zbędnych punktów. W zapisanym szkicu użyj opcji Optymalizuj trasę, aby zobaczyć propozycję."},

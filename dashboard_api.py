@@ -998,7 +998,7 @@ def _build_state_json() -> str:
         "potion_diagnostics": st.potion_diagnostics.snapshot(),
         "senzu_usage": gs.senzu_usage.snapshot() if getattr(gs, "senzu_usage", None) else None,
         "hunter_knife": {
-            "status": gs.hunter_knife.status if getattr(gs, "hunter_knife", None) else "Wyłączony",
+            "status": gs.hunter_knife.panel_status() if getattr(gs, "hunter_knife", None) else "Wyłączony",
             "processed": gs.hunter_knife.done if getattr(gs, "hunter_knife", None) else 0,
             "personal_loot": getattr(gs, "knife_loot_count", 0),
             "unclassified_loot": getattr(gs, "knife_candidate_count", 0),
