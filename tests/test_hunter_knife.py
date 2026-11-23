@@ -142,7 +142,7 @@ def combat_frames(*, xp=True, foreign=False, other_birth=False, still_alive=Fals
     if other_death:
         runtime.queue.death(dict(cid=cid+1, name="Rat", x=B[0], y=B[1], z=B[2]), 100.2)
     frame(100.25, before + [FRESH], elsewhere=other_birth)
-    assert runtime.queue.possible_work(A, 100.4) == targeted
+    assert runtime.queue.possible_work(A, 100.4, include_owned=False) == targeted
     if xp:
         game.experience += 12345
     frame(100.7, before + [FRESH], elsewhere=other_birth)
@@ -160,11 +160,16 @@ def test_solo_fury_without_loot_uses_knife_only_on_new_target_body():
     assert runtime.queue.next_body(B, tile(B, FRESH)["items"]) is None
 
 
-def test_without_loot_ambiguous_or_unrelated_corpse_is_left_alone():
+def test_exposed_body_without_reliable_personal_evidence_can_be_tried_once():
     for kwargs in (dict(xp=False), dict(foreign=True), dict(other_birth=True),
                    dict(still_alive=True), dict(existing=1), dict(other_death=True), dict(targeted=False)):
         runtime, attempt = combat_frames(**kwargs)
-        assert attempt is None and not runtime.queue.stacks, kwargs
+        assert runtime.queue.from_combat == 0 and not runtime.queue.stacks, kwargs
+        assert attempt and attempt.source == A and attempt.item["id"] == FRESH, kwargs
+        runtime.pending = attempt
+        runtime.rejected(101.31)
+        unchanged = [FRESH, FRESH] if kwargs.get("existing") else [FRESH]
+        assert runtime.next(dict(captured_at=101.4, cells=[tile(A, *unchanged)]), 101.4) is None, kwargs
 
 
 def test_two_successive_targets_at_same_tile_without_loot_or_cavebot_target_clicks():
@@ -214,12 +219,13 @@ def test_running_cavebot_skins_first_exposed_body_with_next_target_active(monkey
     combat.target = dict(id=cid+1, health=80)
     combat.sent_target = cid+1
     game.creatures[cid+1] = dict(name=NAME, x=B[0], y=B[1], z=B[2], health=80, t=100.2)
-    assert frame(100.2, [FRESH], {}) is None
-    assert frame(100.3, [FRESH], {}) is None
-    worker.pending = frame(100.4, [FRESH], {})
+    worker.pending = frame(100.2, [FRESH], {})
     assert worker.pending and worker.pending.item["id"] == FRESH and not worker.hold()
+    assert frame(100.3, [FRESH], {}) is None
+    assert frame(100.4, [FRESH], {}) is None
     assert frame(100.5, [SPENT], {}) is None
-    assert worker.done == 1 and worker.last_timing_ms == dict(recognition=200, wait_for_use=0, confirmation=100)
+    assert worker.done == 1
+    assert worker.last_timing_ms == dict(recognition=0, wait_for_use=0, confirmation=300)
     worker.queue.credit(NAME.casefold(), 100.65)
     worker.queue.death(dict(name=NAME, cid=cid, x=A[0], y=A[1], z=A[2]), 100.65)
     assert frame(100.9, [SPENT], {}) is None
@@ -254,7 +260,11 @@ def test_status_line_denial_from_manual_and_automatic_uses():
     assert not ownership_denied("Using the last Hunter Knife [+1]...")
     runtime = game.hunter_knife = KnifeAutomation(game)
     runtime.queue = observations([A],1,[tile(A,FRESH)])
-    runtime.pending = NS(source=A,drop=None,sent=runtime.started+.2)
+    game.position = A
+    runtime.tool_ready = True
+    stamp = runtime.started + .2
+    runtime.pending = runtime.next(dict(cells=[tile(A,FRESH)], captured_at=stamp), stamp)
+    assert runtime.pending and runtime.pending.source == A
     publish_feedback(game,msg,[],runtime.started+.5)
     assert game.knife_denials == 2 and not runtime.queue.stacks and not runtime.pending
     assert runtime.done == 0

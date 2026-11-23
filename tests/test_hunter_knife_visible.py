@@ -1,0 +1,175 @@
+"""Exercise the normal item worker on a deterministic map. The transport stays in memory."""
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+import hunter_knife_action as knife
+from command_delivery import CommandReceipt
+from game_state import GameState
+from hunter_knife import FRESH, SPENT, publish_feedback
+from test_hunter_knife import NAME, tile
+
+
+CENTER = (1934, 1276, 7)
+FOREIGN = (1935, 1277, 7)
+OWN = ((1933, 1275, 7), (1934, 1275, 7), (1935, 1275, 7),
+       (1933, 1276, 7), (1933, 1277, 7), (1934, 1277, 7))
+DISTANT = (1936, 1276, 7)
+OTHER_FLOOR = (1934, 1275, 6)
+OCCUPIED = (1935, 1276, 7)
+
+
+class KnifeReplay:
+    def __init__(self, monkeypatch, cavebot=False):
+        self.now = 100.
+        self.tick = 0
+        self.game = GameState()
+        self.game.position, self.game.hp = CENTER, 100
+        self.contents = {}
+        self.occupied = set()
+        self.attempts = []
+        self.monitor = SimpleNamespace()
+        self.config = {"enabled": True}
+        combat = SimpleNamespace(config={"enabled": True}, target=None, sent_target=0)
+        controller = SimpleNamespace(status="running", combat=combat) if cavebot else None
+        state = SimpleNamespace(game_state=self.game, game_proxy=object(), automation_paused=False,
+                                adaptive_cavebot=controller, passive_map_monitor=self.monitor,
+                                settings={"actions": {knife.NAME: self.config}})
+        self.bot = SimpleNamespace(state=state, player_id=10, position=CENTER, is_connected=True)
+        self.bot.inject_to_server = self.dispatch
+        self.outcome = None
+        monkeypatch.setattr(knife, "time", SimpleNamespace(monotonic=lambda: self.now, time=lambda: self.now))
+        monkeypatch.setattr("passive_map_win32.ReadOnlyClient", lambda: SimpleNamespace(close=lambda: None))
+        monkeypatch.setattr("client_player_state.ClientPlayerReader", lambda *_: object())
+        reader = SimpleNamespace(snapshot=lambda: {"slots": {6: 5908}, "sources": []})
+        monkeypatch.setattr("client_equipment.EquipmentReader", lambda *_: reader)
+
+    def publish(self):
+        cells = []
+        for p, bodies in self.contents.items():
+            count = int(p in self.occupied)
+            cells.append(dict(tile(p, *bodies), occupants=count, occupant_types={"monster": count}))
+        self.monitor._result = dict(status="ready", center=CENTER, cells=cells, captured_at=self.now)
+
+    async def dispatch(self, _payload, guard):
+        assert guard()
+        attempt = self.game.hunter_knife.pending
+        assert attempt.drop is None
+        self.attempts.append((attempt.source, attempt.item["stack"]))
+        receipt = CommandReceipt(len(self.attempts), 1, "server", 0)
+        receipt.finish("dispatched")
+        self.bot.last_receipt = receipt
+        assert self.outcome is None
+        self.outcome = attempt
+
+    async def run(self, monkeypatch, step, limit=150):
+        async def advance(*_args):
+            self.tick += 1
+            self.now = 100. + self.tick / 10.
+            worker = self.game.hunter_knife
+            self.worker = worker
+            step(self)
+            self.publish()
+            if self.tick >= limit:
+                self.config["enabled"] = False
+
+        self.publish()
+        monkeypatch.setattr(knife, "wait_for_inputs", advance)
+        await knife.run_knife(self.bot)
+
+    def answer(self, *, denied):
+        a, self.outcome = self.outcome, None
+        if denied:
+            message = SimpleNamespace(messages=[{"text": "Sorry, you are not owner."}], knife_feedback=[])
+            publish_feedback(self.game, message, (), self.now)
+        else:
+            index = a.item["stack"] - 2  # tile() adds the ground and decoration first.
+            assert self.contents[a.source][index] == FRESH
+            self.contents[a.source][index] = SPENT
+
+
+@pytest.mark.parametrize("cavebot", [False, True], ids=["manual", "cavebot"])
+def test_six_simultaneous_kills_one_foreign_no_loot(monkeypatch, cavebot):
+    sim = KnifeReplay(monkeypatch, cavebot)
+    for p in (OWN[0], FOREIGN, *OWN[1:], DISTANT, OTHER_FLOOR, OCCUPIED):
+        sim.contents[p] = []
+    sim.occupied.add(OCCUPIED)
+
+    def step(s):
+        if s.tick == 1:
+            for idx, p in enumerate(OWN):
+                death = {"cid": idx+1, "name": NAME, "x": p[0], "y": p[1], "z": p[2]}
+                s.worker.queue.death(death, s.now)
+            for p in s.contents:
+                s.contents[p] = [FRESH]
+        if s.outcome:
+            assert s.outcome.source in (*OWN, FOREIGN)
+            s.answer(denied=s.outcome.source == FOREIGN)
+
+    asyncio.run(sim.run(monkeypatch, step))
+    assert sorted(p for p, _ in sim.attempts) == sorted([*OWN, FOREIGN])
+    assert sim.attempts[-1][0] != FOREIGN  # continue with untried bodies after the denial
+    assert sim.worker.done == 6
+    assert sim.game.knife_loot_count == 0 and sim.game.knife_denials == 1
+    assert all(sim.contents[p] == [SPENT] for p in OWN)
+    assert all(sim.contents[p] == [FRESH] for p in (FOREIGN, DISTANT, OTHER_FLOOR, OCCUPIED))
+
+
+def test_refused_body_survives_new_body_then_uncover_and_repeated_frames(monkeypatch):
+    sim = KnifeReplay(monkeypatch)
+    sim.contents[FOREIGN] = []
+    # Isolate the stack. Repeated observations, including those after the
+    # ownership evidence has expired, must never retry its denied bottom body.
+    def step(s):
+        if s.tick == 1:
+            s.contents[FOREIGN] = [FRESH]
+        elif s.tick == 100:
+            s.contents[FOREIGN].append(FRESH)
+        if s.outcome:
+            s.answer(denied=len(s.attempts) == 1)
+        if s.tick == 120:
+            assert s.contents[FOREIGN] == [FRESH, SPENT]
+            s.contents[FOREIGN].pop()
+        if s.tick == 140:
+            assert s.contents[FOREIGN] == [FRESH]
+            s.contents[FOREIGN].clear()
+        if s.tick == 145:
+            s.contents[FOREIGN].append(FRESH)
+
+    asyncio.run(sim.run(monkeypatch, step, limit=170))
+    assert sim.attempts == [(FOREIGN, 2), (FOREIGN, 3), (FOREIGN, 2)]
+    assert sim.worker.done == 2 and sim.game.knife_denials == 1
+
+
+def test_already_visible_body_with_unknown_result_is_tried_once(monkeypatch):
+    sim = KnifeReplay(monkeypatch)
+    sim.contents[FOREIGN] = [FRESH]
+
+    def step(s):
+        # Dispatch was attempted. The server supplies neither a refusal nor
+        # a stack change. Do not dispatch again, even after a visibility gap.
+        s.outcome = None
+        if s.tick == 50:
+            del s.contents[FOREIGN]
+        if s.tick == 60:
+            s.contents[FOREIGN] = [FRESH]
+
+    asyncio.run(sim.run(monkeypatch, step))
+    assert sim.attempts == [(FOREIGN, 2)]
+    assert sim.worker.done == 0 and sim.game.knife_denials == 0
+
+
+def test_toggling_module_does_not_repeat_denied_use_in_same_session(monkeypatch):
+    sim = KnifeReplay(monkeypatch)
+    sim.contents[FOREIGN] = [FRESH]
+
+    def step(s):
+        if s.outcome:
+            s.answer(denied=True)
+
+    asyncio.run(sim.run(monkeypatch, step, limit=3))
+    sim.config["enabled"] = True
+    asyncio.run(sim.run(monkeypatch, step, limit=10))
+    assert sim.attempts == [(FOREIGN, 2)]
+    assert sim.game.knife_denials == 1

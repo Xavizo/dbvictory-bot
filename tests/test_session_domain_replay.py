@@ -65,7 +65,11 @@ def test_step_at_owned_corpse_lost_map_health_and_late_old_session_result():
         apply = callback("apply_packet_observations", {"state": state})
         apply(session, object(), [])
         assert session_observations(state.game_state).snapshot(41)["revision"] == 0
-        assert next_worker.next(dict(captured_at=11., cells=[tile(source, FRESH)]), 11.) is None
-        assert next_worker.done == 0 and not next_worker.queue.stacks
+        # A current, freshly observed 9068 can be inspected after reconnect.
+        # The previous session's receipt cannot supply ownership or confirm it.
+        fresh_attempt = next_worker.next(dict(captured_at=11., cells=[tile(source, FRESH)]), 11.)
+        assert fresh_attempt and fresh_attempt.source == source and fresh_attempt.item["id"] == FRESH
+        assert next_worker.done == 0 and next_worker.queue.from_combat == 0
+        assert not next_worker.queue.stacks and next_worker.pending is None
 
     asyncio.run(exercise())

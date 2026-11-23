@@ -1,4 +1,4 @@
-"""Hunter Knife 5908 · obróbka własnych ciał elementali w zasięgu postaci."""
+"""Hunter Knife 5908 · jedna próba na świeże ciało elementala w zasięgu postaci."""
 from hunter_knife_action import run_knife
 
 

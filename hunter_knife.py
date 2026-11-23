@@ -81,6 +81,20 @@ def skinned(before, after):
             and after - before == Counter({SPENT: 1}))
 
 
+def exposed_body_action(items):
+    """What can be done to this stack from the current tile observation?"""
+    if not any(item["id"] == FRESH and "container" in item.get("flags", ()) for item in items):
+        return None
+    top = max(items, key=lambda item: item["stack"])
+    flags = top.get("flags", ())
+    if "container" in flags:
+        if top["id"] == FRESH:
+            return "skin", top
+        if top["id"] in (SPENT, 8506) and "not_moveable" not in flags:
+            return "uncover", top
+    return None
+
+
 @dataclass
 class OwnedStack:
     fresh: int
@@ -457,16 +471,7 @@ class SkinningQueue:
         stack = self.stacks.get(point)
         if not stack or body_counts(items)[FRESH] != stack.fresh:
             return None
-        for item in sorted(items, key=lambda i: i["stack"], reverse=True):
-            flags = item.get("flags", ())
-            if item["id"] == FRESH and "container" in flags:
-                return "skin", item
-            if item["id"] in (SPENT, 8506) and "container" in flags and "not_moveable" not in flags:
-                return "uncover", item
-            # A decoration, unrelated item or incomplete stack above the corpse
-            # cannot be moved on the authority of a Loot notification.
-            return None
-        return None
+        return exposed_body_action(items)
 
     def consumed(self, point, *, confirmed=False):
         stack = self.stacks.get(point)

@@ -7,7 +7,7 @@ import pytest
 import hunter_knife_action as knife
 from command_delivery import CommandReceipt
 from game_state import GameState
-from hunter_knife import FRESH, SPENT
+from hunter_knife import FRESH, SPENT, publish_feedback
 from potions import PotionScheduler, validate_config
 from test_hunter_knife import NAME, tile
 from test_potions import rule
@@ -45,7 +45,7 @@ def test_standalone_manual_target_and_corpse_group(monkeypatch, scenario):
         # An existing, unclaimed fresh body has exactly the same ID as all our later kills.
         contents = {p: [] for p in (*OWN_TILES, COVERED, FREE)}
         contents[FOREIGN] = [FRESH]
-        sent, cancelled, completed = [], [], []
+        sent, cancelled, completed, refused = [], [], [], []
         loot_added = False
         potion = PotionScheduler()
         heal_config = validate_config({"rules": [rule()]})
@@ -56,6 +56,15 @@ def test_standalone_manual_target_and_corpse_group(monkeypatch, scenario):
 
         async def use(_payload, guard):
             attempt = game.hunter_knife.pending
+            if attempt.source == FOREIGN:
+                assert guard() and not refused and attempt.drop is None
+                refused.append(FOREIGN)
+                receipt = CommandReceipt(1, 1, "server", 0)
+                receipt.finish("dispatched")
+                bot.last_receipt = receipt
+                feedback = NS(messages=[{"text": "Sorry, you are not owner."}], knife_feedback=[])
+                publish_feedback(game, feedback, [], clock[0])
+                return
             assert attempt.source in OWN_TILES and attempt.drop is None
             assert guard()
             game.stats_updated_at = wall()
@@ -67,7 +76,7 @@ def test_standalone_manual_target_and_corpse_group(monkeypatch, scenario):
                     game.position = bot.position = FURTHER
                     publish()
             ok = guard()
-            receipt = CommandReceipt(len(sent) + len(cancelled) + 1, 1, "server", 0)
+            receipt = CommandReceipt(len(sent) + len(cancelled) + len(refused) + 1, 1, "server", 0)
             receipt.finish("dispatched" if ok else "cancelled")
             bot.last_receipt = receipt
             if ok:
@@ -90,7 +99,6 @@ def test_standalone_manual_target_and_corpse_group(monkeypatch, scenario):
                 loot_added = True
             if clock[0] >= 102.:
                 completed.append(runtime.done)
-                assert COVERED in runtime.queue.stacks
                 config["enabled"] = False
             publish()
 
@@ -98,6 +106,7 @@ def test_standalone_manual_target_and_corpse_group(monkeypatch, scenario):
         publish()
         await knife.run_knife(bot)
         assert game.attack_target_id == LIVE_TARGET and contents[FOREIGN] == [FRESH]
+        assert refused == [FOREIGN] and game.knife_denials == 1
         assert contents[COVERED] == [FRESH, SPENT]
         if scenario == "move_at_dispatch":
             assert len(cancelled) == 1 and sent == [] and completed == [0]

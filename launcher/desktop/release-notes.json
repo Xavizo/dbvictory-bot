@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.26.4",
+    "changes":[
+      {"title":"Hunter Knife sprawdza każde świeże ciało w zasięgu","detail":"Po walce obszarowej nóż próbuje kolejno na dostępnych ciałach elementali, także bez osobistego Loot. Po odmowie pomija dane ciało i przechodzi do następnego. Działa przy ręcznej grze i z Cavebotem."}
+    ]
+  },
+  {
     "version":"v1.26.3",
     "changes":[
       {"title":"Hunter Knife po ataku obszarowym","detail":"Bot rozpoznaje osobisty Loot również z listy kanałów. Przy kilku zgonach potrafi połączyć ciało z ostatnim polem stwora. W samotnej walce może też rozpoznać grupę po zgodnej nagrodzie XP zmierzonej przy dwóch własnych ciałach tego samego gatunku."}

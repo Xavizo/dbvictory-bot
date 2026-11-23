@@ -60,7 +60,7 @@ async def replay(monkeypatch, route_step, *, receipt_status="dispatched", effect
     completed = 0
     claimed_at_end = None
     final_reason = None
-    old_claim_intact = False
+    layer_available_before_guard = False
 
     def update_map():
         changed = (first_write_ms is not None and effect_delay_ms is not None
@@ -71,7 +71,7 @@ async def replay(monkeypatch, route_step, *, receipt_status="dispatched", effect
                                       tile(NEXT_TARGET, monsters=int(second in creatures))])
 
     async def dispatch(_payload, guard):
-        nonlocal dispatched, moved, old_claim_intact, first_write_ms
+        nonlocal dispatched, moved, layer_available_before_guard, first_write_ms
         worker = game.hunter_knife
         # Each attempt must be valid before any simulated route step. All the
         # other inputs stay fresh, including the tool and the corpse's stack.
@@ -80,7 +80,8 @@ async def replay(monkeypatch, route_step, *, receipt_status="dispatched", effect
             moved = True
             game.position = bot.position = route_step
             update_map()
-            old_claim_intact = BODY in worker.queue.stacks
+            items = monitor._result["cells"][0]["items"]
+            layer_available_before_guard = worker.available_body(BODY, items) == ("skin", worker.pending.item)
         valid = guard()
         attempts.append((bot.position, valid))
         if valid:
@@ -118,17 +119,17 @@ async def replay(monkeypatch, route_step, *, receipt_status="dispatched", effect
     update_map()
     await knife.run_knife(bot)
     assert game.hunter_knife is None
-    return attempts, moved, dispatched, completed, claimed_at_end, final_reason, old_claim_intact
+    return attempts, moved, dispatched, completed, claimed_at_end, final_reason, layer_available_before_guard
 
 
 @pytest.mark.parametrize("route_step", [None, ADJACENT, OUTSIDE],
                          ids=["stationary", "one-step-still-adjacent", "out-of-reach-then-back"])
 def test_fresh_owned_body_survives_concurrent_route_step(monkeypatch, route_step):
-    attempts, moved, sent, done, owned, reason, claim_before_guard = asyncio.run(
+    attempts, moved, sent, done, owned, reason, layer_available = asyncio.run(
         replay(monkeypatch, route_step)
     )
     if route_step is not None:
-        assert moved and claim_before_guard and attempts[0] == (route_step, False)
+        assert moved and layer_available and attempts[0] == (route_step, False)
         assert sum(valid for _, valid in attempts) == 1
     assert sent == done == 1
     assert owned is False

@@ -6,7 +6,7 @@ import time
 
 from cavebot_walking import distance, walkable
 from item_observations import observed_inputs, wait_for_inputs
-from hunter_knife import FRESH, KNIFE, SkinningQueue, body_counts, skinned
+from hunter_knife import FRESH, KNIFE, SkinningQueue, body_counts, exposed_body_action, skinned
 from command_delivery import CommandReceipt, attempted, confirm
 from adaptive_cavebot import tool_location
 from protocol import build_move_item_packet, build_use_item_ex_packet
@@ -14,7 +14,7 @@ from protocol import build_move_item_packet, build_use_item_ex_packet
 NAME = "auto_hunter_knife"
 INPUTS = ("map", "position", "target", "death", "loot", "inventory", "health")
 ATTEMPT_VALID_FOR = .55
-WAITING_FOR_BODY = "Czekam na własne ciało elementala w zasięgu"
+WAITING_FOR_BODY = "Czekam na świeże ciało elementala w zasięgu"
 
 
 def point(cell):
@@ -42,6 +42,7 @@ class Attempt:
     before_on_source: int
     receipt: CommandReceipt | None = None
     recent_spell: tuple[str, int] | None = None
+    appeared: float | None = None
 
 
 class KnifeAutomation:
@@ -62,6 +63,10 @@ class KnifeAutomation:
         self.actionable = False
         self.group_progress_at = None
         self.deferred_tiles = set()
+        # Keep terminal outcomes through toggling the worker in the same game session.
+        if not hasattr(game, "knife_attempted_layers"):
+            game.knife_attempted_layers = {}
+        self.attempted_layers = game.knife_attempted_layers
 
     def panel_status(self):
         return self.status
@@ -85,7 +90,7 @@ class KnifeAutomation:
         if not self.tool_ready or now - self.last_map >= .65:
             return False
         if self.fighting():
-            # Only a group of confirmed, usable bodies can briefly defer the next
+            # Only a group of accessible bodies can briefly defer the next
             # route step in combat. A missing acknowledgement cannot renew it.
             return (self.group_progress_at is not None
                     and now - self.group_progress_at < ATTEMPT_VALID_FOR
@@ -98,9 +103,38 @@ class KnifeAutomation:
         if self.pending and self.pending.sent <= received_at:
             self.abandon("Gra odmówiła użycia na tym ciele")
 
+    def remember_attempt(self, attempt):
+        # Fresh bodies are addressed from the bottom, independent of decorations
+        # and spent covers. A new body above a refused one has its own rank.
+        rank = attempt.before[FRESH]
+        self.attempted_layers.setdefault(attempt.source, set()).add((rank, attempt.item["id"]))
+
+    def reconcile_attempts(self, cells):
+        # An off-screen or unreadable tile cannot establish that a corpse disappeared.
+        for p in self.attempted_layers.keys() & cells.keys():
+            items = cells[p]["items"]
+            count = body_counts(items)[FRESH]
+            present = {item["id"] for item in items}
+            kept = {(rank, kind) for rank, kind in self.attempted_layers[p]
+                    if rank <= count and kind in present}
+            if kept:
+                self.attempted_layers[p] = kept
+            else:
+                del self.attempted_layers[p]
+
+    def available_body(self, p, items):
+        choice = exposed_body_action(items)
+        if choice and p in self.attempted_layers:
+            rank = body_counts(items)[FRESH]
+            blocked = self.attempted_layers[p]
+            if (rank, FRESH) in blocked or (rank, choice[1]["id"]) in blocked:
+                return None
+        return choice
+
     def abandon(self, reason):
         if self.pending:
             attempt = self.pending
+            self.remember_attempt(attempt)
             self.last_issue = dict(position=attempt.source, reason=reason,
                                    action="uncover" if attempt.drop else "skin")
             recent_spell = getattr(attempt, "recent_spell", None)
@@ -129,10 +163,15 @@ class KnifeAutomation:
                     self.status = "Ciało zmienione przy jednoczesnym ręcznym użyciu"
                     return
                 delivered = a.receipt.dispatched_at if a.receipt else None
-                if stack and stack.appeared is not None and stack.assigned is not None:
+                appeared, eligible = a.appeared, a.sent
+                if (stack and stack.appeared is not None and stack.assigned is not None
+                        and stack.assigned <= a.sent):
+                    appeared, eligible = stack.appeared, stack.assigned
+                self.last_timing_ms = None
+                if appeared is not None:
                     self.last_timing_ms = {
-                        "recognition": round(1000 * (stack.assigned - stack.appeared)),
-                        "wait_for_use": round(1000 * (a.sent - stack.assigned)),
+                        "recognition": round(1000 * (eligible - appeared)),
+                        "wait_for_use": round(1000 * (a.sent - eligible)),
                         "confirmation": round(1000 * max(0, now - (delivered if delivered is not None else a.sent))),
                     }
                     if delivered is not None:
@@ -170,6 +209,7 @@ class KnifeAutomation:
         self.acknowledge(cells, stamp, now)
         if stamp != self.frame:
             self.deferred_tiles.clear()
+            self.reconcile_attempts(cells)
             target_id = self.game.attack_target_id
             if self.cavebot_running and self.controller.combat.config["enabled"]:
                 target_id = self.controller.combat.sent_target or target_id
@@ -184,7 +224,7 @@ class KnifeAutomation:
         candidates = self.candidates(cells, origin, fighting, stamp, now)
         first = next(candidates, None)
         self.actionable = first is not None
-        if not self.cavebot_running or not fighting or not self.queue.stacks:
+        if not self.cavebot_running or not fighting or (not first and not self.deferred_tiles and not self.queue.stacks):
             self.group_progress_at = None
         elif first and self.group_progress_at is None:
             if first.before[FRESH] > 1 or next(candidates, None) is not None:
@@ -192,13 +232,14 @@ class KnifeAutomation:
         return first
 
     def candidates(self, cells, origin, fighting, stamp, now):
-        for p in sorted(self.queue.stacks, key=lambda p: distance(origin, p)):
-            if p in self.deferred_tiles or distance(origin, p) > 1:
+        nearby = (p for p in cells if distance(origin, p) <= 1)
+        for p in sorted(nearby, key=lambda p: (p not in self.queue.stacks, distance(origin, p))):
+            if p in self.deferred_tiles:
                 continue
             cell = cells.get(p)
             if not cell or cell.get("occupants", 0) > cell.get("occupant_types", {}).get("self", 0):
                 continue
-            choice = self.queue.next_body(p, cell["items"])
+            choice = self.available_body(p, cell["items"])
             if not choice:
                 continue
             action, item = choice
@@ -212,6 +253,8 @@ class KnifeAutomation:
                     continue
             count = sum(i["id"] == item["id"] for i in cell["items"])
             attempt = Attempt(p, item, body_counts(cell["items"]), stamp, now, drop, count)
+            attempt.appeared = next((t for t, pos, _, _ in reversed(self.queue.births)
+                                     if pos == p and (t, p) not in self.queue.interrupted_births), now)
             spell = getattr(getattr(self.controller, "combat", None), "last_spell_attempt", None)
             if spell and self.cavebot_running:
                 # Context for diagnosis only. A spell attempt does not establish an item cooldown.
@@ -300,7 +343,7 @@ async def run_knife(bot):
                     cell = by_pos.get(a.source)
                     if (not cell or cell.get("kind") == "unknown" or "items" not in cell
                             or cell.get("occupants", 0) > cell.get("occupant_types", {}).get("self", 0)
-                            or runtime.queue.next_body(a.source, cell["items"]) !=
+                            or runtime.available_body(a.source, cell["items"]) !=
                                ("uncover" if a.drop else "skin", a.item)
                             or body_counts(cell["items"]) != a.before):
                         return False
@@ -320,6 +363,8 @@ async def run_knife(bot):
                 if runtime.pending is a:
                     receipt = bot.last_receipt
                     if attempted(receipt):
+                        if not a.drop:
+                            runtime.remember_attempt(a)
                         if isinstance(receipt, CommandReceipt):
                             a.receipt = receipt
                     elif enabled():
@@ -331,7 +376,8 @@ async def run_knife(bot):
                         runtime.status = ("Sprawdzam zasięg po kroku" if tuple(bot.position) != original
                                           else "Pole zmieniło się przed użyciem")
                     else:
-                        runtime.abandon("Pole zmieniło się przed użyciem")
+                        # The guard cancelled before sending and the worker is stopping.
+                        runtime.pending = None
             await wait_for_inputs(bot, INPUTS, cursor, .1)
     finally:
         if gs.hunter_knife is runtime:

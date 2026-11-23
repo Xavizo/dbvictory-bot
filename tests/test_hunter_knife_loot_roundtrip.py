@@ -1,11 +1,12 @@
 """Replay personal Loot through the normal event reader and the knife's tile acknowledgements."""
 import struct
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from game_state import GameState
-from hunter_knife import FRESH, SPENT
+from hunter_knife import FRESH, SPENT, publish_feedback
 from hunter_knife_action import KnifeAutomation
 from protocol import ServerOpcode
 from test_hunter_knife import NAME, tile
@@ -33,7 +34,23 @@ def test_four_personal_loot_rows_to_verified_corpse_changes(foreign_already_dead
         cells = [tile(point, corpses[point]) if point in corpses else tile(point) for point in points]
         return worker.next(dict(captured_at=wall_start + elapsed, cells=cells), start + elapsed)
 
-    assert frame(0.) is None
+    attempted = []
+
+    def dispatch(attempt, elapsed):
+        assert attempt.source not in attempted and attempt.drop is None and attempt.item["id"] == FRESH
+        attempted.append(attempt.source)
+        worker.pending = attempt
+        if attempt.source == FOREIGN:
+            feedback = SimpleNamespace(messages=[{"text": "Sorry, you are not owner."}], knife_feedback=[])
+            publish_feedback(game, feedback, [], start + elapsed + .001)
+        else:
+            assert attempt.source in OWN
+            corpses[attempt.source] = SPENT
+
+    first = frame(0.)
+    if first:
+        assert foreign_already_dead and first.source == FOREIGN
+        dispatch(first, 0.)
     assert receive(game, roster((12, "Trade"), (41, "Loot")), at=start + .01)
     # All kills look identical. Only the four anonymous rows from Loot are personal.
     deaths = bytearray()
@@ -48,20 +65,12 @@ def test_four_personal_loot_rows_to_verified_corpse_changes(foreign_already_dead
     assert game.knife_loot_count == 4
     corpses.update(dict.fromkeys(points, FRESH))
 
-    attempted = []
     for tick in range(1, 23):
         attempt = frame(tick / 10)
-        if attempt is None:
-            continue
-        assert foreign_already_dead, "Four species-only credits cannot identify four of five new bodies"
-        assert attempt.source in OWN and attempt.source not in attempted
-        assert attempt.drop is None and attempt.item["id"] == FRESH
-        attempted.append(attempt.source)
-        worker.pending = attempt
-        # Successful local item use. The next independent map frame must acknowledge it.
-        corpses[attempt.source] = SPENT
+        if attempt:
+            dispatch(attempt, tick / 10)
 
-    assert set(attempted) == (set(OWN) if foreign_already_dead else set())
-    assert worker.done == len(attempted)
+    assert set(attempted) == set(points)
+    assert worker.done == len(OWN) and game.knife_denials == 1
     assert corpses[FOREIGN] == FRESH and worker.pending is None
-    assert worker.queue.unassigned_bodies == (0 if foreign_already_dead else 5)
+    assert FOREIGN not in worker.queue.stacks and worker.queue.from_combat == 0

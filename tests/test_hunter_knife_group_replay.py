@@ -70,15 +70,17 @@ def test_new_personal_credit_resolves_on_still_fresh_map_without_counting_the_fr
 
     game = SimpleNamespace(position=A, attack_target_id=None, creatures={}, experience=100)
     worker = KnifeAutomation(game)
-    worker.tool_ready = True
     worker.next(dict(captured_at=100., cells=[tile(A)]), 100.)
     for cid in (3, 4):
         worker.queue.death(dict(name=NAME, cid=cid, x=A[0], y=A[1], z=A[2]), 100.1)
     stack = dict(captured_at=100.15, cells=[tile(A, FRESH, FRESH)])
     worker.queue.credit(NAME.casefold(), 100.15)
     assert worker.next(stack, 100.15) is None
+    assert A not in worker.queue.stacks
     worker.queue.credit(NAME.casefold(), 100.2)
     assert worker.next(stack, 100.29) is None
+    assert A not in worker.queue.stacks
+    worker.tool_ready = True
     assert worker.next(stack, 100.4).source == A
     assert worker.queue.stacks[A].fresh == 2
     assert not worker.queue.births
