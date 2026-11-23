@@ -11,7 +11,7 @@ import {atlasCenter,visibleAtlasCells,routeLines,simulationStep,simulationReport
 import AtlasRouteOverview from "./AtlasRouteOverview";
 import DraftTags from "./DraftTags";
 import type {DraftTag} from "@/lib/cavebotModel";
-import {tileStyles,navigationStyles,petStyle,cutWebStyle} from "@/lib/mapVisuals";
+import {tileStyles,navigationStyles,petStyle,cutWebStyle,petDescription,unidentifiedStyle} from "@/lib/mapVisuals";
 import {NavigationDetails,TileContextMenu,copyCellText,type TileMenuPosition} from "./PassiveMapPanel";
 import {transitionActions} from "./TransitionLearningPanel";
 import {transitionMarkers,transitionApproaches,endpointMarkers,routeExecutionIssues,MAX_ATLAS_RADIUS,editableFloorLinks,nearbyTransitions,replaceFloorLink} from "@/lib/atlasModel";
@@ -317,10 +317,11 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
               <text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+(detailed ? .45 : .66)} textAnchor="middle" fontSize={detailed ? .23 : .45} fontWeight="700" fill={style.color}>{detailed?(f?names[f.kind]??style.label:style.label):style.symbol}{!detailed&&suffix}</text>
               {detailed&&<text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+.78} textAnchor="middle" fontSize={.22} fill={style.color}>{destination|| (f?.door_state_hint==="open"?"otw.":f?.door_state_hint==="closed"?"zamk.":suffix)}</text>}
             </g>}
+            {c.live && !!c.unidentified_monsters && !c.occupant_types?.pet && <text pointerEvents="none" x={c.x-center[0]+ox+.8} y={c.y-center[1]+oy+.3} textAnchor="middle" fontSize={.32} fontWeight="700" fill={unidentifiedStyle.color}>{unidentifiedStyle.symbol}</text>}
             {c.live && !!c.occupant_types?.pet && <g pointerEvents="none" transform={`translate(${c.x-center[0]+ox+.8} ${c.y-center[1]+oy+.23})`}>
               <circle r={.19} fill="#132d2c" stroke={petStyle.color} strokeWidth={.035}/><text textAnchor="middle" dominantBaseline="central" fontSize={.26} fontWeight="700" fill={petStyle.color}>{petStyle.symbol}</text>
             </g>}
-            <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?"na żywo":"zapis historyczny"} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}${c.live && c.pet_names?.length ? " · Pet: "+c.pet_names.join(", ") : ""}`}</title></g>;}),[cells,floorTransitions,center[0],center[1],ox,oy,viewport.width,grid.columns]);
+            <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?"na żywo":"zapis historyczny"} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}${c.live && c.pet_names?.length ? " · Pet: "+petDescription(c) : ""}`}</title></g>;}),[cells,floorTransitions,center[0],center[1],ox,oy,viewport.width,grid.columns]);
   const objectPositions=new Set(cells.filter(c=>c.navigation?.length).map(c=>[c.x,c.y,c.z].join(",")));
   const onFloor=segments.map((s,i)=>({...s,index:i})).filter(s=>s.floor===center[2]&&!hiddenSegments.includes(s.index));
   const storedDraft=drafts.find(d=>d.id===draftId), run=state?.adaptive_cavebot;
@@ -451,7 +452,8 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
       {selected && <details open className="atlas-inspector"><summary>Pole {pointText(selected)}</summary>{selectedCell?<>
         <small>{selectedCell.live?"Odczyt na żywo":`Ostatnio widziane: ${selectedCell.seen_at?new Date(selectedCell.seen_at*1000).toLocaleString():"czas nieznany"}`}</small>
         <p>{tileStyles[selectedCell.kind]?.label} · ID {selectedCell.items.map(i=>i.id).join(", ")}</p>
-        {selectedCell.live && !!selectedCell.occupant_types?.pet && <p style={{color:petStyle.color}}>{petStyle.label} · {selectedCell.pet_names?.join(", ") ?? selectedCell.occupant_types.pet}</p>}
+        {selectedCell.live && !!selectedCell.unidentified_monsters && <p style={{color:unidentifiedStyle.color}}>{unidentifiedStyle.label} · {selectedCell.unidentified_monsters}</p>}
+        {selectedCell.live && !!selectedCell.occupant_types?.pet && <p style={{color:petStyle.color}}>{petStyle.label} · {petDescription(selectedCell) ?? selectedCell.occupant_types.pet}</p>}
         <button onClick={e=>{const box=e.currentTarget.getBoundingClientRect();openTileMenu(selected,box.left,box.bottom);}}>Opcje pola</button>
         {!selectedCell.live && <small>Stan drzwi i przeszkód może już być inny.</small>}
         {selectedCell.web_cut&&<small>{cutWebStyle.label} · ID 189</small>}

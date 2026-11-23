@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.22.4",
+    "changes":[
+      {"title":"Pet i dziki Bills mogą mieć tę samą nazwę","detail":"Look z opisem właściciela oznacza konkretnego peta, także innego gracza. Atlas pokazuje właściciela w szczegółach pola i oznacza anonimowe stworzenie znakiem ?. Dawne reguły zapisane po nazwie nie wykluczają już dzikich mobów."}
+    ]
+  },
+  {
     "version":"v1.22.3",
     "changes":[
       {"title":"Jedno przejście po schodach wystarcza do wytyczenia trasy","detail":"Atlas łączy ręczny krok, dojście na piętro i niezależne potwierdzenie lądowania. Każdy kierunek jest weryfikowany osobno."},

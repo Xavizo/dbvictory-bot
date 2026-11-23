@@ -499,12 +499,6 @@ class PassiveMapMonitor:
                         gs = self.state.game_state
                         reader = MapReader(source.read, source.base, allow_confirmed=True, profile=source.profile, asset_sha256=asset.get("sha256"))
                         result = reader.snapshot()
-                        proxy = getattr(self.state,"game_proxy",None)
-                        try:
-                            gs.pets.bind_world(Path(__file__).parent / "local_data",
-                                               getattr(proxy,"server_host",None), getattr(proxy,"server_port",None))
-                        except (OSError, sqlite3.Error):
-                            pass
                         result["pet_map_generation"] = gs.pets.observe_map(result["cells"], result["captured_at"],
                                                                            reader.monster_slots, gs.creatures)
                         if gs is not self.state.game_state or not self.state.connected:

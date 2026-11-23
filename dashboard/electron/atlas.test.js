@@ -86,6 +86,14 @@ test('pet labels follow only live occupants and disappear on returning to histor
   }
   assert.ok(visibleAtlasCells(saved,{...map,stale:true},'test',[10,10,7],12).every(c=>!c.pet_names));
 });
+test('display distinguishes unidentified occupants and the owners of two pets without changing combat counts',()=>{
+  const {displayOccupants,petDescription}=component('../lib/mapVisuals.ts');
+  const tile={occupant_types:{monster:2,pet:2},unidentified_monsters:1,
+    pet_names:['Bills','Bills'],pet_owners:['Trainer','Another Player']};
+  assert.deepEqual(displayOccupants(tile),{monster:1,pet:2,unknown:1});
+  assert.equal(tile.occupant_types.monster,2);
+  assert.equal(petDescription(tile),'Bills (właściciel: Trainer), Bills (właściciel: Another Player)');
+});
 test('floor changes and teleports do not draw fictitious walk lines',()=>{
   assert.deepEqual(routeLines([[10,10,7],[11,10,7],[50,50,7],[50,50,6],[12,10,7]],7),
     [[[10,10,7],[11,10,7]],[[50,50,7]],[[12,10,7]]]);

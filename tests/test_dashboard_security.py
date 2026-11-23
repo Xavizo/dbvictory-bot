@@ -137,8 +137,9 @@ def test_manual_pet_label_applies_only_to_the_current_map_reference(http_api, mo
     assert post(ref="old") == 400
     assert post(position=[12, 20, 7]) == 400
     assert post(name=1) == 400
+    assert post(remember=True) == 400
     assert not state.game_state.pets.is_pet(70)
-    assert post() == 200 and state.game_state.pets.is_pet(70)
+    assert post(remember=False) == 200 and state.game_state.pets.is_pet(70)
     assert post(name=None) == 200 and not state.game_state.pets.is_pet(70)
     state.connected = False
     assert post() == 400

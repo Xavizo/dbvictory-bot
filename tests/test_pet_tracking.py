@@ -174,44 +174,70 @@ def test_manual_label_rejects_ambiguous_stale_or_replaced_creatures():
         gs.pets.label_visible(START, old["pet_ref"], "Bills")
     assert not gs.pets.is_pet(PET) and not gs.pets.is_pet(WILD)
 
-def test_remembered_pet_matches_a_new_id_by_fresh_exact_name_and_can_be_forgotten(tmp_path):
-    from pet_tracking import PetTracker
-    a = PetTracker()
-    a.bind_world(tmp_path,"world",1900)
-    def read(pets, cid, name, age=0):
-        now=time.time()
-        cell=dict(x=51,y=50,z=7,occupants=1,occupant_types={"monster":1})
-        pets.observe_map([cell],now,{(*START,1):cid},
-                         {cid:dict(x=51,y=50,z=7,name=name,t=now-age)})
-        return cell
-    first=read(a,PET,"Bills")
-    a.label_visible(START,first["pet_ref"],"Bills",remember=True)
-    b=PetTracker()
-    b.bind_world(tmp_path,"world",1900)
-    assert not read(b,WILD,"Bills",age=8).get("pet_names")
-    assert not read(b,PET,"Bills Warrior").get("pet_names")
-    other=read(b,WILD,"BILLS")
-    assert other["pet_names"]==["Bills"] and other["pet_remembered"]
-    assert b.is_pet(WILD)
-    c=PetTracker()
-    c.bind_world(tmp_path,"elsewhere",1900)
-    assert not read(c,WILD,"Bills").get("pet_names")
-    b.label_visible(START,other["pet_ref"],None)
-    d=PetTracker()
-    d.bind_world(tmp_path,"world",1900)
-    assert not read(d,WILD,"Bills").get("pet_names")
-
-
-def test_server_confirmed_pet_can_be_remembered_then_forgotten_without_losing_owner_evidence(tmp_path):
+@pytest.mark.parametrize("owner", ["Dupa Biskupa", "Another Player"])
+def test_pet_and_wild_bills_on_same_tile_have_separate_identity_and_owner(owner):
     gs = GameState()
-    gs.pets.bind_world(tmp_path, "world", 1900)
-    sample(gs, [(START, 1, PET)])
+    occupants = [(START, 1, PET), (START, 2, WILD)]
+    sample(gs, occupants)
+    look(gs, stack=1)
+    reply(gs, f"You see Bills.\nMaster of {owner}.")
+    cell = sample(gs, occupants)["cells"][0]
+    assert cell["pet_names"] == ["Bills"] and cell["pet_owners"] == [owner]
+    assert cell["occupant_types"] == {"pet": 1, "monster": 1}
+    assert gs.pets.is_pet(PET) and not gs.pets.is_pet(WILD)
+
+
+def test_legacy_name_rule_and_missing_battle_rows_do_not_change_occupant_type(tmp_path, monkeypatch):
+    import hashlib
+    import sqlite3
+    from contextlib import closing
+
+    monkeypatch.chdir(tmp_path)
+    data = tmp_path / "local_data"
+    data.mkdir()
+    world = hashlib.sha256(b"world:1900").hexdigest()[:20]
+    with closing(sqlite3.connect(data / f"pet-names-{world}.sqlite3")) as db, db:
+        db.execute("CREATE TABLE names(key TEXT PRIMARY KEY, name TEXT NOT NULL)")
+        db.execute("INSERT INTO names VALUES ('bills', 'Bills')")
+
+    gs = GameState()
+    for identity, label in [(WILD, "Bills"), (("visible", 123), None), (WILD, "?")]:
+        now = time.time()
+        cell = dict(x=51, y=50, z=7, occupants=1, occupant_types={"monster": 1})
+        rows = {} if not label else {identity: dict(x=51, y=50, z=7, name=label, source="dll", t=now)}
+        generation = gs.pets.observe_map([cell], now, {(*START, 1): identity}, rows)
+        assert cell["occupant_types"] == {"monster": 1}
+        assert cell.get("unidentified_monsters", 0) == (0 if label == "Bills" else 1)
+        assert not gs.pets.is_pet(identity) and "pet_owners" not in cell
+    assert gs.pets.monster_slots_for_sample(generation) == {START: [WILD]}
+
+
+def test_map_only_owner_is_discarded_when_anonymous_creature_leaves():
+    gs = GameState()
+    key = ("visible", 123)
+    sample(gs, [(START, 1, key)])
     look(gs)
     reply(gs, "You see Bills.\nMaster of Another Player.")
-    cell = sample(gs, [(START, 1, PET)])["cells"][0]
-    gs.pets.label_visible(START, cell["pet_ref"], "Bills", remember=True)
-    cell = sample(gs, [(START, 1, PET)])["cells"][0]
-    assert cell["pet_remembered"]
-    gs.pets.label_visible(START, cell["pet_ref"], None)
-    cell = sample(gs, [(START, 1, PET)])["cells"][0]
-    assert cell["pet_names"] == ["Bills"] and not cell.get("pet_remembered")
+    cell = sample(gs, [(NEXT, 1, key)])["cells"][0]
+    assert cell["pet_owners"] == ["Another Player"]
+    sample(gs, [])
+    replacement = sample(gs, [(NEXT, 1, key)])["cells"][0]
+    assert replacement["occupant_types"] == {"monster": 1}
+    assert "pet_owners" not in replacement
+
+
+def test_known_wild_creature_keeps_its_marker_through_one_missing_diagnostic_frame():
+    tracker = GameState().pets
+    captured = time.time()
+    def read(offset, coords=None, age=0):
+        row = {} if coords is None else {WILD: dict(x=coords[0], y=coords[1], z=coords[2],
+            name="Bills", source="dll", t=captured+offset-age)}
+        cell = dict(x=51, y=50, z=7, occupants=1, occupant_types={"monster": 1})
+        tracker.observe_map([cell], captured+offset, {(*START, 1): WILD}, row)
+        return cell
+    assert read(0, NEXT)["unidentified_monsters"] == 1
+    assert read(.1, START, age=3)["unidentified_monsters"] == 1
+    assert not read(.2, START).get("unidentified_monsters")
+    assert not read(.3).get("unidentified_monsters")
+    assert read(4).get("unidentified_monsters") == 1
+    assert not tracker.is_pet(WILD)

@@ -245,9 +245,11 @@ class _Handler(BaseHTTPRequestHandler):
                         or not isinstance(body.get("remember", False), bool)
                         or not position(body["position"]) or not isinstance(body["ref"], str)):
                     raise ValueError("Wybierz jedno stworzenie na mapie na żywo.")
+                if body.get("remember"):
+                    raise ValueError("Odśwież panel. Możesz oznaczyć tylko wybrane stworzenie.")
                 if not _state.connected:
                     raise ValueError("Mapa czeka na połączenie.")
-                _state.game_state.pets.label_visible(tuple(body["position"]), body["ref"], body["name"], remember=body.get("remember", False))
+                _state.game_state.pets.label_visible(tuple(body["position"]), body["ref"], body["name"])
                 return self._json_response({"ok": True})
             except (ValueError, TypeError) as exc:
                 return self._json_response({"error": str(exc)}, 400)
