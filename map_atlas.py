@@ -1,6 +1,7 @@
 """Local passive atlas and bounded preview-only route planning. Never sends actions."""
 from collections import OrderedDict
 from route_identity import navigation_revision
+from hunt_areas import sector
 from contextlib import closing
 import heapq
 import hashlib
@@ -336,6 +337,8 @@ class MapAtlas:
         self.lock=threading.RLock()
         self.recorded_ropes={}
         self._pending = {}
+        self._visited_sectors = set()
+        self._pending_sectors = set()
         self._write_warning = None
         self._retry_at = 0.
         self._retry_open = False
@@ -364,6 +367,8 @@ class MapAtlas:
                 if 'tags' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
                 if 'links' not in columns:db.execute("ALTER TABLE drafts ADD COLUMN links TEXT NOT NULL DEFAULT '[]'")
                 if "terrain" not in columns:db.execute("ALTER TABLE drafts ADD COLUMN terrain TEXT")
+                db.execute("CREATE TABLE IF NOT EXISTS visited_sectors(x INT,y INT,z INT,PRIMARY KEY(x,y,z))")
+                self._visited_sectors = set(db.execute("SELECT x,y,z FROM visited_sectors"))
                 self.total=db.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
                 self.floors={r[0] for r in db.execute("SELECT DISTINCT z FROM tiles")}
                 rows=db.execute("SELECT x,y,z,data,seen FROM tiles ORDER BY seen DESC LIMIT ?",(CACHE_TILES,)).fetchall()
@@ -387,9 +392,16 @@ class MapAtlas:
             if self._retry_open and time.monotonic() >= self._retry_at:
                 self._open()
             if self.error:return
+            center = sample.get("center")
+            player = (tuple(center) if position(center) and any(center[:2])
+                      and not sample.get("preview") and not sample.get("stale") else None)
             for cell in sample["cells"]:
                 if cell["kind"] not in KINDS:continue
                 key=(cell["x"],cell["y"],cell["z"])
+                if key == player and cell["kind"] != "no_ground":
+                    visited = sector(player)
+                    if visited not in self._visited_sectors:
+                        self._pending_sectors.add(visited)
                 safe={k:cell[k] for k in ("x","y","z","kind")}
                 safe["items"]=[{"id":i["id"],"flags":list(i.get("flags",[])),"stack":i["stack"]} for i in cell["items"][:16]]
                 if cell.get('web_cut') or has_cut_web(safe['items'],self.web_definitions):
@@ -404,7 +416,7 @@ class MapAtlas:
                 self._pending[key]=self.tiles[key]
                 changed=True
             if changed:self.revision+=1
-            if self._pending and time.monotonic() >= self._retry_at:
+            if (self._pending or self._pending_sectors) and time.monotonic() >= self._retry_at:
                 self._flush_pending()
 
     def _flush_pending(self):
@@ -418,6 +430,7 @@ class MapAtlas:
         try:
             with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=.05)) as db, db:
                 db.execute("PRAGMA max_page_count=2147483646")
+                db.executemany("INSERT OR IGNORE INTO visited_sectors VALUES (?,?,?)", self._pending_sectors)
                 added = db.executemany("INSERT OR IGNORE INTO tiles VALUES (?,?,?,?,?)",rows).rowcount
                 db.executemany("UPDATE tiles SET data=?,seen=? WHERE x=? AND y=? AND z=?",
                                [(raw,seen,x,y,z) for x,y,z,raw,seen in rows])
@@ -435,6 +448,8 @@ class MapAtlas:
             return
         for key in batch:
             del self._pending[key]
+        self._visited_sectors.update(self._pending_sectors)
+        self._pending_sectors.clear()
         self.total += added
         self.floors.update(key[2] for key in batch)
         if self._write_warning and not self._pending:

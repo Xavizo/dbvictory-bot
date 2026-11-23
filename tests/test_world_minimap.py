@@ -52,6 +52,25 @@ def test_overlays_share_game_coordinates_and_floor(tmp_path):
     assert world_floor(path, atlas, 0)['sectors'] == []
 
 
+def test_world_floor_poll_detects_new_atlas_pixels_and_skips_unchanged_image(tmp_path):
+    path, atlas = tmp_path/'map.otmm', tmp_path/'atlas.sqlite3'
+    write_map(path)
+    with sqlite3.connect(atlas) as db:
+        db.execute('CREATE TABLE tiles(x,y,z)')
+        db.execute('INSERT INTO tiles VALUES(643,388,7)')
+    first = world_floor(path, atlas, 7, tile_count=1)
+    assert world_floor(path, atlas, 7, since=first['revision'], tile_count=1) == {
+        'floor':7, 'revision':first['revision']}
+    with sqlite3.connect(atlas) as db:
+        db.execute('INSERT INTO tiles VALUES(707,388,7)')
+    updated = world_floor(path, atlas, 7, since=first['revision'], tile_count=2)
+    with sqlite3.connect(atlas) as db:
+        db.execute('INSERT INTO tiles VALUES(707,388,8)')
+    assert 'sectors' not in world_floor(path, atlas, 7, since=updated['revision'], tile_count=3)
+    assert updated['revision'] != first['revision']
+    assert [(s['x'],s['y']) for s in updated['sectors'] if s.get('atlas')] == [(640,384),(704,384)]
+
+
 def test_partial_minimap_can_be_retried(tmp_path):
     path = tmp_path/'minimap.otmm'
     write_map(path)

@@ -3,7 +3,7 @@ import {memo, useEffect, useMemo, useRef, useState} from "react";
 import type {PointerEvent as ReactPointerEvent, ReactNode} from "react";
 import {stepFloor} from "@/lib/atlasModel";
 import {authenticatedFetch} from "@/lib/auth";
-import {zonePaths,type Habitat} from "@/lib/atlasWildlife";
+import {floorSpawns,zonePaths,type Habitat,type SpawnMark} from "@/lib/atlasWildlife";
 import type {WorldZones} from "@/lib/useWorldZones";
 
 export type Position = [number, number, number];
@@ -14,7 +14,7 @@ export type GroundLayer = {cells:Position[]; marks:{position:Position;title:stri
   selected?:Position[];via?:Position[];connector?:AtlasConnector;passages?:AtlasPassage[];selecting?:boolean;selectSectors?:(a:Position,b:Position)=>void;
   editing:boolean; toggle:(p:Position)=>void; focus:{floor:number;cells:Position[]}|null};
 type Sector = {x:number; y:number; terrain?:string; atlas?:string};
-type Floor = {floor:number; sectors:Sector[]};
+type Floor = {floor:number; sectors:Sector[]; revision:string};
 type Camera = {x:number; y:number; width:number; height:number};
 
 export type WorldViewport={floor:number;following:boolean;camera:Camera|null};
@@ -72,8 +72,8 @@ const Sectors = memo(function Sectors({sectors, overlay}:{sectors:Sector[]; over
 });
 
 type Props={initialFloor:number;onOpen:(p:Position)=>void;ground?:GroundLayer;toolbar?:ReactNode;zones?:WorldZones;
-  player?:Position|null;location?:Position|null;viewport?:{current:WorldViewport|null};habitats?:Habitat[];habitatName?:string;habitatSide?:number;loadingLabel?:string};
-export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player,location=player,viewport,zones,habitats,habitatName,habitatSide=8,loadingLabel}:Props) {
+  player?:Position|null;location?:Position|null;viewport?:{current:WorldViewport|null};habitats?:Habitat[];habitatName?:string;habitatSide?:number;loadingLabel?:string;spawns?:SpawnMark[]};
+export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player,location=player,viewport,zones,habitats,habitatName,habitatSide=8,loadingLabel,spawns}:Props) {
   const [floor,setFloor]=useState(()=>viewport?.current?.floor??location?.[2]??initialFloor), [retry,setRetry]=useState(0);
   const [result,setResult]=useState<Floor|null>(null), [error,setError]=useState("");
   const [overlay,setOverlay]=useState(false), [grid,setGrid]=useState(false);
@@ -101,14 +101,25 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
   useEffect(()=>{
     const controller=new AbortController();
     setResult(null);setError("");select(null);
-    async function load() {
-      const r=await authenticatedFetch("http://127.0.0.1:8089/api/map/world?z="+floor,{signal:controller.signal});
-      const data=await r.json();
-      if(!r.ok)throw Error(data.error || "Nie udało się wczytać minimapy.");
-      if(!controller.signal.aborted)setResult(data);
+    let revision="", loading=false;
+    async function refresh() {
+      if(loading||document.hidden||controller.signal.aborted)return;
+      loading=true;
+      try {
+        const url="http://127.0.0.1:8089/api/map/world?z="+floor+"&since="+encodeURIComponent(revision);
+        const r=await authenticatedFetch(url,{signal:controller.signal});
+        const data=await r.json();
+        if(!r.ok)throw Error(data.error || "Nie udało się wczytać minimapy.");
+        if(controller.signal.aborted)return;
+        if(data.sectors){setResult(data);revision=data.revision;}
+        setError("");
+      }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:"Nie udało się odświeżyć mapy.");}
+      finally{loading=false;}
     }
-    void load().catch(e=>{if(!controller.signal.aborted)setError(e.message);});
-    return ()=>controller.abort();
+    void refresh();
+    const timer=setInterval(refresh,5000);
+    document.addEventListener("visibilitychange",refresh);
+    return ()=>{controller.abort();clearInterval(timer);document.removeEventListener("visibilitychange",refresh);};
   },[floor,retry]);
   const focus=ground?.focus,side=ground?.side??8;
   useEffect(()=>{
@@ -124,6 +135,7 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
     return {x:x-4,y:y-4,width:right-x+8,height:bottom-y+8};
   },[result]);
   const view=camera??bounds;
+  const spawnMarks=useMemo(()=>floorSpawns(spawns??[],floor,habitatName??""),[spawns,floor,habitatName]);
   const zoneLayer=useMemo(()=>zones?zonePaths(zones.cells,floor,zones.side):null,[zones,floor]);
   const here=selection&&(zones?.habitats??habitats)?.find(h=>h.position[2]===selection[2]&&h.position[0]===Math.floor(selection[0]/habitatSide)*habitatSide&&h.position[1]===Math.floor(selection[1]/habitatSide)*habitatSide);
   function showHabitat(){
@@ -193,8 +205,8 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
         </div>
       </div>
     </div>
-    {error?<div role="status">{error} <button onClick={()=>setRetry(v=>v+1)}>Ponów</button></div>
-      :!result?<p role="status" className="atlas-loading"><i className="atlas-spinner"/>Wczytywanie piętra…</p>:!view?<p>Brak zapisanych pól na tym piętrze.</p>:
+    {error&&<div role="status">{error} <button onClick={()=>setRetry(v=>v+1)}>Ponów</button></div>}
+    {!result?(error?null:<p role="status" className="atlas-loading"><i className="atlas-spinner"/>Wczytywanie piętra…</p>):!view?<p>Brak zapisanych pól na tym piętrze.</p>:
     <svg ref={svg} className={ground?.selecting?"select-sectors":undefined} aria-label="Mapa świata DBVictory" viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
       onPointerDown={e=>{const m=svg.current?.getScreenCTM();if(!m||(e.button!==0&&e.button!==1)||!e.isPrimary)return;
         const panOnly=e.button===1||e.altKey||e.ctrlKey;
@@ -228,6 +240,12 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
           <circle r={m.radius!==undefined ? .66 : m.exact ? 1 : side/4} fill={m.live?"#5df0bd":"#eee6ff"} stroke={m.live?"#144937":"#4f2872"} strokeWidth=".4"/>
           {m.minimum&&<text x=".95" y="-.5" fontSize="1.7" fill="white" stroke="#30203c" strokeWidth=".32" paintOrder="stroke">{m.minimum}+</text>}
         </g>)}</g>}
+      {!!spawnMarks.length&&<g aria-label="Przybliżone spawny z pierwszych wykryć">
+        {spawnMarks.map(s=>
+          <circle key={s.point.join(",")} cx={s.point[0]+.5} cy={s.point[1]+.5} r=".68" fill="#efdcff" stroke="#563678" strokeWidth=".26">
+            <title>{["Przybliżony spawn",...s.lines].join("\n")}</title>
+          </circle>)}
+      </g>}
       {ground?.missing?.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}
         fill="#242734" fillOpacity=".28" stroke="#c0b7c6" strokeOpacity=".7" strokeDasharray="1 1" strokeWidth=".3" pointerEvents="none"><title>Sektor poza wyznaczoną pętlą</title></rect>)}
       <RouteLine path={ground?.route} floor={floor} color="#effff7"/>

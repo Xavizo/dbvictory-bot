@@ -96,6 +96,22 @@ def test_optimization_keeps_unique_exploration_and_cuts_a_repeated_return(tmp_pa
     assert shorter_draft(atlas,[],plan,['keep']*len(points)) is plan
 
 
+def test_full_loop_crosses_room_interiors_and_uses_only_mapped_tiles_in_the_corridor(tmp_path):
+    atlas = MapAtlas(tmp_path, 'b'*64)
+    rooms = {(24,32,7),(32,32,7),(48,32,7)}
+    selected = rooms | {(40,32,7)}
+    tiles = {(x+dx,y+dy,z) for x,y,z in rooms for dx in range(8) for dy in range(8)}
+    tiles.update((x,32,7) for x in range(40,48))
+    atlas.observe(sample([cell(*p) for p in tiles]))
+    ident = atlas.save_draft('Sale', [[24,32,7],[25,32,7]], terrain={'ground':'world','sectors':list(map(list,sorted(selected)))})
+    result = propose(atlas, [], dict(scope=atlas.scope,ground='world',selected=list(map(list,selected)),compare=True))
+    route = result['comparison']['variants'][-1]['geometry']
+    path = list(map(tuple, route['path']))
+    interiors = {sector(p) for p in path if 2 <= p[0]%8 <= 5 and 2 <= p[1]%8 <= 5}
+    assert interiors == rooms and set(path) <= tiles
+    assert path[0] == path[-1] and atlas.drafts()[0]['id'] == ident
+
+
 def test_sightings_guide_visits_without_following_a_lured_monster_or_crossing_a_wall(tmp_path,monkeypatch):
     atlas = MapAtlas(tmp_path,'b'*64)
     atlas.observe(sample([cell(x,y) for x in range(24,40) for y in range(32,40) if (x,y)!=(39,39)]))

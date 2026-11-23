@@ -162,7 +162,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json_response({'error': 'Nieprawidłowe piętro.'}, 400)
             atlas = getattr(getattr(_state, 'passive_map_monitor', None), 'atlas', None)
             try:
-                result = world_floor(client_minimap(), getattr(atlas, 'path', None), floor)
+                result = world_floor(client_minimap(), getattr(atlas, 'path', None), floor,
+                                     since=query.get('since', [None])[0], tile_count=getattr(atlas, 'total', 0))
             except (KeyError, FileNotFoundError):
                 return self._json_response({'error': 'Brak zapisanej minimapy DBVictory.'}, 404)
             except (OSError, ValueError, sqlite3.Error, zlib.error):

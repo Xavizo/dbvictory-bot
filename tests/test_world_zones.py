@@ -26,7 +26,22 @@ def test_global_overlay_uses_saved_footprints_and_first_sightings(tmp_path):
     current = world_zones(a, previous['revision'])
     assert set(current['cells']) == {(24,32,7),(32,32,7),(40,32,7),(24,32,8)}
     assert current['habitats'] == [dict(position=(24,32,7),species=[('Wolf',3)])]
+    assert current['spawns'] == [dict(point=(27,34,7), name='Wolf', count=3)]
     assert world_zones(a,current['revision']) == {k:current[k] for k in ('scope','side','revision')}
+
+
+def test_walking_discovers_sectors_without_xp_even_on_already_mapped_tiles(tmp_path):
+    atlas = MapAtlas(tmp_path, 'c'*64)
+    fields = [cell(8, 10), cell(16, 10), cell(24, 10)]
+    observation = sample(fields)
+    atlas.observe(dict(observation, center=[8,10,7]))
+    first = world_zones(atlas)
+    assert first['cells'] == [(8,8,7)]
+    for flag in ('preview','stale'):
+        atlas.observe(dict(observation, center=[16,10,7], **{flag:True}))
+    assert 'cells' not in world_zones(atlas, first['revision'])
+    atlas.observe(dict(observation, center=[16,10,7]))
+    assert set(world_zones(MapAtlas(tmp_path, atlas.scope), first['revision'])['cells']) == {(8,8,7),(16,8,7)}
 
 
 def test_combined_selection_round_trips_without_changing_named_grounds(tmp_path):

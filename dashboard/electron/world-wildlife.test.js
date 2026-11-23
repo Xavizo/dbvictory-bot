@@ -15,6 +15,16 @@ test('world locates each species at its first sighting and keeps different floor
     {position:[8,8,7],species:[['Wolf',2]]}]);
 });
 
+test('all species share a marker at the same tile; species and floor filters keep the right sightings',()=>{
+  const wolf={point:[10,12,7],name:'Wolf',count:2};
+  const rows=[wolf,{...wolf,name:'Bat',count:1},{...wolf,point:[10,12,6]}];
+  const [all]=model.floorSpawns(rows,7,'');
+  assert.deepEqual(all.point,wolf.point);
+  assert.equal(all.lines.length,2);
+  assert.deepEqual(model.floorSpawns(rows,7,'Bat')[0].lines,['Bat · pierwsze wykrycia w sektorze: 1']);
+  assert.deepEqual(model.floorSpawns(rows,6,'Bat'),[]);
+});
+
 test('atlas centres on stored coordinates after the marker expires',()=>{
   const state={connected:true,player:{position:[30,40,8]},passive_map:{center:[29,40,8]}};
   assert.deepEqual(model.atlasLocation(state,[31,40,8]),[31,40,8]);

@@ -27,7 +27,7 @@ def _collect(rows, cells, sightings):
     for row in rows:
         p = row.get('point')
         if observed_position(p) and row.get('name') and row.get('count',0)>0:
-            sightings[sector(p),row['name']] += row['count']
+            sightings[tuple(p),row['name']] += row['count']
             origin = row.get('observer_cell')
             if observed_position(origin):
                 cells.add(tuple(origin))
@@ -75,11 +75,12 @@ def world_zones(atlas, since=None):
         tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         areas=db.execute('SELECT id,version FROM hunt_areas ORDER BY id').fetchall() if 'hunt_areas' in tables else []
         drafts=db.execute('SELECT id,updated FROM drafts WHERE terrain IS NOT NULL AND deleted=0 ORDER BY id').fetchall()
-        revision=hashlib.sha256(repr((atlas.scope,visit_stamp,lap_stamp,areas,drafts)).encode()).hexdigest()[:24]
+        walked = db.execute('SELECT COUNT(*) FROM visited_sectors').fetchone()[0] if 'visited_sectors' in tables else 0
+        revision=hashlib.sha256(repr((atlas.scope,visit_stamp,lap_stamp,areas,drafts,walked)).encode()).hexdigest()[:24]
         result=dict(scope=atlas.scope,revision=revision,side=SIDE)
         if revision==since:
             return result
-        cells=set()
+        cells=set(db.execute("SELECT x,y,z FROM visited_sectors")) if walked else set()
         if areas:
             for raw, in db.execute('SELECT data FROM hunt_areas'):
                 cells.update(map(tuple,json.loads(raw)['cells']))
@@ -89,8 +90,16 @@ def world_zones(atlas, since=None):
     visited,manual_seen=_manual(manual,visit_stamp)
     covered,lap_seen=_laps(laps,lap_stamp)
     cells.update(visited,covered)
+    totals, peaks = Counter(), {}
+    for (point, name), count in (manual_seen + lap_seen).items():
+        key = sector(point), name
+        totals[key] += count
+        peaks[key] = max(peaks.get(key, (0, point)), (count, point))
     species=defaultdict(list)
-    for (p,name),n in sorted((manual_seen+lap_seen).items()):
-        species[p].append((name,n))
-    result.update(cells=sorted(cells),habitats=[dict(position=p,species=names) for p,names in species.items()])
+    spawns = []
+    for (area, name), count in sorted(totals.items()):
+        species[area].append((name, count))
+        spawns.append(dict(point=peaks[area, name][1], name=name, count=count))
+    result.update(cells=sorted(cells),habitats=[dict(position=p,species=names) for p,names in species.items()],
+                  spawns=spawns)
     return result

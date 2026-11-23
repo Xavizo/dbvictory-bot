@@ -9,7 +9,7 @@ export default function WorldOverview({initialFloor,player,location,viewport,onO
   const names=useMemo(()=>[...new Set(zones?.habitats.flatMap(h=>h.species.map(([n])=>n)))].sort((a,b)=>a.localeCompare(b,"pl")),[zones]);
   const habitats=useMemo(()=>species?zones?.habitats.filter(h=>h.species.some(([n])=>n===species)):undefined,[zones,species]);
   return <WorldMap initialFloor={initialFloor} player={player} location={location} viewport={viewport} onOpen={onOpen}
-    zones={zones??undefined} habitats={habitats} habitatSide={zones?.side} habitatName={species}
+    spawns={zones?.spawns} zones={zones??undefined} habitats={habitats} habitatSide={zones?.side} habitatName={species}
     loadingLabel={!zones&&!error?"Wczytywanie stref…":undefined}
     toolbar={<><button onClick={onGrounds}>Planuj pętlę</button>
       {!!names.length&&<select aria-label="Gatunek na mapie świata" value={species} onChange={e=>choose(e.target.value)}>

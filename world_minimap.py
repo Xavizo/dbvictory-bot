@@ -1,5 +1,6 @@
 """Render a saved OTClient v1 minimap only when the world atlas is opened."""
 import base64
+import hashlib
 from contextlib import closing
 from functools import lru_cache
 import os
@@ -68,10 +69,24 @@ def _terrain(path, modified, size, floor):
     raise ValueError('Niepełny zapis minimapy. Spróbuj ponownie.')
 
 
-def world_floor(path, atlas_path, floor):
+@lru_cache(maxsize=32)
+def _floor_count(atlas_path, floor, tile_count):
+    # The global count invalidates the cache when exploration adds tiles.
+    with closing(sqlite3.connect(atlas_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+        return db.execute('SELECT COUNT(*) FROM tiles WHERE z=?', (floor,)).fetchone()[0]
+
+
+def world_floor(path, atlas_path, floor, *, since=None, tile_count=None):
     if not 0 <= floor <= 15:
         raise ValueError('Piętro musi być w zakresie 0–15.')
     info = path.stat()
+    # The atlas layer is a mask of discovered coordinates. Revisiting a tile
+    # updates its timestamp in SQLite without changing the pixels of this map.
+    count = _floor_count(atlas_path, floor, tile_count) if atlas_path and tile_count is not None else tile_count
+    fingerprint = (str(path), str(atlas_path), floor, count, info.st_mtime_ns, info.st_size)
+    revision = hashlib.sha256(repr(fingerprint).encode()).hexdigest()[:24]
+    if tile_count is not None and since == revision:
+        return {'floor': floor, 'revision': revision}
     floors, terrain = _terrain(path, info.st_mtime_ns, info.st_size, floor)
     masks = {}
     if atlas_path:
@@ -95,4 +110,4 @@ def world_floor(path, atlas_path, floor):
         if (x, y) in masks:
             row['atlas'] = image(masks[x, y], bytes((0, 0, 0, 57, 230, 201)), 1)
         sectors.append(row)
-    return {'floor': floor, 'floors': floors, 'sectors': sectors}
+    return {'floor': floor, 'floors': floors, 'sectors': sectors, 'revision': revision}

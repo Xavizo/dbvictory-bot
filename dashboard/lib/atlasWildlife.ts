@@ -4,6 +4,20 @@ type Position=[number,number,number];
 export type MapSighting={point?:Position;name:string;count:number};
 export type Habitat={position:Position;species:[string,number][]};
 
+export type SpawnMark = {point:Position;name:string;count:number};
+
+export function floorSpawns(rows:SpawnMark[],floor:number,species:string) {
+  const markers = new Map<string,{point:Position;lines:string[]}>();
+  for(const {point,name,count} of rows) {
+    if(point[2]!==floor || (species && name!==species))continue;
+    const key=point.join(",");
+    const marker=markers.get(key)??{point,lines:[]};
+    marker.lines.push(name+" · pierwsze wykrycia w sektorze: "+count);
+    markers.set(key,marker);
+  }
+  return [...markers.values()];
+}
+
 function validPosition(p?:Position|null):p is Position {
   return !!p && p.length===3 && p.every(Number.isInteger) &&
     p[0]>=0 && p[0]<65535 && p[1]>=0 && p[1]<65535 && (p[0]!==0 || p[1]!==0) && p[2]>=0 && p[2]<=15;

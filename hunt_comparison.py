@@ -296,7 +296,7 @@ def return_tree(graph, start):
     return distance, follow
 
 
-def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, model):
+def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, model, open_rooms):
     from hunt_routes import shortest, simulated, varied_route
     from hunt_corridors import repeat_count
     start = full_walk[0][0]
@@ -324,7 +324,7 @@ def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, m
             pool[key] = model.estimate(path, passages)
     # Sample the coverage sweep and independent excursions towards dense packs.
     # The reverse tree preserves direction and the exact action for each return.
-    for portion in (.08,.18,.33,.5,.75):
+    for portion in (.08,.18,.33,.5,.6,.7,.75,.85):
         add(full_walk[:max(2, round(len(full_walk)*portion))])
     hotspots = sorted((p for p in goals if p != start and goals[p]>0),
                       key=lambda p:(-model.slots[sector(p)]/(20+home_cost[p]),-goals[p],p))
@@ -361,7 +361,9 @@ def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, m
     if hotspots:
         nearby = set(hotspots)
         walk, here = [(start,None)], start
-        milestones = {max(1,round(len(nearby)*fraction)) for fraction in (.25,.5,.75,1)}
+        # A quarter of a large pack tour can span several open rooms. Compare
+        # intermediate return points before committing to the longer sweep.
+        milestones = {max(1, round(len(nearby)*part/12)) for part in range(1,13)}
         while nearby:
             leg = shortest(here,nearby,graph.__getitem__,goals)
             walk.extend(leg)
@@ -382,11 +384,19 @@ def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, m
                 m['encounters_hour'] if m['seconds'] <= compact else -m['seconds'], -m['seconds'])
     def yield_score(m):
         return (m['encounters_hour'], -abs(m['seconds']-RESPAWN_SECONDS), -m['seconds'])
+    def interiors(path):
+        return len({sector(p) for p in path if 2 <= p[0] % SIDE < SIDE-2
+                    and 2 <= p[1] % SIDE < SIDE-2} & open_rooms)
+
     verified = [(full, full_metrics)]
     attempted = set()
-    for score in (short_score, yield_score):
+    by_yield = sorted(pool, key=lambda k:yield_score(pool[k]), reverse=True)
+    threshold = pool[by_yield[0]]['encounters_hour'] * .95 if by_yield else 0
+    spacious = sorted((k for k in by_yield if threshold and pool[k]['encounters_hour'] >= threshold),
+                      key=lambda k:interiors(p for p, _ in k), reverse=True)
+    for candidates in (sorted(pool, key=lambda k:short_score(pool[k]), reverse=True), by_yield, spacious):
         found = 0
-        for key in sorted(pool,key=lambda k:score(pool[k]),reverse=True):
+        for key in candidates:
             if key in attempted:
                 continue
             attempted.add(key)
@@ -404,9 +414,17 @@ def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, m
             found += 1
             if found >= 2:
                 break
+    # The yield is a model based on first sightings. Within five percent of
+    # its best estimate, favour sweeping different room interiors.
+    best_rate = max(m['encounters_hour'] for _, m in verified)
+    comparable = [(r, m) for r, m in verified if m['encounters_hour'] >= .95 * best_rate]
+    def interior_score(option):
+        route, metrics = option
+        return (interiors(route['path']) if best_rate else 0, yield_score(metrics))
+
     variants = []
     for kind, (route,metrics) in [('short',max(verified,key=lambda v:short_score(v[1]))),
-                                 ('respawn',max(verified,key=lambda v:yield_score(v[1]))),
+                                 ('respawn',max(comparable,key=interior_score)),
                                  ('full',verified[0])]:
         variants.append(dict(kind=kind,metrics=dict(metrics,repeated_segments=repeat_count(route['path'])),
                              geometry={k:route[k] for k in ('points','links','path','covered','passages','transitions')}))

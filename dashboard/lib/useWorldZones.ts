@@ -1,9 +1,9 @@
 "use client";
 import {useEffect,useState} from "react";
 import {authenticatedFetch} from "./auth";
-import type {Habitat} from "./atlasWildlife";
+import type {Habitat,SpawnMark} from "./atlasWildlife";
 
-export type WorldZones={scope:string;revision:string;side:number;cells:[number,number,number][];habitats:Habitat[]};
+export type WorldZones={scope:string;revision:string;side:number;cells:[number,number,number][];habitats:Habitat[];spawns?:SpawnMark[]};
 
 export function useWorldZones(active:boolean) {
   const [zones,setZones]=useState<WorldZones|null>(null),[error,setError]=useState(""),[attempt,retry]=useState(0);
@@ -26,7 +26,7 @@ export function useWorldZones(active:boolean) {
       finally{loading=false;}
     }
     void refresh();
-    const timer=setInterval(refresh,20000);
+    const timer=setInterval(refresh,5000);
     document.addEventListener("visibilitychange",refresh);
     return ()=>{ctl.abort();clearInterval(timer);document.removeEventListener("visibilitychange",refresh);};
   },[active,attempt]);

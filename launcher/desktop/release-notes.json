@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.24.2",
+    "changes":[
+      {"title":"Spawny w widoku świata i podczas planowania","detail":"Wszystkie gatunki mają znaczniki przybliżonych miejsc pierwszego wykrycia, także bez wybrania filtra. Odkrywane sektory i mapa odświeżają się podczas chodzenia."},
+      {"title":"Pętle przez wnętrza otwartych sal","detail":"Planer uwzględnia szerokość przejścia. Spośród pętli o podobnej przewidywanej liczbie spotkań na godzinę wybiera tę, która przechodzi przez więcej otwartych sektorów."}
+    ]
+  },
+  {
     "version":"v1.24.1",
     "changes":[{"title":"Hunter Knife rozpoznaje wpisy Loot z godziną","detail":"Na karcie noża widać, czy silnik rozpoznał kanał Loot. Wpisy o elementalach mogą zawierać godzinę przed nazwą potwora."}]
   },

@@ -300,7 +300,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     finally{setBusy(false);}
   }
   return <div className="hunt-atlas-layout">
-    <WorldMap viewport={viewport} zones={copy?undefined:activeWorld??undefined} initialFloor={initialFloor} player={player} location={location} onOpen={onOpen} loadingLabel={planning||undefined}
+    <WorldMap spawns={worldLayer&&showMonsters?activeWorld?.spawns:undefined} viewport={viewport} zones={copy?undefined:activeWorld??undefined} initialFloor={initialFloor} player={player} location={location} onOpen={onOpen} loadingLabel={planning||undefined}
       habitats={showMonsters?observations.habitats:undefined} habitatSide={side} habitatName={showMonsters&&observations.habitats?species:""}
       toolbar={<button disabled={!!copy||busy||!!planning} onClick={onClose}>← Świat</button>}
       ground={{cells:area?.cells??[],marks:!showMonsters?[]:layer==="live"?(live?.marks??[]).map(m=>({position:m.position,exact:true,live:true,title:"Widoczne potwory: "+m.count})):observations.marks,side,editing:!!copy,toggle,focus,

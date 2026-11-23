@@ -650,10 +650,26 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
             if (x,y,z) not in ordinary and ground.web((x,y,z))}
     nodes = ordinary | webs | {q for p,links in ground.links.items() for q in links
                          if sector(p) in travel and sector(q) in travel}
+    # Give open rooms a gentle pull towards the interior on ordinary walking
+    # edges. A solid 4×4 centre distinguishes a room from a corridor or island
+    # edge. Action costs and the set of traversable tiles stay authoritative.
+    open_rooms = {(sx, sy, z) for sx, sy, z in cells
+                  if all((sx+dx, sy+dy, z) in ordinary for dx in range(2, 6) for dy in range(2, 6))}
+    def near_edge(p):
+        return min(p[0] % SIDE, p[1] % SIDE, SIDE-1-p[0] % SIDE, SIDE-1-p[1] % SIDE)
+
     graph, reverse = {}, defaultdict(list)
     for p in sorted(nodes):
-        graph[p] = [(q, w if sector(q) in cells else w+60, link)
-                    for q,w,link in ground.neighbors(p) if q in nodes]
+        graph[p] = []
+        for q, weight, link in ground.neighbors(p):
+            if q not in nodes:
+                continue
+            cell = sector(q)
+            if cell not in cells:
+                weight += 60
+            elif not link and cell in open_rooms:
+                weight += 2 * max(0, 2-near_edge(q))
+            graph[p].append((q, weight, link))
         for q,_,_ in graph[p]:
             reverse[q].append(p)
     regions = round_trip_regions(graph, reverse)
@@ -688,8 +704,13 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
     for (sx,sy,z), candidates in by_sector.items():
         count, xs, ys = moments[sx,sy,z]
         x,y = (xs/count,ys/count) if count else (sx+(SIDE-1)/2,sy+(SIDE-1)/2)
-        goal = min(candidates,key=lambda p: (p[0]-x)**2+(p[1]-y)**2)
-        goals[goal] = count
+        closest = min(candidates, key=lambda p: (p[0]-x)**2+(p[1]-y)**2)
+        if count and (sx, sy, z) in open_rooms and near_edge(closest) < 2:
+            # Approach a sighting from the room if the shift costs at most one tile.
+            interior = [p for p in candidates if near_edge(p) >= 2
+                        and max(abs(p[0]-closest[0]), abs(p[1]-closest[1])) <= 1]
+            closest = min(interior, key=lambda p: (p[0]-x)**2+(p[1]-y)**2, default=closest)
+        goals[closest] = count
     targets = set(goals)-{start}
     if not targets and len(by_sector[sector(start)]) > 1:
         targets.add(max(by_sector[sector(start)],key=lambda p: abs(p[0]-start[0])+abs(p[1]-start[1])))
@@ -701,7 +722,8 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
         walk.extend(leg)
         here = walk[-1][0]
         targets.difference_update(p for p,_ in leg)
-    protected={i for i,(p,_) in enumerate(walk) if goals.get(p,0)>0}
+    stops = {p for p, count in goals.items() if count or sector(p) in open_rooms}
+    protected = {i for i, (p, _) in enumerate(walk) if p in stops}
     for i,(_,link) in enumerate(walk):
         if link:protected.update((i-1,i))
     path,kept=shorten_sweeps([p for p,_ in walk],ground.clear,protected=protected)
@@ -719,7 +741,7 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
             pass  # An ambiguous shortcut leaves the original verified walk available.
     if result is None:
         result=simulated(atlas,observations,walk,ground.excluded,ground.allowed)
-    result=varied_route(atlas,observations,ground,selected_walk,{p for p in goals if goals[p]},result)
+    result=varied_route(atlas,observations,ground,selected_walk,stops,result)
     visited = {sector(p) for p in result['path']}
     if visited-travel or set(by_sector)-visited:
         raise ValueError('Symulacja zmieniła pokrycie obszaru. Sprawdź granice expowiska.')
@@ -727,5 +749,5 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
                 selected=sorted(cells), missing=sorted(cells-visited), sightings=sum(first_seen.values()))
     if model is not None:
         from hunt_comparison import compare_routes
-        full['comparison'] = compare_routes(atlas, observations, ground, graph, goals, walk, full, model)
+        full['comparison'] = compare_routes(atlas, observations, ground, graph, goals, walk, full, model, open_rooms)
     return full
