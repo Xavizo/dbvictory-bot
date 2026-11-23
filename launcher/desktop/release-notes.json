@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.26.2",
+    "changes":[
+      {"title":"Hunter Knife podczas ręcznej walki","detail":"Po zaznaczeniu kolejnego moba automat może od razu oskórować rozpoznane własne ciało obok postaci. Odsuwanie wierzchniej warstwy nadal czeka na zakończenie walki."}
+    ]
+  },
+  {
     "version":"v1.26.1",
     "changes":[
       {"title":"Hunter Knife po walce z grupą","detail":"Własne ciało można rozpoznać, kiedy wskazują na nie zgodne dane z pola i walki. Spóźniony Loot innego gatunku na sąsiednim polu nie wstrzymuje tej próby."},

@@ -14,7 +14,7 @@ from protocol import build_move_item_packet, build_use_item_ex_packet
 NAME = "auto_hunter_knife"
 INPUTS = ("map", "position", "target", "death", "loot", "inventory", "health")
 ATTEMPT_VALID_FOR = .55
-WAITING_FOR_BODY = "Czekam na świeże ciało po Twojej walce"
+WAITING_FOR_BODY = "Czekam na własne ciało elementala w zasięgu"
 
 
 def point(cell):
@@ -68,7 +68,7 @@ class KnifeAutomation:
 
     def fighting(self):
         target_id = self.game.attack_target_id
-        if self.controller and self.controller.status == "running" and self.controller.combat.config["enabled"]:
+        if self.cavebot_running and self.controller.combat.config["enabled"]:
             chosen = self.controller.combat.target or {}
             if chosen.get("health", 0) > 0:
                 target_id = chosen.get("id") or target_id
@@ -76,8 +76,9 @@ class KnifeAutomation:
         return bool(target and target.get("health", 0) > 0 and
                     0 <= time.time() - target.get("t", 0) <= 1.5)
 
-    def can_use_during_combat(self):
-        return bool(self.controller and self.controller.status == "running")
+    @property
+    def cavebot_running(self):
+        return self.controller is not None and self.controller.status == "running"
 
     def hold(self):
         now = time.monotonic()
@@ -170,7 +171,7 @@ class KnifeAutomation:
         if stamp != self.frame:
             self.deferred_tiles.clear()
             target_id = self.game.attack_target_id
-            if self.controller and self.controller.status == "running" and self.controller.combat.config["enabled"]:
+            if self.cavebot_running and self.controller.combat.config["enabled"]:
                 target_id = self.controller.combat.sent_target or target_id
             self.queue.observe(cells.values(), now, game=self.game, target_id=target_id, sampled_at=stamp)
             self.frame = stamp
@@ -179,12 +180,10 @@ class KnifeAutomation:
         if self.pending or not self.tool_ready:
             return None
         fighting = self.fighting()
-        if fighting and not self.can_use_during_combat():
-            return None
         candidates = self.candidates(cells, origin, fighting, stamp, now)
         first = next(candidates, None)
         self.actionable = first is not None
-        if not fighting or not self.queue.stacks:
+        if not self.cavebot_running or not fighting or not self.queue.stacks:
             self.group_progress_at = None
         elif first and self.group_progress_at is None:
             if first.before[FRESH] > 1 or next(candidates, None) is not None:
@@ -213,7 +212,7 @@ class KnifeAutomation:
             count = sum(i["id"] == item["id"] for i in cell["items"])
             attempt = Attempt(p, item, body_counts(cell["items"]), stamp, now, drop, count)
             spell = getattr(getattr(self.controller, "combat", None), "last_spell_attempt", None)
-            if spell and self.can_use_during_combat():
+            if spell and self.cavebot_running:
                 # Context for diagnosis only. A spell attempt does not establish an item cooldown.
                 elapsed = time.time() - spell["at"]
                 if 0 <= elapsed <= 3:
@@ -290,7 +289,7 @@ async def run_knife(bot):
                 original = tuple(bot.position)
                 def current():
                     if (not enabled() or gs.hunter_knife is not runtime or runtime.pending is not a
-                            or (runtime.fighting() and (a.drop or not runtime.can_use_during_combat()))
+                            or (a.drop is not None and runtime.fighting())
                             or gs.hp <= 0 or tuple(bot.position) != original or time.monotonic() - a.sent > ATTEMPT_VALID_FOR):
                         return False
                     latest = fresh_sample(bot)

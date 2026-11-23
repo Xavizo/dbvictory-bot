@@ -260,7 +260,7 @@ def test_status_line_denial_from_manual_and_automatic_uses():
     assert runtime.done == 0
 
 
-def test_worker_waits_after_combat_confirms_two_layers_and_resumes_route(monkeypatch):
+def test_worker_confirms_two_layers_across_end_of_manual_combat(monkeypatch):
     from types import SimpleNamespace
     from hunter_knife_action import KnifeAutomation
     clock = [11.6]
@@ -274,15 +274,15 @@ def test_worker_waits_after_combat_confirms_two_layers_and_resumes_route(monkeyp
     import time
     game.creatures[1] = dict(health=20,t=time.time())
     game.attack_target_id = 1
-    assert observe(FRESH,FRESH) is None and not runtime.hold()
-    game.creatures[1]["health"] = 0
     for before,after in (((FRESH,FRESH),(SPENT,FRESH)),((SPENT,FRESH),(SPENT,SPENT))):
         attempt = observe(*before)
-        assert runtime.hold() and attempt.item["id"] == FRESH
+        assert attempt is not None and attempt.item["id"] == FRESH
+        assert runtime.hold() is (not runtime.fighting())
         runtime.pending = attempt
         assert observe(*before) is None
         clock[0] += .2
         observe(*after)
+        game.creatures[1]["health"] = 0
     assert runtime.done == 2 and not runtime.hold()
 
 
