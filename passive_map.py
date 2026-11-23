@@ -7,6 +7,8 @@ Unknown layouts/cells are reported explicitly rather than guessed.
 from collections import Counter
 from client_profiles import LEGACY, PROFILES
 import hashlib
+import logging
+import sqlite3
 from pathlib import Path
 import struct
 import threading
@@ -335,6 +337,10 @@ class PassiveMapMonitor:
         result = self._result
         origin = result.get("center") if 0 <= time.time()-result.get("captured_at",0)<0.8 else None
         command = decode_command(opcode,reader,origin)
+        if command and not movement:
+            history = getattr(self.state.game_state, "movement_history", None)
+            if history:
+                history.interrupt_floor_step()
         if (origin and command and command.get('kind') == 'use_with' and command.get('tool_id') in (8899, 8900)):
             history = getattr(self.state.game_state, 'movement_history', None)
             if history:
@@ -362,6 +368,9 @@ class PassiveMapMonitor:
 
     def invalidate_packet_evidence(self):
         """A packet-analysis gap invalidates correlations, not native map reads."""
+        history = getattr(getattr(self.state, "game_state", None), "movement_history", None)
+        if history is not None:
+            history.take_floor_steps(False)
         if self.learner:
             self.learner.reset()
 
@@ -418,6 +427,12 @@ class PassiveMapMonitor:
         history = getattr(game_state, "movement_history", None)
         if history:
             history.frame(result, getattr(self.state, "packet_observer", None))
+            steps = history.take_floor_steps(result.get("status") == "ready" and self._manual_play and not self._learning_error)
+            if steps and self.atlas and self.learner:
+                try:
+                    self.learner.learn_floor_steps(steps, self.atlas._paged_tiles())
+                except (OSError, ValueError, sqlite3.Error):
+                    logging.getLogger(__name__).warning("Odczyt schodów z atlasu chwilowo niedostępny.", exc_info=True)
         route = getattr(self.state, 'adaptive_cavebot', None)
         reporter = getattr(route, 'reporter', None)
         if (reporter is not None and getattr(route, 'status', None) == 'running'
@@ -484,7 +499,14 @@ class PassiveMapMonitor:
                         gs = self.state.game_state
                         reader = MapReader(source.read, source.base, allow_confirmed=True, profile=source.profile, asset_sha256=asset.get("sha256"))
                         result = reader.snapshot()
-                        result["pet_map_generation"] = gs.pets.observe_map(result["cells"], result["captured_at"], reader.monster_slots)
+                        proxy = getattr(self.state,"game_proxy",None)
+                        try:
+                            gs.pets.bind_world(Path(__file__).parent / "local_data",
+                                               getattr(proxy,"server_host",None), getattr(proxy,"server_port",None))
+                        except (OSError, sqlite3.Error):
+                            pass
+                        result["pet_map_generation"] = gs.pets.observe_map(result["cells"], result["captured_at"],
+                                                                           reader.monster_slots, gs.creatures)
                         if gs is not self.state.game_state or not self.state.connected:
                             continue
                         self._publish(result, asset, gs)

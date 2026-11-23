@@ -239,12 +239,15 @@ class _Handler(BaseHTTPRequestHandler):
                 if not 0 < int(self.headers.get("Content-Length", 0)) <= 1024:
                     raise ValueError("Nieprawidłowy rozmiar oznaczenia.")
                 body = self._read_body()
-                if (not isinstance(body, dict) or set(body) != {"position", "ref", "name"}
+                required = {"position", "ref", "name"}
+                if (not isinstance(body, dict) or not required <= body.keys()
+                        or body.keys() - (required | {"remember"})
+                        or not isinstance(body.get("remember", False), bool)
                         or not position(body["position"]) or not isinstance(body["ref"], str)):
                     raise ValueError("Wybierz jedno stworzenie na mapie na żywo.")
                 if not _state.connected:
                     raise ValueError("Mapa czeka na połączenie.")
-                _state.game_state.pets.label_visible(tuple(body["position"]), body["ref"], body["name"])
+                _state.game_state.pets.label_visible(tuple(body["position"]), body["ref"], body["name"], remember=body.get("remember", False))
                 return self._json_response({"ok": True})
             except (ValueError, TypeError) as exc:
                 return self._json_response({"error": str(exc)}, 400)

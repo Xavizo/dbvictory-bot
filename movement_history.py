@@ -8,6 +8,8 @@ import threading
 import time
 from uuid import uuid4
 
+from floor_step_witness import FloorStepWitness
+
 
 HISTORY_SECONDS = 300
 AFTER_SECONDS = 30
@@ -43,6 +45,8 @@ class MovementHistory:
         self.ring = deque(maxlen=MAX_EVENTS)
         self.lost_at = None
         self.position = self.pending = self.incident = None
+        self.floor_witness = FloorStepWitness()
+        self.floor_steps = deque(maxlen=16)
         self.last_frame = None
         self.coverage = None
         self.last_gap = None
@@ -73,10 +77,26 @@ class MovementHistory:
         if len(self.ring) == MAX_EVENTS:
             self.lost_at = self.ring[0]["ms"]
         row = dict(ms=self._ms(now), event=kind, **values)
+        step = self.floor_witness.feed(row)
+        if step:
+            self.floor_steps.append(step)
         self.ring.append(row)
         if self.incident:
             self.incident["tail"].append(row)
             self.incident["tail_count"] += 1
+
+    def take_floor_steps(self, active):
+        with self.lock:
+            steps = list(self.floor_steps) if active else []
+            self.floor_steps.clear()
+            if not active:
+                self.floor_witness.clear()
+            return steps
+
+    def interrupt_floor_step(self):
+        with self.lock:
+            if self.floor_witness.request:
+                self._event(self.clock(), "interaction")
 
     def _snapshot(self, now, trigger):
         self._prune(now)

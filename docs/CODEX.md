@@ -702,14 +702,18 @@ Electron. **Zakończ bota** ends the owning engine session, its panel and the
 standalone launcher. Log out to the character list first if connected through
 the proxy. The game client stays open.
 
-Use **Look** on a pet in the game world. Once the server identifies its owner
-with `Master of …`, the live map and atlas show **P · Pet**. Cavebot excludes
-that creature from targeting, spell conditions and lure counts. Its tile still
-counts as occupied. Inspect again after a new login or summon. A pet without
-a battle ID can be followed while its map instance stays visible. If the
-description wasn't matched, right-click the pet's tile in the live map or
-atlas and choose **Oznacz jako peta…**. The manual label follows that one
-creature while it remains visible. **Usuń oznaczenie peta** clears it.
+Use **Look** on a pet. When the description includes `Master of …`, the live
+map and Atlas show **P · Pet**. Cavebot excludes the pet from targets, spell
+conditions and lure counts. Its tile still counts as occupied.
+
+To recognize the same name after login or on another player's pet, right-click
+the pet on the live map. Choose **Zapamiętaj nazwę peta** after a successful
+Look, or **Oznacz jako peta…** and enter the exact in-game name. The saved
+rule applies on this world whenever the map occupant has a fresh matching name.
+A wild monster with the same name also matches. For such names, use Look or
+clear the name checkbox to mark only the current creature. **Zapomnij nazwę
+peta** removes the saved rule. Anonymous map occupants can retain a manual
+label while continuously visible.
 
 ## Adaptive hunt recording
 

@@ -564,7 +564,7 @@ def circuit(atlas, observations, ground, cells, first_seen, seeds, *, choose_reg
         # Compare whole circuits once, without running a path search per seed.
         def score(region):
             fields = region & hunting_tiles
-            return (len({sector(p) for p in fields}), sum(first_seen[p] for p in fields),
+            return (len({p[2] for p in fields}), len({sector(p) for p in fields}), sum(first_seen[p] for p in fields),
                     start in fields, len(fields), min(fields))
         candidates = (region for region in regions if region & hunting_tiles and len(region)>=2)
         accessible = max(candidates,key=score,default=None)

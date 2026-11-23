@@ -189,3 +189,23 @@ def test_old_map_and_observation_loss_do_not_confirm_a_new_step(session):
     assert sum(r["event"]=="observation_gap" for r in events)==1
     assert not any(r["event"]=="map_after_request" for r in events)
     assert events[-1]["event"]=="position_unconfirmed"
+
+
+@pytest.mark.parametrize("mode", ["confirmed", "next_step", "only_position", "cancel", "interaction", "stale", "automation"])
+def test_single_manual_stair_step_needs_a_separate_landing_confirmation(session, mode):
+    clock, history = session
+    landing = (101,100,8)
+    history.request("bot" if mode=="automation" else "client", A, B)
+    clock[0] = .8 if mode=="stale" else .10
+    history.player_position(landing)
+    if mode=="cancel":
+        history.cancelled(A, 1, clock[0])
+    if mode=="interaction":
+        history.interrupt_floor_step()
+    if mode=="next_step":
+        history.request("client",landing,(102,100,8))
+    elif mode!="only_position":
+        history.frame(frame(landing))
+    expected = [(A,B,landing)] if mode in ("confirmed","next_step") else []
+    assert history.take_floor_steps(active=True) == expected
+    assert history.take_floor_steps(active=True) == []

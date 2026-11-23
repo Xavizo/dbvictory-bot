@@ -25,6 +25,8 @@ export interface PassiveMapCell {
   pet_names?: string[];
   pet_ref?: string;
   pet_manual?: boolean;
+  pet_remembered?: boolean;
+  pet_candidate_name?: string;
   items: { id: number; flags: string[]; stack: number; lens_help?: number; minimap_color?: number }[];
   navigation?: MapNavigationFeature[];
   web_cut?: boolean;
@@ -312,7 +314,7 @@ export interface MapAnnotationInput {
   kind:string; required_level:number|null; activation_hint:string|null; note:string;
 }
 export const saveMapAnnotation = (data:MapAnnotationInput) => control("/api/map/annotation",data);
-export const labelVisiblePet = (position:number[],ref:string,name:string|null) => control("/api/map/pet",{position,ref,name});
+export const labelVisiblePet = (position:number[],ref:string,name:string|null,remember=false) => control("/api/map/pet",{position,ref,name,remember});
 
 export async function fetchState(): Promise<BotState> {
   const res = await authenticatedFetch(`${API_BASE}/api/state`);

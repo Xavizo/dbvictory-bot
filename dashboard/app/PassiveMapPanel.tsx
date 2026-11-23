@@ -152,14 +152,15 @@ export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,way
   const ref=useRef<HTMLDivElement>(null);
   const [editing,setEditing]=useState<AnnotationKind|"pet"|null>(null);
   const [petName,setPetName]=useState("");
+  const [rememberPet,setRememberPet]=useState(true);
   const [petError,setPetError]=useState("");
   const [savingPet,setSavingPet]=useState(false);
   const sameCreature=editable && !!position.petRef && position.petRef===cell.pet_ref;
-  async function savePet(name:string|null) {
+  async function savePet(name:string|null, remember=rememberPet) {
     if(!sameCreature || !position.petRef || savingPet)return;
     setSavingPet(true);setPetError("");
     try {
-      await labelVisiblePet([cell.x,cell.y,cell.z],position.petRef,name);
+      await labelVisiblePet([cell.x,cell.y,cell.z],position.petRef,name,remember);
       onClose();
     } catch(error) {
       setPetError(error instanceof Error ? error.message : "Nie udało się zmienić oznaczenia peta.");
@@ -203,15 +204,18 @@ export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,way
       {onTransition && <button role="menuitem" disabled={routeLocked} onClick={()=>{onTransition();onClose();}}>Dodaj przejście do trasy…</button>}
       {onRemoveWaypoint && waypoints.map(index=><button role="menuitem" className="tile-menu-delete" key={index} disabled={routeLocked} onClick={()=>{onRemoveWaypoint(index);onClose();}}>Usuń waypoint {index+1}</button>)}
       <button role="menuitem" onClick={()=>{onCopy();onClose();}}>Kopiuj dane pola</button>
-      {sameCreature && (cell.pet_manual ?
-        <button role="menuitem" disabled={savingPet} onClick={()=>savePet(null)}>Usuń oznaczenie peta</button> :
-        <button role="menuitem" onClick={()=>setEditing("pet")}>Oznacz jako peta…</button>)}
+      {sameCreature && (cell.pet_manual || cell.pet_remembered ?
+        <button role="menuitem" disabled={savingPet} onClick={()=>savePet(null)}>{cell.pet_remembered?"Zapomnij nazwę peta":"Usuń oznaczenie peta"}</button> :
+        cell.pet_names?.length === 1 ?
+          <button role="menuitem" disabled={savingPet} onClick={()=>savePet(cell.pet_names![0],true)}>Zapamiętaj nazwę peta</button> :
+          <button role="menuitem" onClick={()=>{setPetName(cell.pet_candidate_name??"");setEditing("pet");}}>Oznacz jako peta…</button>)}
       <div className="tile-menu-caption">OZNACZ OBIEKT NA TYM POLU</div>
       {annotationKinds.map(kind=><button role="menuitem" key={kind} disabled={!editable || !cell.items.length} onClick={()=>setEditing(kind)}><span style={{color:navigationStyles[kind].color}}>{navigationStyles[kind].symbol}</span>{navigationStyles[kind].label}<span className="tile-menu-chevron">›</span></button>)}
       <button role="menuitem" disabled={!editable || !cell.items.length} onClick={()=>setEditing("")}>Edytuj opis / warstwę…</button>
       {!editable && <p className="tile-menu-help">Oznaczanie wymaga bieżącej mapy na żywo.</p>}
     </> : editing==="pet" ? <form className="map-annotation-form" onSubmit={e=>{e.preventDefault();savePet(petName.trim());}}>
       <label>Nazwa peta<input className="mt-1 w-full rounded border border-gray-600 p-2" value={petName} maxLength={80} onChange={e=>setPetName(e.target.value)}/></label>
+      <label><input type="checkbox" checked={rememberPet} onChange={e=>setRememberPet(e.target.checked)}/> Oznaczaj jako peta każde stworzenie o tej nazwie na tym świecie</label>
       <button className="secondary-button mt-2" disabled={!sameCreature || !petName.trim() || savingPet}>Oznacz jako peta</button>
       {!sameCreature && <p role="status">Wybierz ponownie pole stworzenia na mapie na żywo.</p>}
     </form> : <AnnotationEditor cell={cell} scope={scope} enabled={editable} initialKind={editing} onClose={onClose}/>}

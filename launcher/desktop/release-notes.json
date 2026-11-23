@@ -1,5 +1,13 @@
 [
   {
+    "version":"v1.22.3",
+    "changes":[
+      {"title":"Jedno przejście po schodach wystarcza do wytyczenia trasy","detail":"Atlas łączy ręczny krok, dojście na piętro i niezależne potwierdzenie lądowania. Każdy kierunek jest weryfikowany osobno."},
+      {"title":"Wielopiętrowe expowisko ma pierwszeństwo","detail":"W zaznaczonym terenie planer preferuje pętlę przez więcej połączonych pięter. Możesz także zaakceptować proponowany łącznik."},
+      {"title":"Atlas zapamiętuje nazwy petów","detail":"Przy oznaczaniu możesz zapamiętać dokładną nazwę na tym świecie. Reguła działa także po zmianie ID, gdy gra udostępnia nazwę stworzenia."}
+    ]
+  },
+  {
     "version":"v1.22.2",
     "changes":[
       {"title":"Atlas zapamiętuje przejścia także po 2000 obserwacji","detail":"Zachowuje wcześniejsze dane, a nowe obserwacje zapisuje pojedynczo. Przy brakującym połączeniu wskazuje odnotowane miejsca do sprawdzenia."},

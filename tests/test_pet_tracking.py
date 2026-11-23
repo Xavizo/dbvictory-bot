@@ -173,3 +173,45 @@ def test_manual_label_rejects_ambiguous_stale_or_replaced_creatures():
     with pytest.raises(ValueError):
         gs.pets.label_visible(START, old["pet_ref"], "Bills")
     assert not gs.pets.is_pet(PET) and not gs.pets.is_pet(WILD)
+
+def test_remembered_pet_matches_a_new_id_by_fresh_exact_name_and_can_be_forgotten(tmp_path):
+    from pet_tracking import PetTracker
+    a = PetTracker()
+    a.bind_world(tmp_path,"world",1900)
+    def read(pets, cid, name, age=0):
+        now=time.time()
+        cell=dict(x=51,y=50,z=7,occupants=1,occupant_types={"monster":1})
+        pets.observe_map([cell],now,{(*START,1):cid},
+                         {cid:dict(x=51,y=50,z=7,name=name,t=now-age)})
+        return cell
+    first=read(a,PET,"Bills")
+    a.label_visible(START,first["pet_ref"],"Bills",remember=True)
+    b=PetTracker()
+    b.bind_world(tmp_path,"world",1900)
+    assert not read(b,WILD,"Bills",age=8).get("pet_names")
+    assert not read(b,PET,"Bills Warrior").get("pet_names")
+    other=read(b,WILD,"BILLS")
+    assert other["pet_names"]==["Bills"] and other["pet_remembered"]
+    assert b.is_pet(WILD)
+    c=PetTracker()
+    c.bind_world(tmp_path,"elsewhere",1900)
+    assert not read(c,WILD,"Bills").get("pet_names")
+    b.label_visible(START,other["pet_ref"],None)
+    d=PetTracker()
+    d.bind_world(tmp_path,"world",1900)
+    assert not read(d,WILD,"Bills").get("pet_names")
+
+
+def test_server_confirmed_pet_can_be_remembered_then_forgotten_without_losing_owner_evidence(tmp_path):
+    gs = GameState()
+    gs.pets.bind_world(tmp_path, "world", 1900)
+    sample(gs, [(START, 1, PET)])
+    look(gs)
+    reply(gs, "You see Bills.\nMaster of Another Player.")
+    cell = sample(gs, [(START, 1, PET)])["cells"][0]
+    gs.pets.label_visible(START, cell["pet_ref"], "Bills", remember=True)
+    cell = sample(gs, [(START, 1, PET)])["cells"][0]
+    assert cell["pet_remembered"]
+    gs.pets.label_visible(START, cell["pet_ref"], None)
+    cell = sample(gs, [(START, 1, PET)])["cells"][0]
+    assert cell["pet_names"] == ["Bills"] and not cell.get("pet_remembered")

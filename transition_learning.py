@@ -145,7 +145,8 @@ class TransitionLearner:
         self._view = {}
         self._load()
         if not self.storage_error:
-            self._load_recovered_steps()
+            self._load_recovered_steps(self.path.with_suffix(".recovered.json"))
+            self._load_recovered_steps(self.path.with_suffix(".steps.json"))
         self._publish("waiting")
 
     @staticmethod
@@ -194,11 +195,11 @@ class TransitionLearner:
             self._validate(row)
         return rows
 
-    def _load_recovered_steps(self):
+    def _load_recovered_steps(self, path):
         # Optional local evidence reconstructed from historical movement reports.
         # It never replaces an observed exit or increases live observation counts.
         try:
-            rows = self._read_observations(self.path.with_suffix(".recovered.json"))
+            rows = self._read_observations(path)
         except FileNotFoundError:
             return
         except (ValueError, KeyError, TypeError, AttributeError, OSError):
@@ -210,8 +211,9 @@ class TransitionLearner:
         destinations = {}
         for row in rows:
             entry, exit_pos = row["entry"], row["exit"]
-            if (row["action"] == "step" and row["evidence"] == "observed" and row["reason"] == "matched_command"
-                    and row["count"] >= 2 and row["entry_items"] and entry and distance(row["origin"], entry) == 1
+            corroborated = row["reason"] == "confirmed_step" or (row["reason"] == "matched_command" and row["count"] >= 2)
+            if (row["action"] == "step" and row["evidence"] == "observed" and corroborated
+                    and row["entry_items"] and entry and distance(row["origin"], entry) == 1
                     and abs(entry[2] - exit_pos[2]) == 1 and max(abs(entry[k] - exit_pos[k]) for k in (0, 1)) <= 1):
                 key = tuple(entry)
                 destinations.setdefault(key, {})[tuple(exit_pos)] = row
@@ -228,7 +230,7 @@ class TransitionLearner:
             raise ValueError()
         if row["action"] not in ACTIONS or row["evidence"] not in {"observed","review"} or row["direction"] not in {"up","down","same_floor"}:
             raise ValueError()
-        if row["reason"] not in {"matched_command","multiple_commands","no_command","incomplete_entry","long_jump","door_crossing","multiple_steps","sample_gap"}:
+        if row["reason"] not in {"matched_command","confirmed_step","multiple_commands","no_command","incomplete_entry","long_jump","door_crossing","multiple_steps","sample_gap"}:
             raise ValueError()
         if type(row["count"]) is not int or not 1<=row["count"]<=1000000:
             raise ValueError()
@@ -347,6 +349,20 @@ class TransitionLearner:
                       first_seen=old["first_seen"] if old else wall,last_seen=wall)
         self.records[record["id"]] = record
         self._save(record)
+
+    def learn_floor_steps(self, steps, tiles):
+        from floor_step_witness import observed_stair
+        for origin, entry, dest in steps:
+            row = observed_stair(origin, entry, dest, tiles.get(entry))
+            if row is None:
+                continue
+            # The regular learner may already have recorded this crossing.
+            # Keep independently observed conflicting exits for ambiguity checks.
+            if any(r["evidence"] == "observed" and r["action"] == "step"
+                   and r["entry"] == row["entry"] and r["exit"] == row["exit"]
+                   and set(row["entry_items"]) <= set(r["entry_items"]) for r in self.records.values()):
+                continue
+            self._record(row, time.time())
 
     def _attribute(self, previous, current, commands):
         origin, destination = list(previous["center"]),list(current["center"])

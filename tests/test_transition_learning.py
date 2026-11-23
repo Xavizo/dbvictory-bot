@@ -293,3 +293,29 @@ def test_monitor_suspends_while_automated_or_dead(tmp_path,monkeypatch,mode):
     monitor._learn(sample(),{"sha256":"a"})
     assert actual.snapshot()["status"]==("learning" if mode=="manual" else "suspended")
     assert not actual.path.exists()
+
+
+def test_one_confirmed_step_persists_and_never_creates_an_inputless_reverse(tmp_path):
+    scope = "a"*64
+    learner = tl.TransitionLearner(tmp_path,scope)
+    a,b,c=tuple(ORIGIN),tuple(ENTRY),tuple(EXIT)
+    cell=dict(items=[dict(id=469)],navigation=[dict(kind="passage",item_id=469)])
+    learner.learn_floor_steps([(a,b,c),(a,b,c)],{b:cell})
+    assert len(learner.records)==1
+    obs=next(iter(learner.records.values()))
+    assert obs["reason"]=="confirmed_step" and obs["count"]==1 and obs["entry"]==ENTRY and obs["exit"]==EXIT
+    assert tl.TransitionLearner(tmp_path,scope).records==learner.records
+    for kind in ("ladder","teleport","rope_spot"):
+        other=tl.TransitionLearner(tmp_path/kind,scope)
+        other.learn_floor_steps([(a,b,c)],{b:dict(items=cell["items"],navigation=[dict(kind=kind,item_id=469)])})
+        assert not other.records
+
+def test_archive_with_one_corroborated_traversal_survives_reopen(tmp_path):
+    scope = "a"*64
+    learner = tl.TransitionLearner(tmp_path,scope)
+    row = dict(origin=ORIGIN,entry=ENTRY,exit=EXIT,action="step",direction="up",
+               evidence="observed",reason="confirmed_step",item_id=None,tool_id=None,
+               entry_items=[469],count=1,first_seen=1,last_seen=1)
+    row["id"]=learner._key(row)
+    learner.path.with_suffix(".steps.json").write_text(json.dumps(dict(version=1,scope=scope,records=[row])))
+    assert tl.TransitionLearner(tmp_path,scope).records=={row["id"]:row}

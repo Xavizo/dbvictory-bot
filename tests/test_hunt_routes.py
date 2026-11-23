@@ -315,3 +315,15 @@ def test_missing_floor_suggests_revisiting_a_direction_without_adding_a_passage(
     completed = propose(atlas, edges, dict(req, selected=selected))
     assert {p[2] for p in completed['path']} == {7,8,9}
     assert not completed.get('floor_checks')
+
+
+def test_default_prefers_connected_floors_over_a_larger_disconnected_flat_region(tmp_path):
+    atlas, req, edges = fixture(tmp_path)
+    sel=[[x,32,7] for x in range(80,160,8)] + [[32,32,z] for z in (7,8,9)]
+    atlas.observe(sample([cell(x,32,7) for x in range(80,160)]))
+    sel += [[32,24,z] for z in (7,8,9)]
+    from hunt_routes import GroundMap, circuit
+    from collections import Counter
+    allowed=set(map(tuple,sel))
+    route=circuit(atlas,edges,GroundMap(atlas,edges,allowed=allowed),allowed,Counter(),[],choose_region=True)
+    assert {p[2] for p in route["path"]} == {7,8,9} and route["transitions"] >= 4
