@@ -1,5 +1,9 @@
 [
   {
+    "version":"v1.25.2",
+    "changes":[{"title":"Plan przebudowy silnika po audycie vBota","detail":"W bazie wiedzy opisaliśmy kolejność zmian w odczycie zdarzeń, rozpoznawaniu stworzeń, automatyce, Cavebocie i Atlasie oraz wyniki 512 testów bazowych."}]
+  },
+  {
     "version":"v1.25.1",
     "changes":[{"title":"Plan poprawek Hunter Knife i sesji","detail":"Baza wiedzy zawiera odtworzenia utraty ciała po kroku, opóźnionego Loot i milczącego panelu oraz kryteria wydania poprawek."}]
   },

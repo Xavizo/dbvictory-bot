@@ -2,7 +2,7 @@
 
 Stan kodu DBVictory `b03ad36`, vBot 4.8 `09d6816`, OTCv8 `aacfe3f`. Ten dokument odróżnia obserwacje w źródłach, odtworzenia z atrapami, pomiar lokalny i propozycje zmian. Audyt dotyczy architektury. Wersja, która udostępnia bazę wiedzy przez MCP, nie zmienia procesu łączenia ani logiki gry. [Pełny katalog](modules.md) · [Integracja z klientem](architecture.md)
 
-[Plan wdrożenia, wyniki symulacji i instrukcja uruchomienia](#plan-wdrożenia-i-kryteria-wydania)
+[Pełny plan przebudowy silnika](#pełny-plan-przebudowy-silnika) · [Pilotaż Hunter Knife i sesji](#plan-wdrożenia-i-kryteria-wydania)
 
 ## Pierwsze decyzje i ich koszt
 
@@ -64,7 +64,7 @@ W praktyce mobilizacja wszystkich modułów co 10 ms nie jest warunkiem płynno�
 
 ## Plan wdrożenia i kryteria wydania
 
-Punktem odniesienia jest v1.25.0 (`b7706c1`). Plan przyznaje pierwszeństwo Hunter Knife, ponieważ w aktualnej logice udało się powtórzyć dwie konkretne usterki. Poniższe czasy pochodzą z wirtualnego zegara i określonych sekwencji wejściowych. Kryteria pilotażu są propozycją do oceny przyszłych wydań.
+Punktem odniesienia jest v1.25.0 (`b7706c1`). Ten pilotaż obejmuje Hunter Knife i gotowość sesji. W logice noża udało się powtórzyć dwie konkretne usterki. Poniższe czasy pochodzą z wirtualnego zegara i określonych sekwencji wejściowych. Kryteria pilotażu są propozycją do oceny przyszłych wydań.
 
 ### Etapy
 
@@ -110,3 +110,39 @@ W 699 raportach ruchu, 23 nagraniach i 173 raportach okrążeń nie znaleziono a
 Przy pierwszym pilotażu zebrać co najmniej po 30 jednoznacznych własnych ciał dla gry ręcznej i Cavebota w podobnych warunkach. Osobno podać ciała dostępne, pominięte po ruchu, przypisane niejednoznacznie, próby wysłane, potwierdzone i odmowy. Porównać medianę, p95 i liczbę próbek dla czasu od gotowego ciała do próby oraz od potwierdzenia do następnego kroku. Schowane ciała i utrata zasięgu wymagają odrębnych grup. Liczba 30 jest propozycją na pierwszy pomiar. Nie przyjmujemy czasu serwerowego z symulacji.
 
 Wydawać etapy oddzielnie. Dla etapu noża warunkiem przejścia są zielone testy akceptacyjne, brak podwójnych użyć oraz poprawne zachowanie przy odmowie i nieznanym wyniku. Jeśli wystąpi powtórzenie po niepewnym wysłaniu albo użycie na niejednoznacznym ciele, zatrzymać pilotaż modułu Hunter Knife, zachować raport i wrócić do poprzedniego przetestowanego wydania przy najbliższym bezpiecznym starcie. Wyników pilotażu nie należy wyprowadzać z samego faktu, że launcher zainstalował aktualizację.
+
+## Pełny plan przebudowy silnika
+
+Hunter Knife jest pierwszym przypadkiem użycia wspólnej obsługi zdarzeń. Poniższa kolejność dotyczy całego silnika. Ze wzorca vBota warto przenieść możliwość obudzenia modułu po zmianie w świecie. DBVictory ma już obserwator, stan postaci, potwierdzenia komend, osobne zadania walki i ruchu oraz historię Atlasu. Zmiany można wprowadzać po jednym odbiorcy przy zachowaniu starych szkiców i profili. [Audyt hosta OTCv8](architecture.md) · [Katalog modułów](modules.md)
+
+| Etap | Co zmieniamy | Próba, która rozstrzyga o gotowości |
+|---|---|---|
+| 1. Sesja i zdarzenia z obecnych źródeł | Spisać dla każdej rodziny danych jej źródło, dokładność czasu, warunek świeżości i sposób odzyskania po luce. Zacząć od HP/Ki, pozycji, zmiany pola i stosu, stworzeń, celu, anulowania ruchu, wiadomości gry i Loot. Opisywać przychodzące zmiany oraz pełne odczyty z użyciem wspólnej generacji sesji, kolejności w obrębie źródła i czasu obserwacji. Po luce unieważniać tylko zależne wnioski. | Wprowadzić brak odczytu, częściową ramkę, spóźniony wynik i szybki relog. Pozycja względna czeka na pozycję absolutną. Świeże HP może nadal wybudzić ocenę leczenia. Stara sesja nie podmienia danych nowej. |
+| 2. Stworzenia i obraz mapy | Uzgodnić wpisy mapy, listy stworzeń i zmian HP z bieżącym stanem. Rozróżnić pierwsze pojawienie, przesunięcie, utratę kontaktu, ponowne dostrzeżenie i potwierdzoną śmierć. Zachować typ nieustalony i źródło klasyfikacji. Ograniczyć tożsamość do życia stworzenia w danej sesji. | Pet i dziki Bills na jednej kratce, luka na liście, ponownie użyty ID oraz zniknięcie bez potwierdzonej śmierci. Walka, Atlas i alerty zachowują zgodne klasyfikacje. Pet zajmuje pole i nie powiększa grupy do lurowania. |
+| 3. Akcje i automatyka | Rozwinąć istniejący rejestr komend. Osobno zapisać zamiar, przekazanie i obserwowany skutek. Zdarzenia ręczne mają własne źródło, a niejednoznaczny skutek pozostaje bez przypisania. Pierwszy przekrój obejmuje ruch przy ciele i Hunter Knife. Następnie mikstury HP/Ki, Barrier Band, Speed Up, czary i zmiany ekwipunku. Budzić odbiorców po zmianie stanu i po upływie właściwego cooldownu. | Niepewny wynik, przełożenie przedmiotu w plecaku, odnowienie efektu ręcznie i kilka ciał na polu. Zero podwójnych użyć, zero użyć na cudzym lub niejednoznacznym ciele. Osobne czasy od obserwacji do decyzji oraz od wysłania do potwierdzenia. |
+| 4. Cavebot, walka i lurowanie | Podłączyć niezależne decyzje ruchu, walki i leczenia do uzgodnionego stanu. Zachować jednego wykonawcę ruchu. Dla oczekiwania zapisać przyczynę, zdarzenie pozwalające ruszyć i termin ponownej oceny. Rozdzielić krok, zmianę piętra, zaliczenie waypointu i domknięcie pętli. W walce używać aktualnej osiągalności i wiedzy o grupie. | Anulowany krok, ręczne przesunięcie, schody, zamknięte drzwi, wolny mob i grupa przed przewężeniem. Mierzyć powrót na trasę, brak powtórzenia kroku, ciągłość leczenia i osiągalnej walki. Na obiegu porównać też miejsce postoju i zgodność licznika okrążeń. |
+| 5. Atlas, nagrywanie i raporty | Zapisywać pierwsze spotkanie, dalszą drogę moba, wynik walki oraz XP jako oddzielne fakty. Aktualizować zmienione sektory. Używać tych samych faktów przy szacowaniu spawnu, planowaniu zaznaczonych pięter i raportowaniu XP/Senzu na okrążenie. | Przeciągnąć moba z sali do korytarza. Pierwszy kontakt pozostaje w sali, śmierć w korytarzu, ponowna próbka nie podwaja wyniku. Dla trasy wielopiętrowej sprawdzić pokrycie, potwierdzone schody oraz powrót. |
+| 6. Panel i launcher | Wiek danych i generację sesji pokazywać już od pierwszego etapu. Na końcu spiąć gotowość klienta, panelu i domen oraz zapisane profile w jeden czytelny przebieg startu. | Zimny start, klient już otwarty, utrata samego panelu i szybki relog. Stary odczyt nie może oznaczać gotowości. Każdy włączony moduł rozpoczyna pracę najwyżej raz na właściwą sesję. |
+
+### Co znaczy pokrycie danych z pakietów
+
+Aktualny obserwator rozróżnia m.in. pominiętą kopię i zastosowany odczyt częściowy. Liczba zastosowanych ramek nie dowodzi, że odczytano wszystkie zawarte w nich zdarzenia. W pierwszym etapie powstanie tabela rodzin obserwacji z przykładami rozpoznanych skutków i luk. W raporcie dla sesji pokazać liczniki obserwatora, wiek ostatniej poprawnej próbki każdej rodziny oraz zakres utraconego zaufania. Brak informacji o nieznanym zdarzeniu pozostaje niewiadomą. Wystarczą liczniki, znaczniki czasu i przyczyny. [Obserwator i testy](../../tests/test_packet_observer.py) · [Stan postaci](../../client_player_state.py)
+
+### Jak przełączać moduły i co mierzyć
+
+Odtworzyć ten sam ślad z tym samym zegarem i ustawieniami w dotychczasowym i nowym odbiorcy. Nowy odbiorca najpierw tylko raportuje decyzje. Porównać przypisanie zdarzenia, decyzję, czas do decyzji p50/p95, liczbę prób i potwierdzony efekt. Osobno policzyć brak decyzji, odmowy i wygasłe próby, aby krótsze czasy nie ukryły pominiętych akcji. Sprawdzić też p95 opóźnienia pętli silnika i maksymalną kolejkę podczas dużej liczby zmian mapy. Przełączać pojedynczą domenę dopiero po wyjaśnieniu różnic. W każdym przebiegu jedna ścieżka wykonuje akcje. Cofnięcie zmiany domeny ma zachować profil, zapisany szkic i potwierdzony postęp.
+
+Pierwszy nowy test przekrojowy powinien objąć jedną chronologię. Ręczny krok przy własnym ciele, utrata jednej próbki mapy, aktualizacja HP, odbudowa pozycji, relog i spóźnione potwierdzenie poprzedniej sesji. Sprawdzić, czy właściwa generacja zachowuje prawo do ciała w zasięgu, czy leczenie reaguje na aktualne HP, oraz czy po relogu wygasają stare akcje i dowody własności. Następnie dołączyć zapisane obiegi Saiyan – Vegeta East (powrót pętli), Ultra Gotrunks (schody) i Mutated Namekjin (obejście po anulowaniu kroku). To próby zaplanowane dla porównania implementacji.
+
+### Stan początkowy do porównań
+
+Na źródłach `5255504` uruchomiono cztery niezależne zestawy offline. Wyniki dotyczą dotychczasowej implementacji. Zestaw odtworzenia restartu używa lokalnych procesów z syntetycznym stanem gry.
+
+| Zestaw | Wynik | Moduły testowe w katalogu `tests` |
+|---|---|---|
+| Odczyt, kolejność, dostarczenie i relog | 100 zaliczonych | `test_packet_observer`, `test_command_delivery`, `test_engine_restart_recovery`, `test_relogin_identity` |
+| Stworzenia, nagrywanie, trasy i raporty | 67 zaliczonych | `test_pet_tracking`, `test_adaptive_recording`, `test_hunt_areas`, `test_hunt_routes`, `test_cavebot_reports` |
+| Cavebot, walka, lurowanie, Hunter Knife | 124 zaliczone, 5 oczekiwanych niepowodzeń | `test_automation_domains`, `test_v2_combat`, `test_lure_reachability`, `test_lure_origin_recovery`, `test_lure_positioning`, `test_hunter_knife`, `test_hunter_knife_movement_replay`, `test_hunter_knife_group_replay` |
+| Automatyka, alerty, stan postaci, przejścia i mapa | 221 zaliczonych | `test_potions`, `test_barrier_band`, `test_speed_up`, `test_game_alerts`, `test_transition_learning`, `test_player_updates`, `test_world_minimap` |
+
+Pięć oczekiwanych niepowodzeń dotyczy dwóch błędów opisanych w pilotażu noża. Łącznie przeszło 512 testów. Pomiar opóźnień w działającej grze wymaga oddzielnej próby po wdrożeniu odpowiedniej domeny. [Potwierdzenia komend](../../command_delivery.py) · [Recovery po restarcie](../../tests/test_engine_restart_recovery.py) · [Współpraca ruchu, walki i leczenia](../../tests/test_automation_domains.py) · [Pierwsze spotkanie w Atlasie](../../hunt_sightings.py)
