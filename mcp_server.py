@@ -1071,6 +1071,27 @@ mcp = FastMCP(
     ),
 )
 
+_VBOT_KNOWLEDGE = Path(__file__).resolve().parent / "docs" / "vbot"
+
+
+@mcp.resource("dbvictory://knowledge/vbot/architecture", mime_type="text/markdown")
+def vbot_architecture() -> str:
+    """Audyt vBot 4.8, kontrakt z OTClientem i cykl sesji."""
+    return (_VBOT_KNOWLEDGE / "architecture.md").read_text(encoding="utf-8")
+
+
+@mcp.resource("dbvictory://knowledge/vbot/modules", mime_type="text/markdown")
+def vbot_modules() -> str:
+    """Pełny katalog plików, funkcji i zależności vBota."""
+    return (_VBOT_KNOWLEDGE / "modules.md").read_text(encoding="utf-8")
+
+
+@mcp.resource("dbvictory://knowledge/vbot/decisions", mime_type="text/markdown")
+def vbot_decisions() -> str:
+    """Decyzje dla DBVictory, dowody, pomiary i kryteria wdrożenia."""
+    return (_VBOT_KNOWLEDGE / "decisions.md").read_text(encoding="utf-8")
+
+
 # ── Direction helpers ───────────────────────────────────────────────
 
 DIR_MAP = {

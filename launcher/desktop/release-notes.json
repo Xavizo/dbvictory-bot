@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.25.0",
+    "changes":[
+      {"title":"Baza wiedzy vBota w MCP","detail":"Osobne zasoby opisują wszystkie moduły vBota, współpracę z OTClientem i wyniki prób dotyczących panelu oraz logowania DBVictory."}
+    ]
+  },
+  {
     "version":"v1.24.4",
     "changes":[
       {"title":"Szybszy Hunter Knife przy Cavebocie","detail":"Odsłonięte ciało można obrobić także po wybraniu kolejnego celu. Panel pokazuje czas od pojawienia się ciała do rozpoznania, próby i potwierdzenia."},

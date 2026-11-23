@@ -2,6 +2,10 @@
 
 A Tibia OTS bot powered by Claude Code via MCP (Model Context Protocol). Controls a game character through a MITM proxy, injected DLL, and automated action scripts.
 
+## Baza wiedzy vBota
+
+[Architektura klienta](vbot/architecture.md), [katalog wszystkich modułów](vbot/modules.md) i [wnioski dla DBVictory](vbot/decisions.md) są dostępne także bez uruchamiania gry jako zasoby MCP `dbvictory://knowledge/vbot/architecture`, `dbvictory://knowledge/vbot/modules` i `dbvictory://knowledge/vbot/decisions`.
+
 ## Dashboard
 
 ![Dashboard](dashboard.png)
