@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.24.3",
+    "changes":[
+      {"title":"Hunter Knife +1 także bez kanału Loot","detail":"Po walce z konkretnym celem automat rozpoznaje świeże ciało elementala na podstawie jego pozycji i zdobytego XP. Panel pokazuje osobno takie rozpoznania oraz wpisy Loot."}
+    ]
+  },
+  {
     "version":"v1.24.2",
     "changes":[
       {"title":"Spawny w widoku świata i podczas planowania","detail":"Wszystkie gatunki mają znaczniki przybliżonych miejsc pierwszego wykrycia, także bez wybrania filtra. Odkrywane sektory i mapa odświeżają się podczas chodzenia."},

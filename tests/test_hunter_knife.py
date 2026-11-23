@@ -102,7 +102,7 @@ def test_loot_channel_provenance_and_ownership_rejection():
 def test_fury_loot_with_display_time_and_channel_state():
     from types import SimpleNamespace
     from hunter_knife import loot_species
-    from hunter_knife_action import KnifeAutomation, WAITING_FOR_LOOT
+    from hunter_knife_action import KnifeAutomation, WAITING_FOR_BODY
 
     line = "[Fury Mutant Fire Elemental]: nothing."
     assert loot_species(line) == loot_species("13:51 " + line) == "fury mutant fire elemental"
@@ -111,12 +111,86 @@ def test_fury_loot_with_display_time_and_channel_state():
     assert loot_species("13:51 [Something Else]: nothing.") is None
     game = SimpleNamespace(personal_loot_channel=None)
     runtime = KnifeAutomation(game)
-    runtime.status = WAITING_FOR_LOOT
-    assert "rozpoznanie kanału" in runtime.panel_status()
+    runtime.status = WAITING_FOR_BODY
+    assert runtime.panel_status() == WAITING_FOR_BODY
     game.personal_loot_channel = 0
-    assert "Kanał Loot rozpoznany" in runtime.panel_status()
+    assert runtime.panel_status() == WAITING_FOR_BODY
     runtime.status = "Brak noża"
     assert runtime.panel_status() == "Brak noża"
+
+
+def combat_frames(*, xp=True, foreign=False, other_birth=False, still_alive=False,
+                  existing=0, other_death=False, targeted=True):
+    from types import SimpleNamespace as NS
+    from hunter_knife_action import KnifeAutomation
+
+    cid = 0x40000001
+    game = NS(position=A, attack_target_id=cid if targeted else 0, experience=120000, creatures={})
+    runtime = KnifeAutomation(game)
+    runtime.tool_ready = True
+    def frame(t, bodies, monster=False, elsewhere=False):
+        # B has an identical pre-existing foreign corpse throughout.
+        cells = [dict(tile(A, *bodies), occupant_types={"monster": int(monster)}),
+                 dict(tile(B, FRESH, *([FRESH] if elsewhere else [])), occupant_types={"player": int(foreign)})]
+        return runtime.next(dict(captured_at=t, cells=cells), t)
+    game.creatures[cid] = dict(x=A[0], y=A[1], z=A[2], name="Fury Mutant Fire Elemental",
+                               health=10, t=100)
+    before = [FRESH]*existing
+    frame(100, before, monster=True)
+    if not still_alive:
+        game.creatures.clear()
+    if other_death:
+        runtime.queue.death(dict(cid=cid+1, name="Rat", x=B[0], y=B[1], z=B[2]), 100.2)
+    frame(100.25, before + [FRESH], elsewhere=other_birth)
+    assert runtime.queue.possible_work(A, 100.4) == targeted
+    if xp:
+        game.experience += 12345
+    frame(100.7, before + [FRESH], elsewhere=other_birth)
+    if still_alive:
+        game.creatures[cid].update(x=B[0], t=101.3)
+    attempt = frame(101.3, before + [FRESH], elsewhere=other_birth)
+    return runtime, attempt
+
+
+def test_solo_fury_without_loot_uses_knife_only_on_new_target_body():
+    runtime, attempt = combat_frames()
+    assert runtime.queue.from_combat == 1 and not runtime.queue.loot
+    assert attempt.source == A and attempt.item["id"] == FRESH and attempt.item["stack"] == 2
+    assert B not in runtime.queue.stacks
+    assert runtime.queue.next_body(B, tile(B, FRESH)["items"]) is None
+
+
+def test_without_loot_ambiguous_or_unrelated_corpse_is_left_alone():
+    for kwargs in (dict(xp=False), dict(foreign=True), dict(other_birth=True),
+                   dict(still_alive=True), dict(existing=1), dict(other_death=True), dict(targeted=False)):
+        runtime, attempt = combat_frames(**kwargs)
+        assert attempt is None and not runtime.queue.stacks, kwargs
+
+
+def test_two_successive_targets_at_same_tile_without_loot_or_cavebot_target_clicks():
+    from types import SimpleNamespace as NS
+    from hunter_knife_action import KnifeAutomation
+
+    game = NS(position=A, attack_target_id=0, experience=20000, creatures={})
+    combat = NS(config={"enabled": True}, sent_target=0, target=None)
+    worker = KnifeAutomation(game, NS(status="running", combat=combat))
+    def frame(now, count, monster=False):
+        cell = dict(tile(A, *[FRESH]*count), occupant_types={"monster": int(monster)})
+        worker.next(dict(captured_at=now, cells=[cell]), now)
+    for i in range(2):
+        t = 100 + i*2
+        cid = 0x40000001 + i
+        combat.sent_target = cid
+        game.creatures[cid] = dict(name=NAME, x=A[0], y=A[1], z=A[2], health=10, t=t)
+        frame(t, i, monster=True)
+        del game.creatures[cid]
+        combat.sent_target = 0
+        game.experience += 1500
+        frame(t+.25, i+1)
+        frame(t+.9, i+1)
+        frame(t+1.4, i+1)
+    assert worker.queue.stacks[A].fresh == worker.queue.from_combat == 2
+    assert worker.queue.next_body(A, tile(A, FRESH, FRESH)["items"])[1]["stack"] == 3
 
 
 def test_status_line_denial_from_manual_and_automatic_uses():

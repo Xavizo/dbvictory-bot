@@ -10,7 +10,7 @@ from adaptive_cavebot import tool_location
 from protocol import build_move_item_packet, build_use_item_ex_packet
 
 NAME = "auto_hunter_knife"
-WAITING_FOR_LOOT = "Czekam na własny Loot"
+WAITING_FOR_BODY = "Czekam na świeże ciało po Twojej walce"
 
 
 def point(cell):
@@ -52,11 +52,7 @@ class KnifeAutomation:
         self.last_map = 0
 
     def panel_status(self):
-        if self.status != WAITING_FOR_LOOT:
-            return self.status
-        if self.game.personal_loot_channel is None:
-            return "Czekam na rozpoznanie kanału Loot"
-        return "Kanał Loot rozpoznany · czekam na własny wpis o elementalu"
+        return self.status
 
     def fighting(self):
         target_id = self.game.attack_target_id
@@ -117,7 +113,10 @@ class KnifeAutomation:
         # Confirm a transformation before the new count invalidates the previous claim.
         self.acknowledge(cells, stamp, now)
         if stamp != self.frame:
-            self.queue.observe(cells.values(), now)
+            target_id = self.game.attack_target_id
+            if self.controller and self.controller.status == "running" and self.controller.combat.config["enabled"]:
+                target_id = self.controller.combat.sent_target or target_id
+            self.queue.observe(cells.values(), now, game=self.game, target_id=target_id, sampled_at=stamp)
             self.frame = stamp
         if self.pending or not self.tool_ready or self.fighting():
             return None
@@ -164,6 +163,7 @@ async def run_knife(bot):
     client = None
     try:
         reader = None
+        next_refresh = 0
         next_inventory = 0
         location = None
         def enabled():
@@ -174,7 +174,13 @@ async def run_knife(bot):
             now = time.monotonic()
             sample = fresh_sample(bot)
             if not sample or gs.hp <= 0:
-                runtime.status = "Czekam na postać i świeżą mapę"
+                runtime.status = ("Czekam na odczyt HP postaci" if gs.hp <= 0
+                                  else "Czekam na mapę zgodną z pozycją postaci")
+                if not sample and now >= next_refresh:
+                    next_refresh = now + .25
+                    refresh = getattr(getattr(bot.state, "passive_map_monitor", None), "request_refresh", None)
+                    if refresh:
+                        refresh()
                 runtime.tool_ready = False
                 await bot.sleep(.12)
                 continue
@@ -188,11 +194,12 @@ async def run_knife(bot):
                     location = tool_location(await asyncio.to_thread(reader.snapshot), (KNIFE,))
                 except (OSError, ValueError):
                     location = None
-                if location and not runtime.tool_ready:
-                    runtime.status = WAITING_FOR_LOOT
-                runtime.tool_ready = bool(location)
-                if not location:
-                    runtime.status = "Brak noża 5908 w wyposażeniu lub otwartym plecaku"
+            if location and not runtime.tool_ready:
+                runtime.status = WAITING_FOR_BODY
+            runtime.tool_ready = bool(location)
+            if not location:
+                runtime.status = "Brak noża 5908 w wyposażeniu lub otwartym plecaku"
+            runtime.controller = getattr(bot.state, "adaptive_cavebot", None)
             a = runtime.next(sample, now)
             if a and location:
                 original = tuple(bot.position)

@@ -29,7 +29,7 @@ export default function HunterKnifePanel({ state, onRefresh }: {
     <span className="barrier-band-status">{enabled ? info?.status ?? "Oczekiwanie" : "Wyłączony"}</span>
     <button className={`action-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled}
       aria-label="Automatyczny Hunter Knife" disabled={busy || !!state?.automation_paused} onClick={toggle}><span/></button>
-    {info && <small className="barrier-band-help">Osobisty Loot {info.personal_loot} · Obrobione {info.processed} · Odmowy właściciela {info.denied??0}
+    {info && <small className="barrier-band-help">Z walki i XP {info.from_combat ?? 0} · Wpisy Loot {info.personal_loot} · Obrobione {info.processed} · Odmowy właściciela {info.denied??0}
       {info.unclassified_loot > 0 && ` · Wpisy bez potwierdzonego kanału ${info.unclassified_loot}`}</small>}
     {error && <p role="alert">{error}</p>}
   </section>;
