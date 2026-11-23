@@ -1,4 +1,5 @@
 import base64
+import os
 import sqlite3
 import struct
 import zlib
@@ -6,13 +7,14 @@ import zlib
 import pytest
 
 from world_minimap import world_floor
+from map_atlas import MapAtlas
 
 
 def write_map(path, flags=1):
     header = struct.pack('<4sHHI', b'OTMM', 12, 1, 0)
     blocks = []
     for floor in (7, 8):
-        raw = bytearray(64 * 64 * 3)
+        raw = bytearray((0, 255, 0)) * (64 * 64)
         start = (4 * 64 + 3) * 3
         raw[start:start+3] = bytes((flags, floor, 10))
         packed = zlib.compress(raw)
@@ -78,7 +80,46 @@ def test_partial_minimap_can_be_retried(tmp_path):
     with pytest.raises(ValueError):
         world_floor(path, None, 7)
     write_map(path, flags=0)
-    assert world_floor(path, None, 7)['sectors'] == []
+    sector, = world_floor(path, None, 7)['sectors']
+    assert png_rows(sector['terrain'])[4*65+1+3] == 8
+
+
+def test_live_colors_refresh_on_same_floor_without_file_save_or_tile_count_change(tmp_path):
+    path = tmp_path/'minimap.otmm'
+    write_map(path)
+    os.utime(path, (1, 1))
+    atlas = MapAtlas(tmp_path, "colors")
+
+    def observe(x, z, items, **source):
+        atlas.observe(dict(status="ready", cells=[dict(x=x, y=388, z=z, kind="clear", items=[
+            dict(id=300+n, stack=n, flags=[flag], minimap_color=color)
+            for n, (flag, color) in enumerate(items)])], **source))
+
+    # The same coordinates were known before the client supplied their colors.
+    observe(643, 7, [])
+    observe(644, 7, [])
+    def read(since=None):
+        return world_floor(path, atlas.path, 7, since=since, tile_count=atlas.total)
+    first = read()
+    observe(643, 7, [('ground', 129), ('ground_border', 24), ('on_bottom', 210), ('container', 45)])
+    observe(644, 7, [('ground', 129), ('on_top', 0)])
+    newer = read(first['revision'])
+    assert atlas.total == 2
+    assert png_rows(newer['sectors'][0]['terrain'])[4*65+4:4*65+6] == bytes((211, 130))
+    observe(644, 7, [('ground', 129)])
+    observe(644, 7, [('ground', 80)], stale=True)
+    observe(644, 7, [('ground', 81)], preview=True)
+    observe(644, 8, [('ground', 88)])
+    assert read(newer['revision']) == dict(floor=7, revision=newer['revision'])
+    # The next on-disk save is authoritative at colored pixels, while
+    # observations still fill genuinely blank pixels on that floor.
+    os.utime(path, (4000000000, 4000000000))
+    saved = read(newer['revision'])
+    assert png_rows(saved['sectors'][0]['terrain'])[4*65+4:4*65+6] == bytes((8, 130))
+    path.unlink()
+    reopened = MapAtlas(tmp_path, "colors")
+    offline = world_floor(path, reopened.path, 7, tile_count=reopened.total)
+    assert png_rows(offline['sectors'][0]['terrain'])[4*65+4:4*65+6] == bytes((211, 130))
 
 
 def test_populated_floor_spans_multiple_database_chunks(tmp_path):

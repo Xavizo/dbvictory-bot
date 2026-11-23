@@ -30,7 +30,7 @@ TRUE_GETTER_RVA = 0x6C940
 CREATURE_VTABLES = {0x8B6974:"player", 0x8B6A50:"self", 0x8BCCB0:"monster", 0x8BCD70:"npc"}
 U16_ATTRIBUTE_VTABLE_RVA = 0x8B6900
 WIDTH, HEIGHT = 18, 14
-FLAG_NAMES = {0: "ground", 3: "on_top", 4: "container", 6: "force_use", 7: "multi_use",
+FLAG_NAMES = {0: "ground", 1: "ground_border", 2: "on_bottom", 3: "on_top", 4: "container", 6: "force_use", 7: "multi_use",
               12: "not_walkable", 13: "not_moveable", 14: "blocks_projectiles",
               15: "not_pathable", 16: "pickupable", 252: "floor_change"}
 

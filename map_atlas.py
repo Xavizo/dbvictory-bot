@@ -19,6 +19,7 @@ from transition_learning import position,gate_entry_record
 from cavebot_combat import validate_combat
 from navigation_tools import WEB_ITEM_IDS, cuttable_web, has_cut_web, tool_kind, web_edge
 from recorded_rope import recorded_rope_edges
+from world_minimap import tile_color, save_colors
 
 CACHE_TILES=4096
 PAGE_SIZE=16
@@ -357,6 +358,10 @@ class MapAtlas:
                 db.execute("CREATE TABLE IF NOT EXISTS tiles (x INT,y INT,z INT,data TEXT,seen REAL,PRIMARY KEY(x,y,z))")
                 db.execute("CREATE INDEX IF NOT EXISTS tiles_floor_xy ON tiles(z,x,y)")
                 db.execute("CREATE INDEX IF NOT EXISTS tiles_seen ON tiles(seen DESC)")
+                db.execute("""CREATE TABLE IF NOT EXISTS world_pixels (
+                    z INTEGER, x INTEGER, y INTEGER, color INTEGER NOT NULL, observed REAL NOT NULL,
+                    revision INTEGER NOT NULL, PRIMARY KEY(z,x,y)) WITHOUT ROWID""")
+                db.execute("CREATE INDEX IF NOT EXISTS world_pixel_revision ON world_pixels(z,revision)")
                 db.execute("CREATE TABLE IF NOT EXISTS drafts (id TEXT PRIMARY KEY,name TEXT,points TEXT,updated REAL)")
                 if 'loop' not in {r[1] for r in db.execute('PRAGMA table_info(drafts)')}:
                     db.execute('ALTER TABLE drafts ADD COLUMN loop INTEGER NOT NULL DEFAULT 1')
@@ -403,6 +408,9 @@ class MapAtlas:
                     if visited not in self._visited_sectors:
                         self._pending_sectors.add(visited)
                 safe={k:cell[k] for k in ("x","y","z","kind")}
+                color = tile_color(cell["items"])
+                if color is not None and not sample.get("stale") and not sample.get("preview"):
+                    safe["minimap_color"] = color
                 safe["items"]=[{"id":i["id"],"flags":list(i.get("flags",[])),"stack":i["stack"]} for i in cell["items"][:16]]
                 if cell.get('web_cut') or has_cut_web(safe['items'],self.web_definitions):
                     safe['web_cut']=True
@@ -434,6 +442,7 @@ class MapAtlas:
                 added = db.executemany("INSERT OR IGNORE INTO tiles VALUES (?,?,?,?,?)",rows).rowcount
                 db.executemany("UPDATE tiles SET data=?,seen=? WHERE x=? AND y=? AND z=?",
                                [(raw,seen,x,y,z) for x,y,z,raw,seen in rows])
+                save_colors(db, (self._pending[key] for key in batch))
         except (OSError, sqlite3.Error) as exc:
             reason = getattr(exc, "sqlite_errorname", type(exc).__name__)
             if (getattr(exc,"sqlite_errorcode",0) & 0xff) in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):

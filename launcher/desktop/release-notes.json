@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.26.6",
+    "changes":[
+      {"title":"Kolory odkrywanego terenu na mapie świata","detail":"Atlas uzupełnia mapę świata kolorami pól obserwowanych podczas gry. Widok odświeża się również przy ponownej wizycie na znanym piętrze, zanim klient zapisze minimapę."}
+    ]
+  },
+  {
     "version":"v1.26.5",
     "changes":[
       {"title":"Druga próba Hunter Knife po braku potwierdzenia","detail":"Jeśli dwa kolejne odczyty w zasięgu pokazują nadal odsłonięte świeże ciało, nóż może ponowić użycie jeden raz. Działa również po powrocie do ciała. Odmowa właściciela kończy próby."}
