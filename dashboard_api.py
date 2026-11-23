@@ -998,6 +998,7 @@ def _build_state_json() -> str:
             "processed": gs.hunter_knife.done if getattr(gs, "hunter_knife", None) else 0,
             "personal_loot": getattr(gs, "knife_loot_count", 0),
             "unclassified_loot": getattr(gs, "knife_candidate_count", 0),
+            "denied": getattr(gs, "knife_denials", 0),
         },
         "barrier_band": st.band_scheduler.snapshot(),
         "speed_up": st.speed_scheduler.snapshot() if getattr(st,"speed_scheduler",None) else None,

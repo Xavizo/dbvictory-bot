@@ -1,6 +1,7 @@
 """Personal Loot and visible corpse stacks for the single-target Hunter Knife."""
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+import logging
 import re
 
 KNIFE = 5908
@@ -18,6 +19,13 @@ def loot_species(text):
     if match and match[1].casefold() in ELEMENTALS:
         return match[1].casefold()
     return None
+
+
+def ownership_denied(text):
+    message = text.strip().casefold().rstrip(".!")
+    message = message.removeprefix("sorry, ").removeprefix("sorry ")
+    return (message in ("you are not owner", "you are not the owner") or
+            message.startswith(("you are not owner of this", "you are not the owner of this")))
 
 
 def publish_feedback(game, parsed, kills, received_at):
@@ -38,8 +46,17 @@ def publish_feedback(game, parsed, kills, received_at):
             # A system text can look exactly like Loot; retain only a count
             # until its origin is verified for this client.
             game.knife_candidate_count += 1
-        if runtime and text.casefold().startswith(("you are not owner of this", "you are not the owner of this")):
-            runtime.rejected(received_at)
+        if ownership_denied(text):
+            pending = runtime.pending if runtime else None
+            auto = bool(pending and not pending.drop and 0 <= received_at - pending.sent <= 1.5)
+            manual_at = game.knife_manual_use_at
+            manual = manual_at is not None and 0 <= received_at - manual_at <= 2
+            if auto or manual:
+                game.knife_denials += 1
+                logging.getLogger(__name__).info("Hunter Knife 5908: odmowa właściciela (%s)",
+                                                "automatyka" if auto else "ręczne użycie")
+            if auto:
+                runtime.rejected(received_at)
     if runtime:
         for death in kills:
             runtime.queue.death(death, received_at)

@@ -1441,6 +1441,8 @@ async def start_bot() -> str:
                 pos = reader.read_position()
                 item_id = reader.read_u16()
                 stack_pos = reader.read_u8()
+                if item_id == 5908:
+                    state.game_state.knife_manual_use_at = _time.monotonic()
                 if item_id in HEALING_ITEMS:
                     mode = "self" if opcode == ClientOpcode.USE_ON_CREATURE else "use" if opcode == ClientOpcode.USE_ITEM else "use_with"
                     if opcode == ClientOpcode.USE_ON_CREATURE and reader.read_u32() != state.game_state.player_id:

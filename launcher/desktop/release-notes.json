@@ -1,5 +1,9 @@
 [
   {
+    "version":"v1.23.1",
+    "changes":[{"title":"Odmowy przy użyciu Hunter Knife","detail":"Panel liczy odebrane komunikaty o braku własności po użyciu noża. Po odmowie podczas automatycznej obróbki Cavebot zwalnia postój."}]
+  },
+  {
     "version":"v1.23.0",
     "changes":[
       {"title":"Hunter Knife +1 w Automatyce","detail":"Nóż 5908 czeka na osobisty Loot i świeże ciało elementala. Obsługuje stosy ciał i na czas obróbki zatrzymuje ruch Cavebota. Liczniki w panelu pokazują rozpoznany Loot i potwierdzone obróbki."}

@@ -95,6 +95,8 @@ class GameState:
         self.knife_feedback = deque(maxlen=96)
         self.knife_loot_count = 0
         self.knife_candidate_count = 0
+        self.knife_manual_use_at = None
+        self.knife_denials = 0
         # Chat messages ring buffer
         self.messages: deque = deque(maxlen=50)
 

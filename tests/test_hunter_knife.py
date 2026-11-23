@@ -99,6 +99,28 @@ def test_loot_channel_provenance_and_ownership_rejection():
     assert not runtime.queue.stacks
 
 
+def test_status_line_denial_from_manual_and_automatic_uses():
+    from types import SimpleNamespace as NS
+    from game_state import GameState
+    from hunter_knife import ownership_denied, publish_feedback
+    from hunter_knife_action import KnifeAutomation
+
+    game = GameState()
+    msg = NS(messages=[{"text":"Sorry, you are not owner."}],knife_feedback=[])
+    game.knife_manual_use_at = 10
+    publish_feedback(game,msg,[],10.7)
+    publish_feedback(game,msg,[],13.1)
+    assert game.knife_denials == 1
+    assert ownership_denied("You are not the owner of this corpse!")
+    assert not ownership_denied("Using the last Hunter Knife [+1]...")
+    runtime = game.hunter_knife = KnifeAutomation(game)
+    runtime.queue = observations([A],1,[tile(A,FRESH)])
+    runtime.pending = NS(source=A,drop=None,sent=runtime.started+.2)
+    publish_feedback(game,msg,[],runtime.started+.5)
+    assert game.knife_denials == 2 and not runtime.queue.stacks and not runtime.pending
+    assert runtime.done == 0
+
+
 def test_worker_waits_after_combat_confirms_two_layers_and_resumes_route(monkeypatch):
     from types import SimpleNamespace
     from hunter_knife_action import KnifeAutomation
