@@ -204,12 +204,61 @@ def test_external_edits_and_corrupt_storage_preserved(learner):
     assert loaded.path.read_text()=="broken" and loaded.snapshot()["storage_error"]
 
 
-def test_record_limit(learner,monkeypatch):
-    monkeypatch.setattr(tl,"MAX_RECORDS",1)
-    transition(learner,step())
+def test_full_legacy_store_accepts_new_passages_and_reopens(tmp_path):
+    scope = 'a' * 64
+    legacy = tmp_path / f'map_transitions-{scope[:16]}.json'
+    rows = []
+    for x in range(2000):
+        row = dict(origin=[x,100,7], entry=None, exit=[x,100,6], action='unknown',
+                   direction='up', evidence='review', reason='sample_gap', item_id=None,
+                   tool_id=None, entry_items=[], count=1, first_seen=1, last_seen=1)
+        row['id'] = tl.TransitionLearner._key(row)
+        rows.append(row)
+    original = json.dumps(dict(version=1,scope=scope,records=rows))
+    legacy.write_text(original)
+    learner = tl.TransitionLearner(tmp_path,scope)
+    transition(learner,step(),start=1)
     learner.reset()
-    transition(learner,step(),start=2,destination=[200,200,6])
-    assert learner.snapshot()["total"]==1 and learner.snapshot()["limit_reached"]
+    transition(learner,step(),start=2)
+    reopened = tl.TransitionLearner(tmp_path,scope)
+    assert not reopened.storage_error and len(reopened.records) == 2001
+    assert all(reopened.records[r['id']] == r for r in rows)
+    assert sum(r['count'] for r in reopened.records.values() if r['evidence']=='observed') == 2
+    assert legacy.read_text() == original
+
+
+def test_recovered_stairs_preserve_live_observations_and_ignore_ambiguous_entries(tmp_path):
+    scope = "a" * 64
+    def record(x, dx=0, count=2):
+        row = dict(origin=[x,100,7], entry=[x,99,7], exit=[x+dx,99,6], action="step",
+                   direction="up", evidence="observed", reason="matched_command", item_id=None,
+                   tool_id=None, entry_items=[469], count=count, first_seen=1, last_seen=2)
+        return dict(row, id=tl.TransitionLearner._key(row))
+    live, recovered = record(100), record(101)
+    learner = tl.TransitionLearner(tmp_path, scope)
+    learner._legacy.write_text(json.dumps(dict(version=1, scope=scope, records=[live])))
+    bundle = learner.path.with_suffix(".recovered.json")
+    bundle.write_text(json.dumps(dict(version=1, scope=scope, records=[
+        record(100,1), recovered, record(102,0), record(102,1), record(103,count=1)])))
+    loaded = tl.TransitionLearner(tmp_path, scope)
+    expected = {r["id"]:r for r in (live,recovered)}
+    assert loaded.records == expected
+    loaded._save(recovered)
+    assert tl.TransitionLearner(tmp_path, scope).records == expected
+    bundle.write_text('{"invalid":true}')
+    reopened = tl.TransitionLearner(tmp_path, scope)
+    assert not reopened.storage_error and reopened.records == expected
+
+
+def test_overlapping_learning_sessions_preserve_other_writers(learner):
+    transition(learner,step())
+    other = tl.TransitionLearner(learner.path.parent,learner.scope)
+    learner.reset()
+    transition(learner,step(),start=2)
+    transition(other,step(),start=4)
+    assert other.storage_error
+    reopened = tl.TransitionLearner(learner.path.parent,learner.scope)
+    assert next(iter(reopened.records.values()))['count'] == 2
 
 
 def test_nearest_search_includes_old_entries_outside_recent_twenty(learner):

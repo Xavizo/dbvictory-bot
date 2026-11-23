@@ -89,6 +89,7 @@ async function launcherWithClient(initialPid) {
     isDestroyed(){return false;}
     loadFile(file){webContents.mainFrame.url=pathToFileURL(file).href;}
     show(){}
+    hide(){stub.hidden=true;}
   }
   const substitutes = {
     electron:{app,BrowserWindow:TestWindow,ipcMain:{handle:(name,callback)=>handlers.set(name,callback)}},
@@ -106,18 +107,23 @@ async function launcherWithClient(initialPid) {
   return stub;
 }
 
-test("one Start opens the client and initializes the standalone panel once", async () => {
+test("cold Start keeps the panel closed until Connect", async () => {
   const client=await launcherWithClient(null);
   await Promise.all([client.start(),client.start()]);
   assert.equal(client.opens,1);
   assert.equal(client.view.phase,"starting");
-  assert.deepEqual(client.writes,["prepare\n"]);
-  client.onLine("PANEL GOTOWY");
+  assert.deepEqual(client.writes,["prepare-login\n"]);
+  client.onLine("OCZEKIWANIE NA POŁĄCZENIE");
   await client.poll();
   assert.equal(client.view.phase,"prepared");
-  assert.deepEqual(client.writes,["prepare\n"]);
+  assert.deepEqual(client.writes,["prepare-login\n"]);
   await Promise.all([client.connect(),client.connect()]);
-  assert.deepEqual(client.writes,["prepare\n","connect\n"]);
+  assert.deepEqual(client.writes,["prepare-login\n","connect\n"]);
+  assert.equal(client.hidden,undefined);
+  client.onLine("GOTOWE — możesz zalogować postać.");
+  await client.poll();
+  assert.equal(client.view.phase,"running");
+  assert.equal(client.hidden,true);
 });
 
 test("Start accepts an already-open client in one click", async () => {
@@ -131,15 +137,15 @@ test("Start accepts an already-open client in one click", async () => {
 test("a replacement client must be confirmed again on the character list", async () => {
   const client=await launcherWithClient(null);
   await client.start();
-  client.onLine("PANEL GOTOWY");
+  client.onLine("OCZEKIWANIE NA POŁĄCZENIE");
   await client.poll();
   client.pid=42;
   await client.connect();
   assert.equal(client.view.phase,"prepared");
-  assert.deepEqual(client.writes,["prepare\n"]);
+  assert.deepEqual(client.writes,["prepare-login\n"]);
   await client.connect();
   assert.equal(client.opens,1);
-  assert.deepEqual(client.writes,["prepare\n","connect\n"]);
+  assert.deepEqual(client.writes,["prepare-login\n","connect\n"]);
 });
 
 test("closing the launcher while the game is opening cannot advance startup", async () => {

@@ -4,7 +4,7 @@ const headings = {
   available:"Dostępna aktualizacja", recovery:"Aktualizacja do dokończenia", problem:"Launcher wymaga uwagi",
   preparing:"Klient gry", detecting:"Uruchamianie", clientError:"Uruchamianie", starting:"Uruchamianie",
   panel:"Uruchamianie", waiting:"Oczekiwanie", closing:"Zamykanie sesji", closed:"Sesja zakończona", running:"Panel gotowy",
-  prepared:"Panel gotowy",connecting:"Łączenie z grą"
+  prepared:"Wybór postaci",connecting:"Łączenie z grą"
 };
 const checkpoints = [
   {key:"client", pending:"Klient DBVictory", active:"Wykrywanie klienta DBVictory…", done:"Wykryto klienta DBVictory"},
@@ -49,7 +49,7 @@ function drawHistory(releases) {
 
 function drawSteps(s) {
   const failed=checkpoints.findIndex(step=>step.key===s.failedStep);
-  const position=failed>=0?failed:["prepared","connecting"].includes(s.phase)?checkpoints.length:["detecting","starting","panel","running"].indexOf(s.phase);
+  const position=failed>=0?failed:["prepared","connecting"].includes(s.phase)?1:["detecting","starting","panel","running"].indexOf(s.phase);
   const steps=$("#steps");
   steps.replaceChildren();
   if(position<0) return;
@@ -59,7 +59,7 @@ function drawSteps(s) {
     let label=item.pending;
     if(i<position) {li.className="done";icon.textContent="✓";label=item.done;}
     else if(i===failed) {li.className="failed";icon.textContent="×";label=s.text;}
-    else if(i===position) {li.className="active";label=item.key==="client"?s.text:item.active;}
+    else if(i===position && s.phase!=="prepared") {li.className="active";label=item.key==="client"||s.phase==="connecting"?s.text:item.active;}
     li.append(icon,document.createTextNode(label));steps.append(li);
   }
 }

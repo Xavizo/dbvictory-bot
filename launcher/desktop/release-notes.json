@@ -1,5 +1,13 @@
 [
   {
+    "version":"v1.22.2",
+    "changes":[
+      {"title":"Atlas zapamiętuje przejścia także po 2000 obserwacji","detail":"Zachowuje wcześniejsze dane, a nowe obserwacje zapisuje pojedynczo. Przy brakującym połączeniu wskazuje odnotowane miejsca do sprawdzenia."},
+      {"title":"Pokrycie pętli na każdym wybranym piętrze","detail":"Każdy wariant odwiedza osiągalne zaznaczone piętra. Po zaznaczeniu kilku pięter Atlas otwiera pełną pętlę. Możesz sprawdzić liczbę odwiedzonych sektorów na każdym piętrze również dla krótszych wariantów."},
+      {"title":"Panel wskazuje moment wejścia na postać","detail":"Gdy launcher otwiera klienta, główny panel pojawia się po wybraniu Połącz z grą. Nagłówek pokazuje gotowość do logowania i potwierdzoną sesję."}
+    ]
+  },
+  {
     "version":"v1.22.1",
     "changes":[{"title":"Płynniejszy marsz z włączoną walką","detail":"Po kroku i odświeżeniu mapy Cavebot od razu sprawdza, czy może ruszyć dalej lub powinien zatrzymać się przy grupie."}]
   },

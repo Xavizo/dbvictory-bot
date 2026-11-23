@@ -21,7 +21,7 @@ const variantNames:Record<VariantKind,string>={short:"Krótka",respawn:"Pod resp
 type Variant={kind:VariantKind;metrics:{seconds:number;xp_hour:number|null;encounters_hour:number;kept_visible:number;repeated_segments:number};
   geometry:Pick<Circuit,"path"|"points"|"links"|"covered"|"transitions"|"passages">;same_as?:VariantKind};
 type Comparison={variants:Variant[];visits:number;respawn_seconds:number;view_radius:number;observed_return_sectors:number;reference_laps:number;step_seconds:number;fight_seconds:number};
-type Circuit={comparison?:Comparison;path:Position[];points:Position[];links:{from_index:number;id:string}[];entrance:Position;
+type Circuit={floor_checks?:{point:Position;to_floor:number;exact:boolean}[];comparison?:Comparison;path:Position[];points:Position[];links:{from_index:number;id:string}[];entrance:Position;
   covered:number;total:number;missing:Position[];selected:Position[];via?:Position[];passages?:AtlasPassage[];connector?:AtlasConnector;sightings:number;transitions:number};
 const endpoint="http://127.0.0.1:8089/api/map/grounds";
 const label=(n:number|null)=>n===null?"—":n.toLocaleString("pl-PL");
@@ -198,6 +198,18 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     }
     return [...stats.values()].sort((a,b)=>a.floor-b.floor);
   },[discovery,check,applied,route]);
+  const selectedPath=activeOption?.geometry.path??baseRoute?.path;
+  const variantFloors=useMemo(()=>{
+    const visited=new Set((selectedPath??[]).map(([x,y,z])=>[Math.floor(x/side)*side,Math.floor(y/side)*side,z].join(",")));
+    const counts=new Map<number,{floor:number;covered:number;total:number}>();
+    for(const p of baseRoute?.selected??[]){
+      const row=counts.get(p[2])??{floor:p[2],covered:0,total:0};
+      row.total++;
+      if(visited.has(p.join(",")))row.covered++;
+      counts.set(p[2],row);
+    }
+    return [...counts.values()].sort((a,b)=>a.floor-b.floor);
+  },[selectedPath,baseRoute,side]);
   function pick(k:string){
     const automatic=k==="@local";
     if(automatic)k=localKey;
@@ -246,7 +258,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
         if(addConnector)setPreviousSelection({sectors:selected,via});
         setConfirmedVia(result.via??[]);
         baseEntrance.current=result.entrance;
-        setRoute(result);setVariant(result.comparison?.visits?"respawn":"full");setSelecting(false);setSaved({});
+        setRoute(result);setVariant(floors.length===1&&result.comparison?.visits?"respawn":"full");setSelecting(false);setSaved({});
       }
     }catch(e){if(!ctl.signal.aborted)setRouteError(e instanceof Error?e.message:"Nie udało się wyznaczyć trasy.");}
     finally{if(!ctl.signal.aborted)setPlanning("");}
@@ -292,7 +304,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
       habitats={showMonsters?observations.habitats:undefined} habitatSide={side} habitatName={showMonsters&&observations.habitats?species:""}
       toolbar={<button disabled={!!copy||busy||!!planning} onClick={onClose}>← Świat</button>}
       ground={{cells:area?.cells??[],marks:!showMonsters?[]:layer==="live"?(live?.marks??[]).map(m=>({position:m.position,exact:true,live:true,title:"Widoczne potwory: "+m.count})):observations.marks,side,editing:!!copy,toggle,focus,
-        route:dirty?undefined:route?.path,connector,via,passages:!dirty&&via.length?route?.passages:undefined,approach,missing:dirty?undefined:route?.missing,selected:copy?undefined:selected,selecting,selectSectors,
+        route:dirty?undefined:route?.path,connector,via,passages:dirty?undefined:route?.passages,approach,missing:dirty?undefined:route?.missing,selected:copy?undefined:selected,selecting,selectSectors,
         planApproach:route&&!planning&&!dirty&&!selecting?preview:undefined}}/>
     <aside className="hunt-area-panel">
       <h2>Planowanie pętli</h2>
@@ -351,6 +363,10 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
             </details>
           </section>}
           {route&&!dirty&&<><p>Pokrycie {route.covered}/{route.total} sektorów · {route.path.length-1} kroków · przejścia: {route.transitions}</p>
+            {variantFloors.length>1&&<div className="map-exclusions" aria-label="Pokrycie wybranego wariantu na piętrach">
+              {variantFloors.map(row=><button key={row.floor} title="Pokaż wybrane sektory na tym piętrze"
+                onClick={()=>setFocus({floor:row.floor,cells:route.selected.filter(p=>p[2]===row.floor)})}>Piętro {row.floor} · {row.covered}/{row.total}</button>)}
+            </div>}
             {connector&&<section aria-label="Proponowany łącznik" className="atlas-connector">
               <strong>Z łącznikiem · {connector.covered}/{route.total} sektorów</strong>
               <small>Turkusowy obrys pokazuje dodatkowy teren przejścia ({connector.sectors.length}).</small>
@@ -358,6 +374,12 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
               <button className="atlas-primary" disabled={!!planning} onClick={()=>preview(undefined,true)}>Dodaj łącznik</button>
             </section>}
             {route.missing.length>0&&!connector&&<small>Atlas nie znalazł w pobliżu łącznika z potwierdzonym powrotem.</small>}
+            {!connector&&!!route.floor_checks?.length&&<details><summary>Przejścia do sprawdzenia w grze</summary>
+              <small>Przejdź ręcznie wskazany odcinek i zatrzymaj się na chwilę po zmianie piętra. Potem przelicz pętlę.</small>
+              {route.floor_checks.map(h=><button key={h.point.join(",")+":"+h.to_floor}
+                onClick={()=>setFocus({floor:h.point[2],cells:[h.point]})}>
+                {h.point[2]} → {h.to_floor} · {h.exact?"pole":"okolica"} ({h.point.join(", ")})</button>)}
+            </details>}
             {!!route.missing.length&&<details><summary>Bez dojścia i powrotu ({route.missing.length})</summary>
               {route.missing.map(p=><button key={p.join(",")} onClick={()=>setFocus({floor:p[2],cells:[p]})}>{p.join(", ")}</button>)}</details>}
             {!!approach.length&&<small>Dojście · {approach.length-1} kroków</small>}

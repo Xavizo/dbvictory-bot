@@ -50,7 +50,8 @@ def test_console_aborted_before_start_never_claims_session(input_lines):
 
 
 @pytest.mark.parametrize('last_line',[None,'quit\n','connect\n'])
-def test_cold_start_initializes_the_engine_once_before_manual_connection(tmp_path,monkeypatch,last_line):
+@pytest.mark.parametrize('mode', ['prepare', 'prepare-login'])
+def test_cold_start_initializes_the_engine_once_before_manual_connection(tmp_path,monkeypatch,last_line,mode):
     from contextlib import asynccontextmanager
     import mcp
     import mcp.client.stdio
@@ -65,21 +66,22 @@ def test_cold_start_initializes_the_engine_once_before_manual_connection(tmp_pat
         async def __aenter__(self): return self
         async def __aexit__(self,*args): pass
         async def initialize(self): calls.append('initialized')
-    async def panel(session,name,args):
+    before = ['locked','initialized'] + (['panel'] if mode=='prepare' else [])
+    async def early_panel(session, name, args):
         assert (name,args)==('open_dashboard',{'standalone':True})
         calls.append('panel')
     async def connect(*args):
         calls.append('connected')
     async def lines():
-        yield 'prepare\n'
-        assert calls==['locked','initialized','panel']
+        yield mode+'\n'
+        assert calls==before
         if last_line:
             yield last_line
     (tmp_path/'.codex').mkdir()
     monkeypatch.setattr(launcher,'ROOT',tmp_path)
     monkeypatch.setattr(mcp.client.stdio,'stdio_client',transport)
     monkeypatch.setattr(mcp,'ClientSession',Session)
-    monkeypatch.setattr(launcher,'call',panel)
+    monkeypatch.setattr(launcher,'call',early_panel)
     monkeypatch.setattr(launcher,'start_checked',connect)
     asyncio.run(launcher.run_console(SimpleNamespace(start=False,desktop=True),{},lines(),on_confirm=lambda:calls.append('locked')))
-    assert calls==['locked','initialized','panel']+(['connected'] if last_line=='connect\n' else [])
+    assert calls==before+(['connected'] if last_line=='connect\n' else [])

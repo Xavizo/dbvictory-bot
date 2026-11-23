@@ -4,9 +4,10 @@ Successful observations describe what happened, not the only possible method or
 a guarantee that a future attempt will work. Ambiguous samples stay unassigned.
 """
 from collections import deque
+from contextlib import closing
 import hashlib
 import json
-import os
+import sqlite3
 from pathlib import Path
 import struct
 import threading
@@ -17,8 +18,8 @@ from protocol import ClientOpcode as Op
 OFFSETS = {1:(1,0), 2:(1,-1), 3:(0,-1), 4:(-1,-1), 5:(-1,0), 6:(-1,1), 7:(0,1), 8:(1,1)}
 WALKS = {Op.WALK_NORTH:(0,-1), Op.WALK_EAST:(1,0), Op.WALK_SOUTH:(0,1), Op.WALK_WEST:(-1,0),
          Op.WALK_NORTHEAST:(1,-1), Op.WALK_SOUTHEAST:(1,1), Op.WALK_SOUTHWEST:(-1,1), Op.WALK_NORTHWEST:(-1,-1)}
-MAX_RECORDS = 2000
-MAX_FILE = 2 * 1024 * 1024
+LEGACY_MAX_RECORDS = 2000
+LEGACY_MAX_FILE = 2 * 1024 * 1024
 ACTIONS = {"step", "use", "use_with", "use_then_step", "use_with_then_step", "fly_up", "unknown"}
 
 
@@ -124,7 +125,9 @@ def door(cell):
 class TransitionLearner:
     def __init__(self, directory, scope):
         self.scope = scope
-        self.path = Path(directory) / f"map_transitions-{scope[:16]}.json"
+        self.path = Path(directory) / f"map_transitions-{scope[:16]}.sqlite3"
+        self._legacy = self.path.with_suffix(".json")
+        self._revision = 0
         self.records = {}
         self.storage_error = None
         self._stamp = None
@@ -141,53 +144,109 @@ class TransitionLearner:
         self._object_candidate = self._exit_check = None
         self._view = {}
         self._load()
+        if not self.storage_error:
+            self._load_recovered_steps()
         self._publish("waiting")
 
-    def _load(self):
-        if not self.path.exists():
-            return
+    @staticmethod
+    def _file_stamp(path):
         try:
-            stat = self.path.stat()
-            with self.path.open("rb") as stream:
-                raw = stream.read(MAX_FILE+1)
-            if len(raw) > MAX_FILE:
-                raise ValueError()
-            doc = json.loads(raw)
-            rows = doc["records"]
-            if doc["version"] != 1 or doc["scope"] != self.scope or not isinstance(rows,list) or len(rows)>MAX_RECORDS:
-                raise ValueError()
-            for row in rows:
-                required = {"id","origin","entry","exit","action","item_id","tool_id","entry_items","direction","evidence","reason","count","first_seen","last_seen"}
-                if (not required <= set(row) or set(row)-required-{"object_change","prepared_item_id"}) or not position(row["origin"]) or not position(row["exit"]) or (row["entry"] is not None and not position(row["entry"])):
-                    raise ValueError()
-                if "prepared_item_id" in row and (type(row["prepared_item_id"]) is not int or not 100<=row["prepared_item_id"]<=65535):
-                    raise ValueError()
-                if row["action"] not in ACTIONS or row["evidence"] not in {"observed","review"} or row["direction"] not in {"up","down","same_floor"}:
-                    raise ValueError()
-                if row["reason"] not in {"matched_command","multiple_commands","no_command","incomplete_entry","long_jump","door_crossing","multiple_steps","sample_gap"}:
-                    raise ValueError()
-                if type(row["count"]) is not int or not 1<=row["count"]<=1000000:
-                    raise ValueError()
-                if not all(type(row[k]) in (int,float) and 0<row[k]<1e12 for k in ("first_seen","last_seen")):
-                    raise ValueError()
-                if not isinstance(row["entry_items"],list) or len(row["entry_items"])>16 or any(type(v) is not int or not 100<=v<=65535 for v in row["entry_items"]):
-                    raise ValueError()
-                if any(row[k] is not None and (type(row[k]) is not int or not 100<=row[k]<=65535) for k in ("item_id","tool_id")):
-                    raise ValueError()
-                if "object_change" in row:
-                    change=row["object_change"]
-                    if (not isinstance(change,dict) or set(change)!={"kind","closed_id","open_id","behavior"}
-                            or change["kind"] not in {"door","level_gate","passage"}
-                            or change["behavior"] not in {"open_then_step","use_enters","manual_close","closes_after_exit","stays_open"}
-                            or any(type(change[k]) is not int or not 100<=change[k]<=65535 for k in ("closed_id","open_id"))):
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
+
+    def _load(self):
+        try:
+            if self.path.exists():
+                with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                    db.execute("BEGIN")
+                    meta = db.execute("SELECT scope,revision FROM store").fetchone()
+                    if not meta or meta[0] != self.scope or meta[1] < 1:
                         raise ValueError()
-                if row["id"] != self._key(row):
-                    raise ValueError()
-            self.records = {row["id"]:row for row in rows}
-            self._stamp = (stat.st_mtime_ns,stat.st_size)
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            self.records = {}
+                    for identity, raw in db.execute("SELECT id,data FROM observations"):
+                        row = json.loads(raw)
+                        self._validate(row)
+                        if row["id"] != identity:
+                            raise ValueError()
+                        self.records[identity] = row
+                    self._revision = meta[1]
+                return
+            self._stamp = self._file_stamp(self._legacy)
+            if self._stamp is None:
+                return
+            for row in self._read_observations(self._legacy):
+                self.records[row["id"]] = row
+        except (OSError, sqlite3.Error, ValueError, KeyError, TypeError, AttributeError):
+            self.records.clear()
             self.storage_error = "Plik obserwacji jest nieprawidłowy lub niedostępny; nie zostanie nadpisany."
+
+    def _read_observations(self, path):
+        with path.open("rb") as stream:
+            raw = stream.read(LEGACY_MAX_FILE + 1)
+        if len(raw) > LEGACY_MAX_FILE:
+            raise ValueError()
+        doc = json.loads(raw)
+        rows = doc["records"]
+        if doc["version"] != 1 or doc["scope"] != self.scope or not isinstance(rows, list) or len(rows) > LEGACY_MAX_RECORDS:
+            raise ValueError()
+        for row in rows:
+            self._validate(row)
+        return rows
+
+    def _load_recovered_steps(self):
+        # Optional local evidence reconstructed from historical movement reports.
+        # It never replaces an observed exit or increases live observation counts.
+        try:
+            rows = self._read_observations(self.path.with_suffix(".recovered.json"))
+        except FileNotFoundError:
+            return
+        except (ValueError, KeyError, TypeError, AttributeError, OSError):
+            import logging
+            logging.getLogger(__name__).warning("Could not load recovered atlas steps for %s", self.scope[:16])
+            return
+        known = {tuple(r["entry"]) for r in self.records.values()
+                 if r["entry"] and r["action"] == "step" and r["evidence"] == "observed"}
+        destinations = {}
+        for row in rows:
+            entry, exit_pos = row["entry"], row["exit"]
+            if (row["action"] == "step" and row["evidence"] == "observed" and row["reason"] == "matched_command"
+                    and row["count"] >= 2 and row["entry_items"] and entry and distance(row["origin"], entry) == 1
+                    and abs(entry[2] - exit_pos[2]) == 1 and max(abs(entry[k] - exit_pos[k]) for k in (0, 1)) <= 1):
+                key = tuple(entry)
+                destinations.setdefault(key, {})[tuple(exit_pos)] = row
+        for entry, exits in destinations.items():
+            if entry not in known and len(exits) == 1:
+                row = next(iter(exits.values()))
+                self.records[row["id"]] = row
+
+    def _validate(self, row):
+        required = {"id","origin","entry","exit","action","item_id","tool_id","entry_items","direction","evidence","reason","count","first_seen","last_seen"}
+        if (not required <= set(row) or set(row)-required-{"object_change","prepared_item_id"}) or not position(row["origin"]) or not position(row["exit"]) or (row["entry"] is not None and not position(row["entry"])):
+            raise ValueError()
+        if "prepared_item_id" in row and (type(row["prepared_item_id"]) is not int or not 100<=row["prepared_item_id"]<=65535):
+            raise ValueError()
+        if row["action"] not in ACTIONS or row["evidence"] not in {"observed","review"} or row["direction"] not in {"up","down","same_floor"}:
+            raise ValueError()
+        if row["reason"] not in {"matched_command","multiple_commands","no_command","incomplete_entry","long_jump","door_crossing","multiple_steps","sample_gap"}:
+            raise ValueError()
+        if type(row["count"]) is not int or not 1<=row["count"]<=1000000:
+            raise ValueError()
+        if not all(type(row[k]) in (int,float) and 0<row[k]<1e12 for k in ("first_seen","last_seen")):
+            raise ValueError()
+        if not isinstance(row["entry_items"],list) or len(row["entry_items"])>16 or any(type(v) is not int or not 100<=v<=65535 for v in row["entry_items"]):
+            raise ValueError()
+        if any(row[k] is not None and (type(row[k]) is not int or not 100<=row[k]<=65535) for k in ("item_id","tool_id")):
+            raise ValueError()
+        if "object_change" in row:
+            change=row["object_change"]
+            if (not isinstance(change,dict) or set(change)!={"kind","closed_id","open_id","behavior"}
+                    or change["kind"] not in {"door","level_gate","passage"}
+                    or change["behavior"] not in {"open_then_step","use_enters","manual_close","closes_after_exit","stays_open"}
+                    or any(type(change[k]) is not int or not 100<=change[k]<=65535 for k in ("closed_id","open_id"))):
+                raise ValueError()
+        if row["id"] != self._key(row):
+            raise ValueError()
 
     @staticmethod
     def _key(row):
@@ -200,29 +259,36 @@ class TransitionLearner:
             data["origin"] = row["origin"]
         return hashlib.sha256(json.dumps(data,sort_keys=True).encode()).hexdigest()[:20]
 
-    def _save(self):
+    def _save(self, row):
         if self.storage_error:
             return
         try:
-            current = self.path.stat() if self.path.exists() else None
-            stamp = (current.st_mtime_ns,current.st_size) if current else None
-            if stamp != self._stamp:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            initial = self._revision == 0
+            if initial and self._file_stamp(self._legacy) != self._stamp:
                 self.storage_error = "Plik obserwacji został zmieniony poza sesją; zapis wstrzymany."
                 return
-            self.path.parent.mkdir(parents=True,exist_ok=True)
-            data = json.dumps({"version":1,"scope":self.scope,"records":list(self.records.values())},ensure_ascii=False,indent=2).encode("utf-8")
-            if len(data)>MAX_FILE:
-                self.storage_error = "Osiągnięto limit rozmiaru pliku obserwacji."
-                return
-            temporary = self.path.with_suffix(".tmp")
-            with temporary.open("wb") as stream:
-                stream.write(data)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary,self.path)
-            stat = self.path.stat()
-            self._stamp = (stat.st_mtime_ns,stat.st_size)
-        except OSError:
+            # Import the complete legacy snapshot and the first change atomically.
+            # Later observations only write the affected row.
+            uri = self.path.resolve().as_uri() + ("?mode=rwc" if initial else "?mode=rw")
+            with closing(sqlite3.connect(uri, uri=True, timeout=.25)) as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                if initial:
+                    db.execute("CREATE TABLE store (scope TEXT PRIMARY KEY, revision INTEGER NOT NULL)")
+                    db.execute("INSERT INTO store VALUES (?,1)", (self.scope,))
+                    db.execute("CREATE TABLE observations (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+                    rows = self.records.values()
+                else:
+                    updated = db.execute("UPDATE store SET revision=revision+1 WHERE scope=? AND revision=?",
+                                         (self.scope, self._revision))
+                    if updated.rowcount != 1:
+                        self.storage_error = "Baza obserwacji została zmieniona poza sesją; zapis wstrzymany."
+                        return
+                    rows = (row,)
+                db.executemany("INSERT OR REPLACE INTO observations VALUES (?,?)",
+                               ((r["id"], json.dumps(r, ensure_ascii=False, separators=(",", ":"))) for r in rows))
+            self._revision += 1
+        except (OSError, sqlite3.Error):
             self.storage_error = "Nie udało się zapisać obserwacji; bieżące dane pozostają w pamięci."
 
     def enqueue(self, command, now=None):
@@ -271,18 +337,16 @@ class TransitionLearner:
         self._view = {"status":status,"total":len(rows),"observed":sum(r["evidence"]=="observed" for r in rows),
                       "records":[display(r) for r in rows[:20]],"nearby_records":[display(r) for r in nearby],
                       "storage_error":self.storage_error,"file":self.path.name,
-                      "limit_reached":len(rows)>=MAX_RECORDS,"passive":True}
+                      "passive":True}
 
     def _record(self, record, wall):
         record = {"item_id":None,"tool_id":None,"entry_items":[],**record}
         record["id"] = self._key(record)
         old = self.records.get(record["id"])
-        if old is None and len(self.records)>=MAX_RECORDS:
-            return
         record.update(count=min(1000000,old["count"]+1) if old else 1,
                       first_seen=old["first_seen"] if old else wall,last_seen=wall)
         self.records[record["id"]] = record
-        self._save()
+        self._save(record)
 
     def _attribute(self, previous, current, commands):
         origin, destination = list(previous["center"]),list(current["center"])

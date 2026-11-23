@@ -99,6 +99,8 @@ test('a discovered ground without a draft previews a loop and saves only on requ
     const opt=panel.find(n=>n.type==='button'&&nodes(n).some(c=>c.type==='strong'&&c.props.children===label));
     assert.ok(opt);await opt.props.onClick();panel=await render();
   };
+  assert.ok(panel.some(n=>n.type==='button'&&n.props['aria-pressed']===true&&nodes(n).some(c=>c.type==='strong'&&c.props.children==='Pełna')));
+  assert.ok(panel.some(n=>n.props['aria-label']==='Pokrycie wybranego wariantu na piętrach'));
   await chooseVariant('Krótka');
   const short=[points[0],[25,34,7],points[0]];
   assert.deepEqual(ground().route,short);

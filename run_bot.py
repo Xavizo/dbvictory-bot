@@ -109,14 +109,14 @@ async def run_console(args, env, lines, *, on_confirm=None):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     print('DBVictory Bot — uruchamianie bez Codexa\n', flush=True)
-    prepare_panel = False
+    prepare_mode = ""
     if not args.start:
         print('Pozostaw klienta na LIŚCIE POSTACI lub ekranie logowania.\n'
               'Start z zalogowanej gry zerwałby połączenie.\n'
               'Naciśnij Enter, gdy postać jest wylogowana; wpisz q, aby zrezygnować.', flush=True)
         answer = await anext(lines, '')
-        prepare_panel = getattr(args, 'desktop', False) and answer.strip() == 'prepare'
-        if not answer or (answer.strip() and not prepare_panel):
+        prepare_mode = answer.strip() if getattr(args, 'desktop', False) else ''
+        if not answer or (answer.strip() and prepare_mode not in {'prepare', 'prepare-login'}):
             return
     if on_confirm is not None:
         on_confirm()
@@ -126,9 +126,13 @@ async def run_console(args, env, lines, *, on_confirm=None):
         async with stdio_client(params,errlog=log) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
-                if prepare_panel:
-                    await call(session, 'open_dashboard', {'standalone': True})
-                    print('PANEL GOTOWY — silnik działa bez połączenia z grą.', flush=True)
+                if prepare_mode:
+                    # The launcher that installs this release may still run its older JS.
+                    if prepare_mode == 'prepare':
+                        await call(session, 'open_dashboard', {'standalone': True})
+                        print('PANEL GOTOWY', flush=True)
+                    else:
+                        print('OCZEKIWANIE NA POŁĄCZENIE', flush=True)
                     if (await anext(lines, '')).strip() != 'connect':
                         return
                 settings_file = ROOT / 'bot_settings.json'

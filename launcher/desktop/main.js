@@ -45,8 +45,8 @@ async function clientInfo(folder) {
 }
 function showStart(info={}) {
   const text = (info.clientOpen ?? view.clientOpen)
-    ? "Na liście postaci kliknij Start. Wejdź na postać po otwarciu panelu bota."
-    : "Start otworzy klienta DBVictory, uruchomi silnik i wyświetli panel.";
+    ? "Na liście postaci kliknij Start. Wejdź na postać po komunikacie „Zaloguj się do gry” w panelu."
+    : "Start otworzy klienta. Na liście postaci wybierz „Połącz z grą”.";
   set("ready",text,info);
 }
 async function check(defer) {
@@ -111,11 +111,7 @@ function watchSession(proc) {
         try {await fs.access(marker);} catch {return;}
         if (child!==proc) return;
         checkingPanel=false;clearTimeout(deadline);
-        if (awaitingConnection) {
-          set("prepared","Silnik i panel działają. Na liście postaci wybierz „Połącz z grą”, a potem wejdź na postać.");
-        } else {
-          set("running","Główne okno bota jest gotowe.");win.hide();
-        }
+        set("running","Główne okno bota jest gotowe.");win.hide();
       }
     } catch { /* A temporarily unavailable process listing does not end the session. */ }
     finally {probing=false;}
@@ -133,7 +129,10 @@ async function preparePrompt() {
     if (line.includes("Naciśnij Enter, gdy postać jest wylogowana")) {
       awaitingStart=true;clearTimeout(deadline);
       showStart();
-    } else if (line.startsWith("GOTOWE") || line.startsWith("PANEL GOTOWY")) {
+    } else if (line==="OCZEKIWANIE NA POŁĄCZENIE" && awaitingConnection) {
+      clearTimeout(deadline);
+      set("prepared","Zaloguj się na konto. Na liście postaci wybierz „Połącz z grą”.");
+    } else if (line.startsWith("GOTOWE")) {
       checkingPanel=true;set("panel","Silnik gotowy. Oczekiwanie na główne okno…");
     } else if (line.startsWith("BŁĄD:")||line.startsWith("Błąd launchera:")) {
       sessionError=line.slice(0,440);
@@ -202,7 +201,7 @@ async function action(name) {
       awaitingStart=false;
       set("starting","Uruchamianie silnika…",{clientOpen:true,windowPid:clientPid});
       watchSession(proc);
-      proc.stdin.write(awaitingConnection ? "prepare\n" : "\n");
+      proc.stdin.write(awaitingConnection ? "prepare-login\n" : "\n");
     } else if (name==="connect" && awaitingConnection && view.phase==="prepared" && !readOnly) {
       const proc=child;
       let pid;

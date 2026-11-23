@@ -190,6 +190,19 @@ def test_same_floor_connector_through_skipped_sector_is_optional(tmp_path):
     route = propose(atlas, [], dict(request, selected=selected, via=base['connector']['sectors']))
     assert route['covered'] == route['total'] == 2 and route['transitions'] == 0
 
+def test_short_and_respawn_visit_each_reachable_selected_floor(tmp_path):
+    atlas, req, edges = fixture(tmp_path)
+    selected = [[sx, 32, z] for sx in (24,32,40) for z in (7,8,9)]
+    # Stair interaction tiles are one tile north of the selected sectors.
+    via = [[32, 24, z] for z in (7,8,9)]
+    result = propose(atlas, edges, dict(req, selected=selected, via=via, compare=True))
+    for variant in result['comparison']['variants']:
+        route = variant['geometry']
+        assert route['path'][0] == route['path'][-1]
+        assert {p[2] for p in route['path'] if list(sector(p)) in selected} == {7,8,9}
+        assert route['transitions'] >= 4
+
+
 def test_compare_only_inside_selection_and_preserves_saved_geometry(tmp_path):
     atlas, req, edges = fixture(tmp_path)
     sel = [[32,32,7], [40,32,7], [32,32,8]]
@@ -285,3 +298,20 @@ def test_corridor_variation_keeps_both_ends_of_each_action():
     assert changed[remap[5]] == walk[5]
     assert [(changed[i-1][0],p,action) for i,(p,action) in enumerate(changed) if action] == [
         (path[-1],upstairs,'ladder'),(upstairs,path[-1],'down')]
+
+def test_missing_floor_suggests_revisiting_a_direction_without_adding_a_passage(tmp_path):
+    atlas, req, edges = fixture(tmp_path)
+    # Put these stair tiles inside the selected rooms, isolating the missing direction.
+    edges = [dict(e, entry=[e['origin'][0],33,e['origin'][2]]) for e in edges]
+    atlas.observe(sample([cell(*e['entry'],item=1956) for e in edges]))
+    from hunt_areas import catalogue
+    selected = next(a['cells'] for a in catalogue(atlas)['areas'] if a['id']==req['ground'])
+    review = dict(edges[-1], evidence='review', reason='sample_gap')
+    rows = [*edges[:-1], review, dict(review, entry=None, count=10)]
+    route = propose(atlas, rows, dict(req, selected=selected))
+    assert route['floor_checks'] == [dict(point=review['entry'], to_floor=8, exact=True)]
+    assert 9 not in {p[2] for p in route['path']}
+    assert all(t['id'] != review['id'] for t in route['passages'])
+    completed = propose(atlas, edges, dict(req, selected=selected))
+    assert {p[2] for p in completed['path']} == {7,8,9}
+    assert not completed.get('floor_checks')

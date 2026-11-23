@@ -302,6 +302,11 @@ def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, m
     start = full_walk[0][0]
     home_cost, home = return_tree(graph, start)
     pool = {}
+    selected = set(map(tuple, full['selected']))
+    required_floors = {p[2] for p in goals}
+    def covers_floors(path):
+        return len(required_floors) < 2 or required_floors <= {p[2] for p in path if sector(p) in selected}
+
     def add(walk):
         walk = walk.copy()
         p = walk[-1][0]
@@ -313,6 +318,8 @@ def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, m
         key = tuple(walk)
         if key not in pool:
             path = [p for p,_ in walk]
+            if not covers_floors(path):
+                return
             passages = {(a,b) for (a,_),(b,action) in zip(walk,walk[1:]) if action}
             pool[key] = model.estimate(path, passages)
     # Sample the coverage sweep and independent excursions towards dense packs.
@@ -321,6 +328,20 @@ def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, m
         add(full_walk[:max(2, round(len(full_walk)*portion))])
     hotspots = sorted((p for p in goals if p != start and goals[p]>0),
                       key=lambda p:(-model.slots[sector(p)]/(20+home_cost[p]),-goals[p],p))
+    if len(required_floors) > 1:
+        # Build a compact route that actually hunts on each reachable selected floor.
+        # Try both the closest sector and a sector with sightings on each floor.
+        for prefer_packs in (False, True):
+            here, walk = start, [(start, None)]
+            remaining = required_floors - {here[2]}
+            while remaining:
+                targets = {p for p in goals if p[2] in remaining}
+                packs = {p for p in targets if goals[p] > 0}
+                leg = shortest(here, (packs or targets) if prefer_packs else targets, graph.__getitem__, goals)
+                walk.extend(leg)
+                here = walk[-1][0]
+                remaining.difference_update(p[2] for p, _ in leg if p in goals)
+            add(walk)
     for hub in hotspots[:4]:
         outward = [(start,None),*shortest(start,{hub},graph.__getitem__)]
         add(outward)
@@ -376,7 +397,9 @@ def compare_routes(atlas, observations, ground, graph, goals, full_walk, full, m
             if route['path'][0]!=route['path'][-1] or len(route['path'])<3:
                 continue
             route = varied_route(atlas,observations,ground,list(key),set(hotspots),route)
-            route['covered'] = len(set(map(sector,route['path'])) & set(map(tuple,full['selected'])))
+            if not covers_floors(route['path']):
+                continue
+            route['covered'] = len(set(map(sector,route['path'])) & selected)
             verified.append((route,estimate(route)))
             found += 1
             if found >= 2:

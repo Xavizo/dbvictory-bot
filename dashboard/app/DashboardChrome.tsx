@@ -36,13 +36,18 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
   const running=state?.actions.filter(a=>a.running && a.name!=="dll_bridge") ?? [];
   const connected=!!state?.connected, paused=!!state?.automation_paused, preview=!!state?.passive_map?.preview;
   const player=state?.player;
+  let gameStatus="Oczekiwanie na silnik";
+  if(preview) gameStatus="Demo";
+  else if(mcpConnected && connected) gameStatus="Sesja gry aktywna";
+  else if(mcpConnected && state?.proxy_sequence?.client_connected) gameStatus="Łączenie z grą…";
+  else if(mcpConnected && state?.proxy_sequence?.listening) gameStatus="Zaloguj się do gry";
   return <div className="dashboard-shell">
     <header className="console-header">
       <div className="console-brand"><span aria-hidden="true">D<span>V</span></span><strong>DBVictory</strong><small>control panel</small></div>
       {preview && <em className="demo-badge">DEMO · BEZ GRY</em>}
       <div className="connection-cluster" aria-label="Stan połączenia">
         <span title={mcpConnected ? "Panel połączony z botem" : "Panel bez połączenia"}><i className={`status-dot ${mcpConnected ? "online" : ""}`}/>Panel</span>
-        <span title={preview ? "Dane syntetyczne" : connected ? "Sesja gry aktywna" : "Gra rozłączona"}><i className={`status-dot ${connected && !preview ? "online" : ""}`}/>{preview ? "Demo" : "Gra"}</span>
+        <span role="status"><i className={`status-dot ${mcpConnected && connected && !preview ? "online" : ""}`}/>{gameStatus}</span>
         <span title={state?.dll_bridge_connected ? "Most DLL połączony" : "Most DLL nieaktywny"}><i className={`status-dot ${state?.dll_bridge_connected ? "online" : ""}`}/>DLL</span>
       </div>
       <AlertBell alerts={state?.alerts} connected={mcpConnected} onRefresh={onRefresh}/>

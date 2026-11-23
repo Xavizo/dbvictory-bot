@@ -432,11 +432,36 @@ def manual_circuit(atlas, observations, area, *, excluded=frozenset(),anchor=Non
                    cells,counts,[tuple(area['seed'])],choose_region=True,anchor=anchor,model=model)
 
 
+def unconfirmed_floor_crossings(observations, ground, cells, result):
+    """Locate recorded floor changes worth revisiting, without making them navigable."""
+    missing_floors = {p[2] for p in cells} - {p[2] for p in result['path']}
+    if not missing_floors:
+        return []
+    known = {(p[2], q[2]) for p, links in ground.links.items() for q in links}
+    candidates = {}
+    for row in observations:
+        a, b = row.get('origin'), row.get('exit')
+        if row.get('evidence') != 'review' or not position(a) or not position(b):
+            continue
+        pair = (a[2], b[2])
+        if abs(a[2]-b[2]) != 1 or pair in known or not missing_floors.intersection(pair):
+            continue
+        spot = row.get('entry') or a
+        if not all(sector(p) in ground.allowed for p in (a, spot, b)):
+            continue
+        rank = (row.get('entry') is not None, row.get('count', 1), row.get('last_seen', 0))
+        if pair not in candidates or rank > candidates[pair][0]:
+            candidates[pair] = (rank, dict(point=spot, to_floor=b[2], exact=row.get('entry') is not None))
+    return [candidates[pair][1] for pair in sorted(candidates)]
+
+
 def proposed_circuit(atlas, observations, ground, cells, sightings, seeds, *, choose_region, anchor, model=None):
     current = circuit(atlas, observations, ground, cells, sightings, seeds,
                       choose_region=choose_region, anchor=anchor, model=model)
     if ground.allowed is None or not current['missing']:
         return current
+
+    current['floor_checks'] = unconfirmed_floor_crossings(observations, ground, cells, current)
 
     def preview(allowed):
         terrain = GroundMap(atlas, observations, allowed=allowed)
