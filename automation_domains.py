@@ -8,6 +8,7 @@ import logging
 import time
 
 log = logging.getLogger(__name__)
+COMBAT_INTERVAL = .05
 
 
 class CavebotDomains:
@@ -18,6 +19,9 @@ class CavebotDomains:
         self.movement_error = None
         self.combat_error = None
         self.decision = None
+        self._review_requested = asyncio.Event()
+        self._decision_ready = asyncio.Event()
+        self._requested_signature = None
         self.tasks = []
 
     def snapshot(self):
@@ -37,6 +41,7 @@ class CavebotDomains:
         o = self.owner
         o.combat.defer_movement = True
         while o.status == 'running':
+            self._review_requested.clear()
             self.decision = None
             o.combat.movement_intent = None
             if not o.combat.config['enabled']:
@@ -54,6 +59,9 @@ class CavebotDomains:
                 if signature == self.signature():
                     self.decision = dict(signature=signature,at=time.monotonic(),consumed=consumed,
                                          intent=o.combat.movement_intent)
+                    if self._requested_signature == signature:
+                        self._review_requested.clear()
+                    self._decision_ready.set()
             except ValueError as exc:
                 self.combat_state = 'waiting'
                 self.combat_error = str(exc)
@@ -63,7 +71,12 @@ class CavebotDomains:
                 self.combat_error = 'Błąd walki. Zatrzymaj i uruchom automat ponownie; leczenie działa niezależnie.'
                 log.exception('Combat worker failed')
                 return
-            await asyncio.sleep(.05)
+            # Keep checking stationary fights. A new position with a ready map
+            # can request its own decision immediately between those checks.
+            try:
+                await asyncio.wait_for(self._review_requested.wait(), COMBAT_INTERVAL)
+            except asyncio.TimeoutError:
+                pass
 
     async def consume_movement(self,sample,boundary):
         """Called only by the movement worker. True means no route step this tick."""
@@ -72,11 +85,20 @@ class CavebotDomains:
             self.movement_state = 'running'
             return False
         decision = self.decision
-        if (not decision or decision['signature'] != self.signature()
+        signature = self.signature()
+        if (not decision or decision['signature'] != signature
                 or time.monotonic()-decision['at'] > .3):
             self.movement_state = 'waiting'
             if self.combat_error:o.reason=self.combat_error
-            await asyncio.sleep(.01)
+            self._decision_ready.clear()
+            if signature != self._requested_signature:
+                self._requested_signature = signature
+                self._review_requested.set()
+            try:
+                await asyncio.wait_for(self._decision_ready.wait(), COMBAT_INTERVAL)
+            except asyncio.TimeoutError:
+                pass
+            # Re-read terrain and position even if the review completed at once.
             return True
         intent = decision['intent']
         if intent:

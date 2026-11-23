@@ -1,5 +1,9 @@
 [
   {
+    "version":"v1.22.1",
+    "changes":[{"title":"Płynniejszy marsz z włączoną walką","detail":"Po kroku i odświeżeniu mapy Cavebot od razu sprawdza, czy może ruszyć dalej lub powinien zatrzymać się przy grupie."}]
+  },
+  {
     "version":"v1.22.0",
     "changes":[
       {"title":"Obejście po nieudanych krokach","detail":"Przy postoju Cavebot pamięta ostatnie nieudane kierunki z tej samej kratki i sprawdza inne dostępne dojście."},

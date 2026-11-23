@@ -199,3 +199,72 @@ def test_chase_and_return_share_one_movement_executor(state,tmp_path):
             c.pause('test');refresh.cancel();run.cancel()
             await asyncio.gather(run,refresh,return_exceptions=True)
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('occupied',[False,True])
+def test_ready_map_wakes_combat_review_before_its_periodic_tick(state,tmp_path,monkeypatch,occupied):
+    import automation_domains as domains
+
+    c,cells,_=setup(state,tmp_path)
+    configure_rules(c,[dict(pattern='*')],enabled=True,mode='stop')
+    c.status='running'
+    workers=domains.CavebotDomains(c)
+    monkeypatch.setattr(domains,'COMBAT_INTERVAL',4.0)
+    visited=[]
+    async def evaluate(sample,boundary,allow_movement):
+        visited.append(tuple(sample['center']))
+        return bool(c.combat.candidates(sample))
+    c.combat.tick=evaluate
+
+    async def scenario():
+        task=asyncio.create_task(workers.combat_loop())
+        try:
+            await until(lambda: workers.decision is not None)
+            state.game_state.position=tuple(c.path[1])
+            c.index=1
+            if occupied:
+                monster(state,cells,x=12,y=10)
+            sample=c.map_now()
+            # First pass discards permission for the old square. The signal
+            # wakes the sleeping reviewer even with a four-second timer.
+            assert await asyncio.wait_for(workers.consume_movement(sample,False),.8)
+            assert workers.decision['signature']==workers.signature()
+            assert await workers.consume_movement(sample,False) is occupied
+            assert visited==[tuple(c.path[0]),tuple(c.path[1])]
+        finally:
+            task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_request_during_same_review_uses_that_result_once(state,tmp_path,monkeypatch):
+    import automation_domains as domains
+
+    c,cells,_=setup(state,tmp_path)
+    configure_rules(c,[dict(pattern='*')],enabled=True,mode='stop')
+    c.status='running'
+    workers=domains.CavebotDomains(c)
+    monkeypatch.setattr(domains,'COMBAT_INTERVAL',4.0)
+
+    async def scenario():
+        entered,finish=asyncio.Event(),asyncio.Event()
+        visits=[]
+        async def evaluate(sample,boundary,allow_movement):
+            visits.append(tuple(sample['center']))
+            entered.set()
+            await finish.wait()
+            return False
+        c.combat.tick=evaluate
+        reviewer=asyncio.create_task(workers.combat_loop())
+        try:
+            await asyncio.wait_for(entered.wait(),.8)
+            walking=asyncio.create_task(workers.consume_movement(c.map_now(),False))
+            await until(workers._review_requested.is_set)
+            finish.set()
+            assert await asyncio.wait_for(walking,.8)
+            assert not await workers.consume_movement(c.map_now(),False)
+            assert not workers._review_requested.is_set() and len(visits)==1
+        finally:
+            reviewer.cancel()
+            await asyncio.gather(reviewer,return_exceptions=True)
+    asyncio.run(scenario())
