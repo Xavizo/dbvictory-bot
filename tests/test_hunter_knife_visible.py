@@ -50,7 +50,7 @@ class KnifeReplay:
         for p, bodies in self.contents.items():
             count = int(p in self.occupied)
             cells.append(dict(tile(p, *bodies), occupants=count, occupant_types={"monster": count}))
-        self.monitor._result = dict(status="ready", center=CENTER, cells=cells, captured_at=self.now)
+        self.monitor._result = dict(status="ready", center=self.game.position, cells=cells, captured_at=self.now)
 
     async def dispatch(self, _payload, guard):
         assert guard()
@@ -142,22 +142,95 @@ def test_refused_body_survives_new_body_then_uncover_and_repeated_frames(monkeyp
     assert sim.worker.done == 2 and sim.game.knife_denials == 1
 
 
-def test_already_visible_body_with_unknown_result_is_tried_once(monkeypatch):
+def test_return_to_range_after_timeout_allows_only_one_more_use(monkeypatch):
     sim = KnifeReplay(monkeypatch)
     sim.contents[FOREIGN] = [FRESH]
 
     def step(s):
-        # Dispatch was attempted. The server supplies neither a refusal nor
-        # a stack change. Do not dispatch again, even after a visibility gap.
         s.outcome = None
-        if s.tick == 50:
+        if s.tick == 2:
+            s.bot.position = s.game.position = DISTANT[0]+2, DISTANT[1], DISTANT[2]
+        if s.tick == 25:
             del s.contents[FOREIGN]
         if s.tick == 60:
             s.contents[FOREIGN] = [FRESH]
+        if s.tick == 90:
+            s.bot.position = s.game.position = CENTER
+        if s.tick <= 91:
+            assert len(s.attempts) == 1
+        if s.tick == 92:
+            assert len(s.attempts) == 2
 
     asyncio.run(sim.run(monkeypatch, step))
-    assert sim.attempts == [(FOREIGN, 2)]
+    assert sim.attempts == [(FOREIGN, 2)] * 2
     assert sim.worker.done == 0 and sim.game.knife_denials == 0
+
+
+@pytest.mark.parametrize("outcome", ["success", "denied", "late_success", "late_denial"])
+def test_retry_requires_two_distinct_in_range_frames_after_timeout(monkeypatch, outcome):
+    sim = KnifeReplay(monkeypatch)
+    worker = sim.game.hunter_knife = knife.KnifeAutomation(sim.game)
+    worker.tool_ready = True
+
+    def frame(stamp, *items, now=None, occupied=False):
+        cell = dict(tile(FOREIGN, *items), occupants=int(occupied), occupant_types={"monster": int(occupied)})
+        return worker.next(dict(captured_at=stamp, cells=[cell]), stamp if now is None else now)
+
+    first = worker.pending = frame(100., FRESH)
+    assert first and not first.retry
+    assert frame(101.5, FRESH) is None  # first attempt times out
+    assert frame(101.6, FRESH) is None
+    assert frame(101.6, FRESH, now=101.65) is None  # same map read twice
+    assert frame(101.7, FRESH, occupied=True) is None
+    assert frame(101.8, FRESH) is None
+    assert frame(101.9, FRESH, SPENT) is None
+    assert frame(102., FRESH) is None
+    assert frame(103., FRESH) is None  # the earlier read is already stale
+
+    def refuse(at):
+        message = SimpleNamespace(messages=[{"text":"Sorry, you are not owner."}], knife_feedback=[])
+        publish_feedback(sim.game, message, (), at)
+        assert sim.game.knife_denials == 1
+
+    if outcome == "late_denial":
+        refuse(103.05)
+    if outcome.startswith("late_"):
+        body = SPENT if outcome == "late_success" else FRESH
+        for t in (103.1, 103.2, 105.):
+            assert frame(t, body) is None
+        return
+
+    retry = worker.pending = frame(103.1, FRESH)
+    assert retry and retry.retry
+    if outcome == "denied":
+        refuse(103.15)
+        assert frame(103.2, FRESH) is None
+        assert frame(103.3, FRESH) is None
+        assert worker.done == 0
+    else:
+        assert frame(103.2, SPENT) is None
+        assert worker.done == 1
+
+
+def test_group_finishes_after_first_body_times_out_and_one_foreign_refuses(monkeypatch):
+    sim = KnifeReplay(monkeypatch, cavebot=True)
+    for p in (OWN[0], FOREIGN, *OWN[1:]):
+        sim.contents[p] = [FRESH]
+
+    def step(s):
+        if s.outcome is None:
+            return
+        if len(s.attempts) == 1:
+            s.outcome = None  # the first fresh body receives no game response
+        else:
+            s.answer(denied=s.outcome.source == FOREIGN)
+
+    asyncio.run(sim.run(monkeypatch, step))
+    calls = [p for p, _ in sim.attempts]
+    assert calls.count(OWN[0]) == 2
+    assert all(calls.count(p) == 1 for p in (*OWN[1:], FOREIGN))
+    assert sim.worker.done == 6 and sim.game.knife_denials == 1
+    assert sim.game.knife_loot_count == 0 and sim.contents[FOREIGN] == [FRESH]
 
 
 def test_toggling_module_does_not_repeat_denied_use_in_same_session(monkeypatch):

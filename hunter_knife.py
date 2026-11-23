@@ -57,16 +57,13 @@ def publish_feedback(game, parsed, kills, received_at):
             # until its origin is verified for this client.
             game.knife_candidate_count += 1
         if ownership_denied(text):
-            pending = runtime.pending if runtime else None
-            auto = bool(pending and not pending.drop and 0 <= received_at - pending.sent <= 1.5)
+            auto = runtime is not None and runtime.rejected(received_at)
             manual_at = game.knife_manual_use_at
             manual = manual_at is not None and 0 <= received_at - manual_at <= 2
             if auto or manual:
                 game.knife_denials += 1
                 logging.getLogger(__name__).info("Hunter Knife 5908: odmowa właściciela (%s)",
                                                 "automatyka" if auto else "ręczne użycie")
-            if auto:
-                runtime.rejected(received_at)
     if runtime:
         for death in kills:
             runtime.queue.death(death, received_at)

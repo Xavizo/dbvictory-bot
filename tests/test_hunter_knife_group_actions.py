@@ -50,7 +50,7 @@ def test_group_retains_route_for_two_observed_effects_while_target_and_healing_a
     assert worker.done == 2 and worker.fighting() and not worker.hold()
 
 
-def test_missing_effect_releases_group_hold_and_never_retries_that_body(monkeypatch):
+def test_missing_effect_releases_group_hold_and_allows_next_body(monkeypatch):
     worker, frame = group(monkeypatch)
     worker.pending = frame(100.)
     assert worker.hold()

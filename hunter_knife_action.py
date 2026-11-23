@@ -14,6 +14,7 @@ from protocol import build_move_item_packet, build_use_item_ex_packet
 NAME = "auto_hunter_knife"
 INPUTS = ("map", "position", "target", "death", "loot", "inventory", "health")
 ATTEMPT_VALID_FOR = .55
+MAP_FRESH_FOR = .6
 WAITING_FOR_BODY = "Czekam na świeże ciało elementala w zasięgu"
 
 
@@ -43,6 +44,19 @@ class Attempt:
     receipt: CommandReceipt | None = None
     recent_spell: tuple[str, int] | None = None
     appeared: float | None = None
+    retry: bool = False
+
+    @property
+    def layer(self):
+        return self.before[FRESH], self.item["id"]
+
+
+@dataclass
+class RetryCheck:
+    attempt: Attempt
+    timeout_frame: float
+    seen_frame: float | None = None
+    ready: bool = False
 
 
 class KnifeAutomation:
@@ -63,10 +77,12 @@ class KnifeAutomation:
         self.actionable = False
         self.group_progress_at = None
         self.deferred_tiles = set()
-        # Keep terminal outcomes through toggling the worker in the same game session.
+        # Keep each layer's budget through toggling the worker in the same game session.
         if not hasattr(game, "knife_attempted_layers"):
             game.knife_attempted_layers = {}
         self.attempted_layers = game.knife_attempted_layers
+        self.last_timeout = None
+        self.previous_retry_frame = None
 
     def panel_status(self):
         return self.status
@@ -100,49 +116,76 @@ class KnifeAutomation:
                 or self.queue.possible_work(self.game.position, now, include_owned=False))
 
     def rejected(self, received_at):
-        if self.pending and self.pending.sent <= received_at:
-            self.abandon("Gra odmówiła użycia na tym ciele")
+        attempt = self.pending
+        # The server's refusal has no coordinates. A late reply can still close
+        # the last timed-out use if nothing else used the knife in between.
+        if attempt is None and self.last_timeout is not None:
+            check = self.last_timeout
+            last = check.attempt
+            manual = getattr(self.game, "knife_manual_use_at", None)
+            if (self.attempted_layers.get(last.source, {}).get(last.layer) is check
+                    and not (manual is not None and last.sent <= manual <= received_at)):
+                attempt = last
+        if attempt is None or attempt.drop or received_at < attempt.sent:
+            return False
+        self.abandon(attempt, "Gra odmówiła użycia na tym ciele")
+        return True
 
-    def remember_attempt(self, attempt):
+    def remember_attempt(self, attempt, check=None):
         # Fresh bodies are addressed from the bottom, independent of decorations
         # and spent covers. A new body above a refused one has its own rank.
-        rank = attempt.before[FRESH]
-        self.attempted_layers.setdefault(attempt.source, set()).add((rank, attempt.item["id"]))
+        self.attempted_layers.setdefault(attempt.source, {})[attempt.layer] = check
+        self.last_timeout = check
 
-    def reconcile_attempts(self, cells):
+    def reconcile_attempts(self, cells, stamp, origin):
         # An off-screen or unreadable tile cannot establish that a corpse disappeared.
         for p in self.attempted_layers.keys() & cells.keys():
             items = cells[p]["items"]
             count = body_counts(items)[FRESH]
             present = {item["id"] for item in items}
-            kept = {(rank, kind) for rank, kind in self.attempted_layers[p]
-                    if rank <= count and kind in present}
+            kept = {layer: check for layer, check in self.attempted_layers[p].items()
+                    if layer[0] <= count and layer[1] in present}
             if kept:
                 self.attempted_layers[p] = kept
             else:
                 del self.attempted_layers[p]
+            check = kept.get((count, FRESH))
+            if check is None or stamp <= check.timeout_frame or distance(origin, p) > 1:
+                continue
+            cell = cells[p]
+            choice = exposed_body_action(items)
+            if (choice and choice[0] == "skin"
+                    and cell.get("occupants", 0) <= cell.get("occupant_types", {}).get("self", 0)):
+                check.ready = (check.seen_frame is not None and check.seen_frame == self.previous_retry_frame
+                               and 0 < stamp - check.seen_frame <= MAP_FRESH_FOR)
+                check.seen_frame = stamp
+        self.previous_retry_frame = stamp
 
     def available_body(self, p, items):
         choice = exposed_body_action(items)
         if choice and p in self.attempted_layers:
             rank = body_counts(items)[FRESH]
             blocked = self.attempted_layers[p]
-            if (rank, FRESH) in blocked or (rank, choice[1]["id"]) in blocked:
+            if (rank, FRESH) in blocked:
+                check = blocked[(rank, FRESH)]
+                if (choice[0] == "skin" and check and check.ready
+                        and check.seen_frame == self.frame == self.previous_retry_frame):
+                    return choice
+                return None
+            if (rank, choice[1]["id"]) in blocked:
                 return None
         return choice
 
-    def abandon(self, reason):
-        if self.pending:
-            attempt = self.pending
-            self.remember_attempt(attempt)
-            self.last_issue = dict(position=attempt.source, reason=reason,
-                                   action="uncover" if attempt.drop else "skin")
-            recent_spell = getattr(attempt, "recent_spell", None)
-            if recent_spell:
-                words, elapsed_ms = recent_spell
-                self.last_issue.update(spell=words, since_spell_ms=elapsed_ms)
-            logging.getLogger(__name__).info("Hunter Knife 5908: %s", self.last_issue)
-            self.queue.stacks.pop(attempt.source, None)
+    def abandon(self, attempt, reason, check=None):
+        self.remember_attempt(attempt, check)
+        self.last_issue = dict(position=attempt.source, reason=reason,
+                               action="uncover" if attempt.drop else "skin")
+        recent_spell = getattr(attempt, "recent_spell", None)
+        if recent_spell:
+            words, elapsed_ms = recent_spell
+            self.last_issue.update(spell=words, since_spell_ms=elapsed_ms)
+        logging.getLogger(__name__).info("Hunter Knife 5908: %s", self.last_issue)
+        self.queue.stacks.pop(attempt.source, None)
         self.pending = None
         self.status = reason
 
@@ -194,7 +237,8 @@ class KnifeAutomation:
                     self.status = "Odsłonięto ciało"
                     return
         if now - a.sent >= 1.5:
-            self.abandon("Brak potwierdzenia zmiany pola")
+            check = RetryCheck(a, stamp) if not a.drop and not a.retry else None
+            self.abandon(a, "Brak potwierdzenia zmiany pola", check)
 
     def next(self, sample, now):
         origin = tuple(self.game.position)
@@ -209,7 +253,7 @@ class KnifeAutomation:
         self.acknowledge(cells, stamp, now)
         if stamp != self.frame:
             self.deferred_tiles.clear()
-            self.reconcile_attempts(cells)
+            self.reconcile_attempts(cells, stamp, origin)
             target_id = self.game.attack_target_id
             if self.cavebot_running and self.controller.combat.config["enabled"]:
                 target_id = self.controller.combat.sent_target or target_id
@@ -253,6 +297,7 @@ class KnifeAutomation:
                     continue
             count = sum(i["id"] == item["id"] for i in cell["items"])
             attempt = Attempt(p, item, body_counts(cell["items"]), stamp, now, drop, count)
+            attempt.retry = self.attempted_layers.get(p, {}).get(attempt.layer) is not None
             attempt.appeared = next((t for t, pos, _, _ in reversed(self.queue.births)
                                      if pos == p and (t, p) not in self.queue.interrupted_births), now)
             spell = getattr(getattr(self.controller, "combat", None), "last_spell_attempt", None)
@@ -268,7 +313,7 @@ def fresh_sample(bot):
     monitor = getattr(bot.state, "passive_map_monitor", None)
     sample = getattr(monitor, "_result", None)
     if (sample and sample.get("status") == "ready" and not sample.get("stale")
-            and 0 <= time.time() - sample.get("captured_at", 0) <= .6
+            and 0 <= time.time() - sample.get("captured_at", 0) <= MAP_FRESH_FOR
             and tuple(sample.get("center", ())) == tuple(bot.position)):
         return sample
     return None
@@ -300,6 +345,7 @@ async def run_knife(bot):
             now = time.monotonic()
             sample = fresh_sample(bot)
             if not sample or gs.hp <= 0:
+                runtime.previous_retry_frame = None
                 runtime.status = ("Czekam na odczyt HP postaci" if gs.hp <= 0
                                   else "Czekam na mapę zgodną z pozycją postaci")
                 if not sample and now >= next_refresh:
@@ -358,7 +404,8 @@ async def run_knife(bot):
                     payload = build_use_item_ex_packet(*where, KNIFE, index, *a.source, a.item["stack"],
                                                        target_item_id=FRESH)
                 runtime.pending = a
-                runtime.status = "Odsuwam ciało" if a.drop else "Używam Hunter Knife"
+                runtime.status = ("Odsuwam ciało" if a.drop else
+                                  "Ponawiam użycie Hunter Knife" if a.retry else "Używam Hunter Knife")
                 await bot.inject_to_server(payload, guard=current)
                 if runtime.pending is a:
                     receipt = bot.last_receipt

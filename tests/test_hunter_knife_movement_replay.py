@@ -87,8 +87,9 @@ async def replay(monkeypatch, route_step, *, receipt_status="dispatched", effect
         if valid:
             assert max(abs(bot.position[i] - BODY[i]) for i in (0, 1)) <= 1
             dispatched += 1
-            first_write_ms = elapsed_ms
-            assert dispatched == 1
+            if first_write_ms is None:
+                first_write_ms = elapsed_ms
+            assert dispatched <= 2
         receipt = CommandReceipt(len(attempts), 1, "server", 0)
         receipt.finish(receipt_status if valid else "cancelled")
         bot.last_receipt = receipt
@@ -108,7 +109,7 @@ async def replay(monkeypatch, route_step, *, receipt_status="dispatched", effect
         if bot.position == OUTSIDE and elapsed_ms >= 700:
             game.position = bot.position = START
         update_map()
-        if elapsed_ms >= 2000:
+        if elapsed_ms >= 4000:
             completed = game.hunter_knife.done
             claimed_at_end = BODY in game.hunter_knife.queue.stacks
             final_reason = game.hunter_knife.status
@@ -136,12 +137,13 @@ def test_fresh_owned_body_survives_concurrent_route_step(monkeypatch, route_step
 
 
 @pytest.mark.parametrize("effect_delay_ms", [600, None], ids=["late-effect", "no-effect"])
-def test_unknown_delivery_never_repeats_use_on_the_same_unchanged_body(monkeypatch, effect_delay_ms):
+def test_unknown_delivery_allows_one_retry_only_when_effect_is_missing(monkeypatch, effect_delay_ms):
     attempts, _, possible_writes, done, _, reason, _ = asyncio.run(
         replay(monkeypatch, None, receipt_status="unknown", effect_delay_ms=effect_delay_ms)
     )
-    assert attempts == [(START, True)]
-    assert possible_writes == 1
+    expected = 2 if effect_delay_ms is None else 1
+    assert attempts == [(START, True)] * expected
+    assert possible_writes == expected
     if effect_delay_ms is None:
         assert done == 0 and reason == "Brak potwierdzenia zmiany pola"
     else:

@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.26.5",
+    "changes":[
+      {"title":"Druga próba Hunter Knife po braku potwierdzenia","detail":"Jeśli dwa kolejne odczyty w zasięgu pokazują nadal odsłonięte świeże ciało, nóż może ponowić użycie jeden raz. Działa również po powrocie do ciała. Odmowa właściciela kończy próby."}
+    ]
+  },
+  {
     "version":"v1.26.4",
     "changes":[
       {"title":"Hunter Knife sprawdza każde świeże ciało w zasięgu","detail":"Po walce obszarowej nóż próbuje kolejno na dostępnych ciałach elementali, także bez osobistego Loot. Po odmowie pomija dane ciało i przechodzi do następnego. Działa przy ręcznej grze i z Cavebotem."}
