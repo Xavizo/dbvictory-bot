@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.26.3",
+    "changes":[
+      {"title":"Hunter Knife po ataku obszarowym","detail":"Bot rozpoznaje osobisty Loot również z listy kanałów. Przy kilku zgonach potrafi połączyć ciało z ostatnim polem stwora. W samotnej walce może też rozpoznać grupę po zgodnej nagrodzie XP zmierzonej przy dwóch własnych ciałach tego samego gatunku."}
+    ]
+  },
+  {
     "version":"v1.26.2",
     "changes":[
       {"title":"Hunter Knife podczas ręcznej walki","detail":"Po zaznaczeniu kolejnego moba automat może od razu oskórować rozpoznane własne ciało obok postaci. Odsuwanie wierzchniej warstwy nadal czeka na zakończenie walki."}

@@ -24,7 +24,7 @@ SCALARS = (
     "last_map_time", "player_icons", "world_light_level", "world_light_color",
     "attack_target_id", "last_cant_throw", "in_protection_zone", "cancel_walk_time", "last_walk_cancel",
     "_last_walk_delta", "_last_prune_time", "_recent_kills_cleanup",
-    "_prev_experience", "_server_packet_seq", "haste_cast_at", "personal_loot_channel",
+    "_prev_experience", "_server_packet_seq", "haste_cast_at", "personal_loot_channel", "player_party_shield",
 )
 
 

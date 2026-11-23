@@ -104,6 +104,7 @@ class GameState:
 
         # The server names channels per session; a numerical channel alone is not ownership.
         self.personal_loot_channel = None
+        self.player_party_shield = 0
         self.knife_feedback = deque(maxlen=96)
         self.knife_loot_count = 0
         self.knife_candidate_count = 0
@@ -588,16 +589,27 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
                     return -1
         return pos + _cm_size
 
-    if opcode == ServerOpcode.OPEN_CHANNEL and pos + 4 <= len(data):
-        channel, length = struct.unpack_from('<HH', data, pos)
-        if 0 < length <= 64 and pos + 4 + length <= len(data):
-            label = data[pos+4:pos+4+length]
-            if label.strip().lower() == b'loot':
-                gs.personal_loot_channel = channel
-            elif channel == gs.personal_loot_channel:
-                gs.personal_loot_channel = None
-        # Channel descriptions can have version-specific trailing fields.
-        return -1
+    if opcode in (ServerOpcode.CHANNELS, ServerOpcode.OPEN_CHANNEL):
+        from chat_messages import read_channel_names
+        listing = opcode == ServerOpcode.CHANNELS
+        count = 1
+        if listing:
+            if pos >= len(data):
+                return -1
+            count = data[pos]
+            pos += 1
+        records = read_channel_names(data, pos, count)
+        if records is None:
+            return -1
+        end, names = records
+        loot = [channel for channel, label in names.items() if label == b'loot']
+        if len(loot) == 1:
+            gs.personal_loot_channel = loot[0]
+        elif loot or gs.personal_loot_channel in names:
+            gs.personal_loot_channel = None
+        # Some clients append player lists to OPEN_CHANNEL. Only CHANNELS has a
+        # known boundary for a bundled following message in this installation.
+        return end if listing or end == len(data) else -1
     if opcode == ServerOpcode.CLOSE_CHANNEL and pos + 2 <= len(data):
         if struct.unpack_from('<H', data, pos)[0] == gs.personal_loot_channel:
             gs.personal_loot_channel = None
@@ -818,8 +830,13 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
 
     # CREATURE_PARTY — 5 bytes: u32 creature_id + u8 shield
     if opcode == ServerOpcode.CREATURE_PARTY:
-        _cp_size = PF.get("creature_party", {}).get("size", 5)
-        return pos + _cp_size if pos + _cp_size <= len(data) else -1
+        size = PF.get("creature_party", {}).get("size", 5)
+        if size < 5 or pos + size > len(data):
+            return -1
+        cid, shield = struct.unpack_from("<IB", data, pos)
+        if cid and cid == (gs.client_player_id or gs.player_id):
+            gs.player_party_shield = shield
+        return pos + size
 
     # PLAYER_SKILLS — variable: 7 skills × (u8 level + u8 percent) = 14 bytes
     # (standard TFS 7.x/8.x format; may differ on modified servers)

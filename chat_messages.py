@@ -10,6 +10,24 @@ Unsupported custom modes stop parsing; no byte searching through opaque data.
 import struct
 
 
+def read_channel_names(data, pos, count):
+    """Read the complete named list before changing a session's channel identity."""
+    names = {}
+    for _ in range(count):
+        if pos + 4 > len(data):
+            return None
+        channel, length = struct.unpack_from('<HH', data, pos)
+        pos += 4
+        if not 0 < length <= 64 or pos + length > len(data) or channel in names:
+            return None
+        label = data[pos:pos + length]
+        if not label.strip() or any(c < 32 or c == 127 for c in label):
+            return None
+        names[channel] = label.strip().lower()
+        pos += length
+    return pos, names
+
+
 def parse_talk(data, pos, *, loot_channel=None):
     def text(offset, limit):
         length = struct.unpack_from('<H', data, offset)[0]
@@ -27,7 +45,7 @@ def parse_talk(data, pos, *, loot_channel=None):
     try:
         statement = struct.unpack_from('<I', data, pos)[0]
         empty_sender = data[pos+4:pos+6] == b'\x00\x00'
-        if empty_sender and loot_channel is not None:
+        if empty_sender:
             sender, pos = '', pos+6
         else:
             sender, pos = text(pos+4, 64)
@@ -55,7 +73,8 @@ def parse_talk(data, pos, *, loot_channel=None):
             pass  # RVR replies and broadcast; no alert category
         else:
             return None
-        if not sender and kind != 'personal_loot':
+        # Anonymous level-zero channel announcements can precede a trusted Loot row.
+        if not sender and (mode not in (7, 8, 13, 15) or level != 0):
             return None
         message, end = text(pos, 4096)
         return end, {'statement': statement, 'sender': sender, 'kind': kind, 'text': message[:512]}

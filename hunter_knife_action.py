@@ -138,7 +138,7 @@ class KnifeAutomation:
                     if delivered is not None:
                         self.last_timing_ms["delivery_wait"] = round(1000 * max(0, delivered - a.sent))
                 confirm(a.receipt, "corpse_transformed")
-                self.queue.consumed(a.source)
+                self.queue.consumed(a.source, confirmed=True)
                 self.done += 1
                 if self.group_progress_at is not None:
                     self.group_progress_at = now
@@ -173,7 +173,8 @@ class KnifeAutomation:
             target_id = self.game.attack_target_id
             if self.cavebot_running and self.controller.combat.config["enabled"]:
                 target_id = self.controller.combat.sent_target or target_id
-            self.queue.observe(cells.values(), now, game=self.game, target_id=target_id, sampled_at=stamp)
+            self.queue.observe(cells.values(), now, game=self.game, target_id=target_id, sampled_at=stamp,
+                               map_generation=sample.get("pet_map_generation"))
             self.frame = stamp
         else:
             self.queue.settle(now)

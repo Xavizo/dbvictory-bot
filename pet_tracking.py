@@ -234,11 +234,11 @@ class PetTracker:
         with self._lock:
             return cid in self._names
 
-    def monster_slots_for_sample(self, generation):
-        """Internal continuity keys for this map frame, including map-only occupants."""
+    def monster_slots_for_sample(self, generation, *, require_current=False):
+        """For strict consumers, None distinguishes an expired map frame from an empty one."""
         with self._lock:
             if generation != self._map_generation:
-                return {}
+                return None if require_current else {}
             by_tile = defaultdict(list)
             for slot, key in self._slots.items():
                 if key not in self._names and key not in self._retired:
