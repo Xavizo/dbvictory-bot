@@ -31,6 +31,7 @@ export default function HunterKnifePanel({ state, onRefresh }: {
       aria-label="Automatyczny Hunter Knife" disabled={busy || !!state?.automation_paused} onClick={toggle}><span/></button>
     {info && <small className="barrier-band-help">Z walki i XP {info.from_combat ?? 0} · Wpisy Loot {info.personal_loot} · Obrobione {info.processed} · Odmowy właściciela {info.denied??0}
       {info.unclassified_loot > 0 && ` · Wpisy bez potwierdzonego kanału ${info.unclassified_loot}`}</small>}
+    {info?.last_timing_ms && <small className="barrier-band-help">Ostatnie pole · rozpoznanie {info.last_timing_ms.recognition} ms · do próby {info.last_timing_ms.wait_for_use} ms · potwierdzenie {info.last_timing_ms.confirmation} ms</small>}
     {error && <p role="alert">{error}</p>}
   </section>;
 }

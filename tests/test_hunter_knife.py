@@ -193,6 +193,51 @@ def test_two_successive_targets_at_same_tile_without_loot_or_cavebot_target_clic
     assert worker.queue.next_body(A, tile(A, FRESH, FRESH)["items"])[1]["stack"] == 3
 
 
+def test_running_cavebot_skins_first_exposed_body_with_next_target_active(monkeypatch):
+    from types import SimpleNamespace as NS
+    from hunter_knife_action import KnifeAutomation
+    clock = [100.]
+    monkeypatch.setattr("hunter_knife_action.time", NS(time=lambda: clock[0], monotonic=lambda: clock[0]))
+    cid = 0x40000001
+    game = NS(position=A, attack_target_id=0, experience=10000, creatures={})
+    combat = NS(config={"enabled": True}, sent_target=cid, target=None)
+    worker = KnifeAutomation(game, NS(status="running", combat=combat))
+    worker.tool_ready = True
+    def frame(t, items, occupants):
+        clock[0] = t
+        c = dict(tile(A, *items), occupant_types=occupants)
+        return worker.next(dict(captured_at=t, cells=[c]), t)
+    game.creatures[cid] = dict(name=NAME, x=A[0], y=A[1], z=A[2], health=35, t=100)
+    assert frame(100, [], {"monster": 1}) is None
+    del game.creatures[cid]
+    game.experience += 500
+    combat.target = dict(id=cid+1, health=80)
+    combat.sent_target = cid+1
+    game.creatures[cid+1] = dict(name=NAME, x=B[0], y=B[1], z=B[2], health=80, t=100.2)
+    assert frame(100.2, [FRESH], {}) is None
+    assert frame(100.3, [FRESH], {}) is None
+    worker.pending = frame(100.4, [FRESH], {})
+    assert worker.pending and worker.pending.item["id"] == FRESH and not worker.hold()
+    assert frame(100.5, [SPENT], {}) is None
+    assert worker.done == 1 and worker.last_timing_ms == dict(recognition=200, wait_for_use=0, confirmation=100)
+    worker.queue.credit(NAME.casefold(), 100.65)
+    worker.queue.death(dict(name=NAME, cid=cid, x=A[0], y=A[1], z=A[2]), 100.65)
+    assert frame(100.9, [SPENT], {}) is None
+    assert frame(101.8, [SPENT], {}) is None
+    assert worker.done == 1 and not worker.queue.stacks
+
+
+def test_fully_matched_personal_loot_can_release_two_bodies_early():
+    q = SkinningQueue()
+    q.observe([tile(A)], 10)
+    for cid in (1, 2):
+        q.death(dict(name=NAME, cid=cid, x=A[0], y=A[1], z=A[2]), 10.1)
+        q.credit(NAME.casefold(), 10.14)
+    q.observe([tile(A,FRESH,FRESH)], 10.15)
+    q.observe([tile(A,FRESH,FRESH)], 10.36)
+    assert q.stacks[A].fresh == 2
+
+
 def test_status_line_denial_from_manual_and_automatic_uses():
     from types import SimpleNamespace as NS
     from game_state import GameState

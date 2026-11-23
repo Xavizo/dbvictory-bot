@@ -268,7 +268,7 @@ export interface BotState {
   automation_paused?: boolean;
   automation_pause_kind?: "manual"|"emergency"|null;
   potion_diagnostics?: PotionDiagnosticState;
-  hunter_knife?: {status:string;processed:number;from_combat?:number;personal_loot:number;unclassified_loot:number;denied:number};
+  hunter_knife?: {status:string;processed:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number};
   barrier_band?: {status:string;equipped_id:number|null;stock:number|null;attempts:number};
   actions: ActionInfo[];
   packets_from_server: number;

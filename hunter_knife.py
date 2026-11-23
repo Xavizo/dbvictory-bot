@@ -14,6 +14,7 @@ LOOT_LINE = re.compile(
     r"\[([^\[\]\r\n]{1,64})\]: [^\r\n]+"
 )
 SETTLE = 1.0
+SOLO_SETTLE = .18
 MAX_WAIT = 8.0
 
 
@@ -78,6 +79,8 @@ def skinned(before, after):
 class OwnedStack:
     fresh: int
     expires: float
+    appeared: float | None = None
+    assigned: float | None = None
 
 
 class SkinningQueue:
@@ -97,15 +100,18 @@ class SkinningQueue:
         self.other_death_at = float("-inf")
         self.last_combat_sample = None
         self.from_combat = 0
+        self.combat_claims = {}
 
-    def possible_work(self, position, now):
+    def possible_work(self, position, now, *, include_owned=True):
         def nearby(p):
             return (all(type(v) is int for v in p) and p[2] == position[2]
                     and max(abs(p[0]-position[0]), abs(p[1]-position[1])) <= 1)
-        if any(nearby(p) and now < s.expires for p, s in self.stacks.items()):
+        if include_owned and any(nearby(p) and now < s.expires for p, s in self.stacks.items()):
             return True
-        return (any(nearby(p) and 0 <= now-at <= SETTLE + .6 for at, _, p, _ in self.deaths)
-                or any(target and nearby(p) and 0 <= now-at <= SETTLE + .6
+        return (any(nearby(p) and 0 <= now-at <= .45
+                    and p not in self.stacks and ((self.target and cid == self.target[0]) or any(n == name for _, n in self.loot))
+                    for at, name, p, cid in self.deaths)
+                or any(target and nearby(p) and p not in self.stacks and 0 <= now-at <= SETTLE + .6
                        for at, p, _, target in self.births))
 
     def personal_loot(self, text, now):
@@ -142,6 +148,7 @@ class SkinningQueue:
                 self.baseline.clear()
                 self.births.clear()
                 self.deaths.clear()
+                self.combat_claims.clear()
                 self.loot.clear()
                 self.xp_gains.clear()
                 self.last_xp = None
@@ -184,7 +191,13 @@ class SkinningQueue:
         self.births = [b for b in self.births if b[0] >= cutoff]
         self.deaths = [d for d in self.deaths if d[0] >= cutoff]
         self.loot = [l for l in self.loot if l[0] >= cutoff]
-        if self.last_event is None or now - self.last_event < SETTLE:
+        self.combat_claims = {k: v for k, v in self.combat_claims.items() if k[0] >= cutoff}
+        if self.births and self.xp_gains:
+            self._claim_combat_bodies(current, game.creatures if game is not None else {}, now)
+        if self.last_event is None or now - self.last_event < SOLO_SETTLE:
+            return
+        settling = now - self.last_event < SETTLE
+        if settling and (not self.loot or not self.deaths or not self.births):
             return
         credit = Counter(name for _, name in self.loot)
         observed = defaultdict(list)
@@ -193,35 +206,50 @@ class SkinningQueue:
         births = Counter()
         for _, point, n, _ in self.births:
             births[point] += n
+        if settling and (self.other_player_at >= now - 1.5 or self.other_death_at >= now - 1.5
+                         or any(not name or not cid for _, name, _, cid in self.deaths)
+                         or credit != Counter(name for _, name, _, _ in self.deaths)
+                         or births != Counter(p for _, _, p, _ in self.deaths)):
+            return
         grants = Counter()
         times = [v[0] for source in (self.deaths, self.loot, self.births) for v in source]
         if times and max(times) - min(times) <= 1.5 and "" not in observed:
             for name, points in observed.items():
                 if credit[name] == len(points):
                     grants.update(points)
-        # Each personal XP event can explain at most one independent disappearance.
-        combat = Counter()
-        used_targets = set()
+        claimed = Counter(p for _, p in self.combat_claims)
+        for p, n in grants.items():
+            remaining = n - claimed[p]
+            owned = self.stacks[p].fresh if p in self.stacks else 0
+            if remaining > 0 and n == births[p] and current.get(p) == owned + remaining:
+                appeared = next(at for at, pos, _, _ in self.births if pos == p)
+                self.stacks[p] = OwnedStack(owned + remaining, now + MAX_WAIT, appeared, now)
+        self.deaths.clear()
+        self.loot.clear()
+        self.births.clear()
+        self.combat_claims.clear()
+        self.last_event = None
+
+    def _claim_combat_bodies(self, current, creatures, now):
+        # Match before releasing the Loot batch. Late matching Loot cannot grant
+        # the same body again, even after it was already skinned.
+        used_targets = set(self.combat_claims.values())
         for at, p, count, cid in self.births:
-            if (not cid or count != 1 or cid in on_screen or cid in used_targets
+            if (now-at < SOLO_SETTLE or not cid or count != 1 or creatures.get(cid, {}).get("health", 0) > 0
+                    or cid in used_targets
                     or self.other_player_at >= at - 1.5 or abs(self.other_death_at - at) <= 1.5
                     or any(abs(t-at) <= 1.5 and dead_id != cid for t, _, _, dead_id in self.deaths)
                     or sum(n for t, _, n, _ in self.births if abs(t-at) <= 1.5) != 1):
                 continue
             gain = next((t for t in self.xp_gains if abs(t-at) <= 1), None)
-            if gain is not None:
-                combat[p] += 1
-                self.xp_gains.remove(gain)
-                used_targets.add(cid)
-        for p, n in (grants | combat).items():
             owned = self.stacks[p].fresh if p in self.stacks else 0
-            if n == births[p] and current.get(p) == owned + n:
-                self.stacks[p] = OwnedStack(owned + n, now + MAX_WAIT)
-                self.from_combat += combat[p]
-        self.deaths.clear()
-        self.loot.clear()
-        self.births.clear()
-        self.last_event = None
+            if gain is None or current.get(p) != owned + 1:
+                continue
+            self.combat_claims[at, p] = cid
+            self.xp_gains.remove(gain)
+            used_targets.add(cid)
+            self.stacks[p] = OwnedStack(owned + 1, now + MAX_WAIT, at, now)
+            self.from_combat += 1
 
     def next_body(self, point, items):
         stack = self.stacks.get(point)

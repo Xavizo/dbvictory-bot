@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.24.4",
+    "changes":[
+      {"title":"Szybszy Hunter Knife przy Cavebocie","detail":"Odsłonięte ciało można obrobić także po wybraniu kolejnego celu. Panel pokazuje czas od pojawienia się ciała do rozpoznania, próby i potwierdzenia."},
+      {"title":"Mniej waypointów na zakrętach","detail":"Atlas wstawia waypoint w miejscu, w którym skrót opuściłby trasę. Sprawdza przejścia, pokrycie i długość pętli po przeliczeniu."}
+    ]
+  },
+  {
     "version":"v1.24.3",
     "changes":[
       {"title":"Hunter Knife +1 także bez kanału Loot","detail":"Po walce z konkretnym celem automat rozpoznaje świeże ciało elementala na podstawie jego pozycji i zdobytego XP. Panel pokazuje osobno takie rozpoznania oraz wpisy Loot."}

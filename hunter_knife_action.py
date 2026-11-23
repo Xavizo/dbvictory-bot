@@ -47,9 +47,11 @@ class KnifeAutomation:
         self.pending = None
         self.frame = 0
         self.done = 0
+        self.last_timing_ms = None
         self.status = "Sprawdzam mapę i wyposażenie"
         self.tool_ready = False
         self.last_map = 0
+        self.actionable = False
 
     def panel_status(self):
         return self.status
@@ -64,10 +66,14 @@ class KnifeAutomation:
         return bool(target and target.get("health", 0) > 0 and
                     0 <= time.time() - target.get("t", 0) <= 1.5)
 
+    def can_use_during_combat(self):
+        return bool(self.controller and self.controller.status == "running")
+
     def hold(self):
         now = time.monotonic()
         return (self.tool_ready and now - self.last_map < .65 and not self.fighting()
-                and (bool(self.pending) or self.queue.possible_work(self.game.position, now)))
+                and (self.actionable or self.pending is not None
+                     or self.queue.possible_work(self.game.position, now, include_owned=False)))
 
     def rejected(self, received_at):
         if self.pending and self.pending.sent <= received_at:
@@ -87,6 +93,13 @@ class KnifeAutomation:
         if src and stamp > a.stamp:
             counts = body_counts(src["items"])
             if not a.drop and skinned(a.before, counts):
+                stack = self.queue.stacks.get(a.source)
+                if stack and stack.appeared is not None and stack.assigned is not None:
+                    self.last_timing_ms = {
+                        "recognition": round(1000 * (stack.assigned - stack.appeared)),
+                        "wait_for_use": round(1000 * (a.sent - stack.assigned)),
+                        "confirmation": round(1000 * (now - a.sent)),
+                    }
                 self.queue.consumed(a.source)
                 self.done += 1
                 self.pending = None
@@ -110,6 +123,7 @@ class KnifeAutomation:
                  if c.get("kind") != "unknown" and "items" in c}
         stamp = sample["captured_at"]
         self.last_map = now
+        self.actionable = False
         # Confirm a transformation before the new count invalidates the previous claim.
         self.acknowledge(cells, stamp, now)
         if stamp != self.frame:
@@ -118,7 +132,10 @@ class KnifeAutomation:
                 target_id = self.controller.combat.sent_target or target_id
             self.queue.observe(cells.values(), now, game=self.game, target_id=target_id, sampled_at=stamp)
             self.frame = stamp
-        if self.pending or not self.tool_ready or self.fighting():
+        if self.pending or not self.tool_ready:
+            return None
+        fighting = self.fighting()
+        if fighting and not self.can_use_during_combat():
             return None
         for p in sorted(self.queue.stacks, key=lambda p: distance(origin,p)):
             if distance(origin, p) > 1:
@@ -132,11 +149,14 @@ class KnifeAutomation:
             action, item = choice
             drop = None
             if action == "uncover":
+                if fighting:
+                    continue
                 drop = next((q for q, c in cells.items() if safe_drop(c, origin, p)), None)
                 if drop is None:
                     self.status = "Brak miejsca na odsunięcie ciała"
                     continue
             count = sum(i["id"] == item["id"] for i in cell["items"])
+            self.actionable = True
             return Attempt(p, item, body_counts(cell["items"]), stamp, now, drop, count)
         return None
 
@@ -204,7 +224,8 @@ async def run_knife(bot):
             if a and location:
                 original = tuple(bot.position)
                 def current():
-                    if (not enabled() or gs.hunter_knife is not runtime or runtime.pending is not a or runtime.fighting()
+                    if (not enabled() or gs.hunter_knife is not runtime or runtime.pending is not a
+                            or (runtime.fighting() and (a.drop or not runtime.can_use_during_combat()))
                             or gs.hp <= 0 or tuple(bot.position) != original or time.monotonic() - a.sent > .55):
                         return False
                     latest = fresh_sample(bot)

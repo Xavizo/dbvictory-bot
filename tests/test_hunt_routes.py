@@ -54,6 +54,18 @@ def test_dense_anchors_are_removed_on_replay_while_labels_and_actions_stay(tmp_p
     assert atlas.plan(sparse['points'],edges,loop=True,links=sparse['links'])['path']==sparse['path']
 
 
+def test_long_walk_with_one_bend_preserves_tiles_without_dense_anchors(tmp_path):
+    from hunt_routes import sparse_waypoints
+    atlas = MapAtlas(tmp_path, "b"*64)
+    atlas.observe(sample([cell(x,y,7) for x in range(24,34) for y in range(32,50)]))
+    points = [[x,32,7] for x in range(24,29)] + [[28,y,7] for y in range(33,49)]
+    original = atlas.plan(points, [], loop=False)
+    result = sparse_waypoints(atlas, [], original)
+    assert result["path"] == original["path"]
+    assert [28,32,7] in result["points"]
+    assert len(result["points"]) <= 5
+
+
 def test_one_way_exit_does_not_claim_coverage_or_implicit_return(tmp_path):
     atlas, request, edges = fixture(tmp_path)
     route = propose(atlas,edges[:-1],request)

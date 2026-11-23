@@ -1001,6 +1001,7 @@ def _build_state_json() -> str:
         "hunter_knife": {
             "status": gs.hunter_knife.panel_status() if getattr(gs, "hunter_knife", None) else "Wyłączony",
             "processed": gs.hunter_knife.done if getattr(gs, "hunter_knife", None) else 0,
+            "last_timing_ms": gs.hunter_knife.last_timing_ms if getattr(gs, "hunter_knife", None) else None,
             "from_combat": gs.hunter_knife.queue.from_combat if getattr(gs, "hunter_knife", None) else 0,
             "personal_loot": getattr(gs, "knife_loot_count", 0),
             "unclassified_loot": getattr(gs, "knife_candidate_count", 0),

@@ -165,7 +165,7 @@ def sparse_waypoints(atlas, observations, plan, protected=()):
     # Limit the distance to the next editable anchor, even on a straight road.
     last = 0
     for i in range(1,len(points)):
-        if i in pins or offsets[i]-offsets[last] >= 14:
+        if i in pins or offsets[i]-offsets[last] >= 24:
             pins.add(i)
             last = i
     if len(pins) == 2 and points[0] == points[-1]:
@@ -189,7 +189,17 @@ def sparse_waypoints(atlas, observations, plan, protected=()):
             leg = trial['legs'][k] if k < len(trial['legs']) else None
             if leg is None or not same_corridor(plan['path'][offsets[a]:offsets[b]+1],
                                                 trial['path'][leg['start']:leg['end']+1]):
-                split.add((a+b)//2)
+                pivot = (a+b)//2
+                if leg is not None:
+                    replay = trial['path'][leg['start']:leg['end']+1]
+                    footprint = set(map(patch, replay))
+                    # An anchor on the missing bend restores its shape directly.
+                    def deviation(i):
+                        p = points[i]
+                        nearest = min(max(abs(p[0]-q[0]), abs(p[1]-q[1])) for q in replay)
+                        return (patch(p) not in footprint, nearest, -abs(2*i-a-b))
+                    pivot = max(range(a+1,b), key=deviation)
+                split.add(pivot)
         if not split:
             if (trial['complete'] and trial['return_mode']==plan['return_mode']
                     and trial['transitions']==plan['transitions'] and trial['avoid_tiles']==plan['avoid_tiles']
