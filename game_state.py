@@ -40,6 +40,18 @@ class GameState:
     magic_level = client_field("magic_level")
     position = client_field("position", (0,0,0))
 
+    @property
+    def client_snapshot(self):
+        return self._client_snapshot
+
+    @client_snapshot.setter
+    def client_snapshot(self, sample):
+        self._client_snapshot = sample
+        journal = getattr(self, "observations", None)
+        if journal is not None and sample is not None:
+            from session_observations import publish_player_sample
+            publish_player_sample(journal, sample)
+
     def __init__(self):
         self.client_state_required = False
         self.client_snapshot = None

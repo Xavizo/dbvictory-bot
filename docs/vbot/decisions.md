@@ -2,7 +2,7 @@
 
 Stan kodu DBVictory `b03ad36`, vBot 4.8 `09d6816`, OTCv8 `aacfe3f`. Ten dokument odróżnia obserwacje w źródłach, odtworzenia z atrapami, pomiar lokalny i propozycje zmian. Audyt dotyczy architektury. Wersja, która udostępnia bazę wiedzy przez MCP, nie zmienia procesu łączenia ani logiki gry. [Pełny katalog](modules.md) · [Integracja z klientem](architecture.md)
 
-[Pełny plan przebudowy silnika](#pełny-plan-przebudowy-silnika) · [Pilotaż Hunter Knife i sesji](#plan-wdrożenia-i-kryteria-wydania)
+[Wdrożenie w v1.26.0](#wdrożenie-sześciu-obszarów-w-v1260) · [Pełny plan przebudowy silnika](#pełny-plan-przebudowy-silnika) · [Pilotaż Hunter Knife i sesji](#plan-wdrożenia-i-kryteria-wydania)
 
 ## Pierwsze decyzje i ich koszt
 
@@ -146,3 +146,20 @@ Na źródłach `5255504` uruchomiono cztery niezależne zestawy offline. Wyniki 
 | Automatyka, alerty, stan postaci, przejścia i mapa | 221 zaliczonych | `test_potions`, `test_barrier_band`, `test_speed_up`, `test_game_alerts`, `test_transition_learning`, `test_player_updates`, `test_world_minimap` |
 
 Pięć oczekiwanych niepowodzeń dotyczy dwóch błędów opisanych w pilotażu noża. Łącznie przeszło 512 testów. Pomiar opóźnień w działającej grze wymaga oddzielnej próby po wdrożeniu odpowiedniej domeny. [Potwierdzenia komend](../../command_delivery.py) · [Recovery po restarcie](../../tests/test_engine_restart_recovery.py) · [Współpraca ruchu, walki i leczenia](../../tests/test_automation_domains.py) · [Pierwsze spotkanie w Atlasie](../../hunt_sightings.py)
+
+## Wdrożenie sześciu obszarów w v1.26.0
+
+Jedna generacja logowania ma jeden rejestr obserwacji i jedną inicjalizację zapisanych modułów. Obserwacja ma źródło, czas monotoniczny i numer zmiany. Moduł odczytuje numer interesujących go rodzin przed oceną stanu. Jeżeli w tym czasie pojawi się nowy odczyt, kolejne oczekiwanie może zakończyć się od razu. Termin kontrolny uwzględnia cooldowny i źródła, które chwilowo milczą. [Rejestr zdarzeń](../../session_observations.py) · [Logowanie](../../session_startup.py)
+
+| Rodzina | Źródło i interpretacja w diagnostyce |
+|---|---|
+| HP/Ki i pozycja | Potwierdzony odczyt postaci ma próg świeżości 0,5 s. Gdy używany jest odczyt serwerowy, próg informacyjny wynosi 2 s. Luka w jednym źródle nie kasuje świeżej obserwacji innego źródła. |
+| Mapa i stworzenia | Gotowa próbka mapy zawiera pola i stosy stworzeń. Obie rodziny są oznaczane jako stare po 2 s. Ruch nadal sprawdza zgodność środka mapy i własne, krótsze okno tuż przed krokiem. |
+| Cel i ekwipunek | Zaobserwowany wybór celu lub czynność zmieniająca ekwipunek sygnalizują potrzebę ponownej oceny. Przy użyciu przedmiotu pracownik sprawdza jego bieżący slot. |
+| Wiadomości, Loot, anulowanie kroku, efekty i śmierć | Rejestr przechowuje czas i źródło ostatniego sygnału. Po luce oznacza zależne informacje z danego źródła. O utrzymywaniu się konkretnego efektu decyduje właściwy moduł na podstawie stanu gry. |
+
+Dla komend można odczytać czas od zgłoszenia do wyniku wysłania oraz do pierwszego zaobserwowanego potwierdzenia po tym wyniku. Powtórzona obserwacja zachowuje pierwotny czas i dowód. Ręczne użycie noża w tym samym oknie co próba automatyczna pozostawia skutek bez przypisania. [Potwierdzenia](../../command_delivery.py) · [Hunter Knife](../../hunter_knife_action.py)
+
+Próba przekrojowa odtwarza krok przy przypisanym ciele, brak świeżej mapy przy aktualnym HP, późniejszy odczyt pola, relog i opóźniony wynik starej sesji. Próba logowania obejmuje gotowość natychmiastową, opóźnioną, brak gotowego wyjścia, wylogowanie i zastąpienie postaci. [Próba kilku domen](../../tests/test_session_domain_replay.py) · [Symulacja logowania](../../tests/simulations/session_readiness.py) · [Symulacja panelu](../../tests/simulations/panel_readiness.cjs)
+
+W dwóch próbach na wersję, po 32 syntetyczne kroki, p95 od wysłania kroku do zgodnej mapy wyniosło 47,27 ms na bazie i 47,90 ms po zmianie. Samo oczekiwanie na mapę miało p95 16,13 ms w obu wersjach. Przy blokadzie doszły do skutku wszystkie 32 zaplanowane leczenia. P95 od obniżenia HP do lokalnej próby leczenia wyniosło odpowiednio 47,23 i 16,62 ms. Wyniki zależą od timera Windows i dotyczą lokalnego wykonania z kontrolowanym wejściem. [Obciążenie porównawcze](../../tests/engine_timing_probe.py)

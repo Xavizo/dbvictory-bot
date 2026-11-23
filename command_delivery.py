@@ -16,6 +16,8 @@ class CommandReceipt:
         self.status = 'queued'
         self.reason = None
         self.dispatched_at = None
+        self.resolved_at = None
+        self.confirmed_at = None
         self.write_started = False
         self.effect = 'pending'
         self.evidence = None
@@ -29,8 +31,9 @@ class CommandReceipt:
         if self.status != 'queued':
             return
         self.status, self.reason = status, reason
+        self.resolved_at = time.monotonic()
         if status in ATTEMPTED_STATES:
-            self.dispatched_at = time.monotonic()
+            self.dispatched_at = self.resolved_at
         else:
             self.effect = 'not_sent'
         if not self._done.done():
@@ -47,13 +50,16 @@ class CommandReceipt:
             raise
 
     def confirm(self, evidence):
-        if self.attempted:
+        if self.attempted and self.confirmed_at is None:
             self.effect, self.evidence = 'confirmed', evidence
+            self.confirmed_at = time.monotonic()
 
     def snapshot(self):
         return dict(id=self.id,session=self.session,target=self.target,opcode=self.opcode,
                     status=self.status,reason=self.reason,effect=self.effect,evidence=self.evidence,
-                    age_ms=round((time.monotonic()-self.created)*1000))
+                    age_ms=round((time.monotonic()-self.created)*1000),
+                    delivery_result_ms=None if self.resolved_at is None else round((self.resolved_at-self.created)*1000),
+                    effect_after_result_ms=None if self.confirmed_at is None else round((self.confirmed_at-self.dispatched_at)*1000))
 
 
 class QueuedCommand(tuple):

@@ -171,6 +171,22 @@ test('global Atlas is available outside Cavebot and remains unloaded until opene
   assert.equal(mounts,0);
 });
 
+test('dashboard readiness requires live panel, game, HP and map independently',()=>{
+  const chrome=component('../app/DashboardChrome.tsx',{'./CavebotRunBar':{default:()=>null}});
+  const render=require('react-dom/server').renderToStaticMarkup, el=require('react').createElement;
+  const base={connected:true,actions:[],player:{hp:25,max_hp:100,mana:90,max_mana:100,stats_age:.5,level:42},
+    passive_map:{status:'ready',stale:false,center:[10,20,7]}};
+  const draw=(overrides={},mcpConnected=true)=>render(el(chrome.default,{state:{...base,...overrides},mcpConnected,view:'diagnostics'}));
+  assert.match(draw(),/Sesja gry aktywna/);
+  assert.match(draw({login_startup:{phase:'waiting_for_session'}}),/Przygotowanie sesji/);
+  assert.match(draw({login_startup:{phase:'failed'}}),/Błąd uruchamiania automatyki/);
+  assert.match(draw({passive_map:{...base.passive_map,stale:true}}),/Czekam na pozycję i mapę/);
+  assert.match(draw({observation_families:{families:{health:{state:'gap'}}}}),/Czekam na HP i Ki/);
+  const stale=draw({},false);
+  assert.match(stale,/Brak świeżych danych/);
+  assert.doesNotMatch(stale,/25 \/ 100|10 · 20 · 7|Sesja gry aktywna|class="emergency-button" disabled/);
+});
+
 test('spell conditions expose comparisons, absolute HP/Ki and explain priority without casting',()=>{
   const {default:Conditions,SpellDiagnostics}=component('../app/SpellConditions.tsx');
   const render=(C,props)=>require('react-dom/server').renderToStaticMarkup(require('react').createElement(C,props));

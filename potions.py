@@ -147,10 +147,16 @@ class PotionScheduler:
         self.record_item_use(rule["item_id"], cfg, now, stamp, rule=rule)
 
 
+POTION_INPUTS = ("health", "inventory", "messages")
+
+
 async def run_potions(bot):
+    from item_observations import observed_inputs, wait_for_inputs
+
     scheduler = bot.state.potion_scheduler
     restored = None
     while True:
+        cursor = observed_inputs(bot.state.game_state, POTION_INPUTS)
         cfg = validate_config(bot.state.settings.get("actions", {}).get("auto_potions", {}), require_cooldowns=True)
         if bot.is_connected:
             gs = bot.state.game_state
@@ -212,7 +218,7 @@ async def run_potions(bot):
                 if item_id == 8465 and getattr(bot.state, "playback_active", False):
                     bot.state.playback_senzu_used += 1
                 bot.log(f"Rule {rule['id']}: requested {ITEMS[item_id]} ({item_id}); {trigger}; cooldown respected")
-        await bot.sleep(0.05)
+        await wait_for_inputs(bot, POTION_INPUTS, cursor, .05)
 
 
 class SenzuUsage:

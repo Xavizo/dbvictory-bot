@@ -8,11 +8,13 @@ and pushes game state to all connected dashboards every 100ms.
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, parse_qs
@@ -20,6 +22,7 @@ from uuid import uuid4
 from dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
 from cavebot_combat import validate_combat
 from map_atlas import database_busy
+from session_observations import observation_family_status
 
 log = logging.getLogger("dashboard_api")
 
@@ -353,9 +356,9 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json_response({'error':'Atlas czeka na pierwszy odczyt.'},503)
         try:
             if zones:
-                from hunt_world import world_zones
+                from hunt_world import world_zone_update
                 since=parse_qs(urlsplit(self.path).query).get("since",[None])[0]
-                return self._json_response(world_zones(atlas,since))
+                return self._json_response(world_zone_update(atlas,since))
             if discovered:
                 from manual_hunts import discoveries, storage
                 try:
@@ -837,6 +840,38 @@ def _build_playback_stats(st, gs) -> dict:
 
 # ── Shared state builder (used by HTTP and WebSocket) ──────────────
 
+@lru_cache(maxsize=128)
+def _action_description(path, mtime_ns, size):
+    """Modification time and size invalidate earlier descriptions after an edit."""
+    with open(path, encoding="utf-8") as action:
+        for line in action:
+            description = line.strip().strip('"').strip("'")
+            if description:
+                return description
+    return ""
+
+
+def _action_catalog(directory, internal):
+    rows = []
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                name, extension = os.path.splitext(entry.name)
+                if extension != ".py" or name == "__init__" or name in internal:
+                    continue
+                try:
+                    if not entry.is_file():
+                        continue
+                    stat = entry.stat()
+                    description = _action_description(entry.path, stat.st_mtime_ns, stat.st_size)
+                except (OSError, UnicodeError):
+                    description = ""
+                rows.append((name, description))
+    except OSError:
+        return []
+    return sorted(rows)
+
+
 def _build_state_json() -> str:
     """Build the full state JSON string. Thread-safe read of global state."""
     st = _state
@@ -846,28 +881,14 @@ def _build_state_json() -> str:
     main_mod = sys.modules.get("__main__")
     INTERNAL_ACTIONS = getattr(main_mod, "INTERNAL_ACTIONS", {"dll_bridge"})
     actions_settings = st.settings.get("actions", {})
-    action_names = sorted(
-        p.stem for p in ACTIONS_DIR.glob("*.py")
-        if p.stem != "__init__" and p.stem not in INTERNAL_ACTIONS
-    ) if ACTIONS_DIR.exists() else []
 
     action_tasks = dict(st._action_tasks)
     actions = []
-    for name in action_names:
+    for name, desc in _action_catalog(ACTIONS_DIR, INTERNAL_ACTIONS):
         cfg = actions_settings.get(name, {})
         enabled = cfg.get("enabled", False)
         task = action_tasks.get(name)
         running = task is not None and not task.done()
-        desc = ""
-        try:
-            src = (ACTIONS_DIR / f"{name}.py").read_text(encoding="utf-8")
-            for line in src.splitlines():
-                s = line.strip().strip('"').strip("'")
-                if s:
-                    desc = s
-                    break
-        except OSError:
-            pass
         logs = list(st.action_logs.get(name, []))
         # Expose non-standard config keys (everything except "enabled")
         action_config = {k: v for k, v in cfg.items() if k != "enabled"}
@@ -989,6 +1010,7 @@ def _build_state_json() -> str:
 
     return json.dumps({
         "connected": st.connected,
+        "login_startup": {"phase": st.login_startup.phase} if getattr(st, "login_startup", None) else None,
         "pause_hotkey": st.pause_hotkey.snapshot() if getattr(st,"pause_hotkey",None) else None,
         "profile_selection": {"combat":st.settings.get("selected_combat_profile"),"bot":st.settings.get("selected_bot_profile"),"routes":st.settings.get("route_combat_profiles",{})},
         "alerts": st.alert_center.snapshot() if getattr(st, "alert_center", None) else None,
@@ -1001,6 +1023,7 @@ def _build_state_json() -> str:
         "hunter_knife": {
             "status": gs.hunter_knife.panel_status() if getattr(gs, "hunter_knife", None) else "Wyłączony",
             "processed": gs.hunter_knife.done if getattr(gs, "hunter_knife", None) else 0,
+            "unattributed": getattr(getattr(gs, "hunter_knife", None), "unattributed", 0),
             "last_timing_ms": gs.hunter_knife.last_timing_ms if getattr(gs, "hunter_knife", None) else None,
             "from_combat": gs.hunter_knife.queue.from_combat if getattr(gs, "hunter_knife", None) else 0,
             "personal_loot": getattr(gs, "knife_loot_count", 0),
@@ -1015,6 +1038,7 @@ def _build_state_json() -> str:
         "packets_from_client": pkt_client,
         "player": player,
         "packet_observer": st.packet_observer.snapshot() if getattr(st,"packet_observer",None) else None,
+        "observation_families": observation_family_status(st),
         "creatures": creatures,
         "dll_injected": dll_injected,
         "dll_bridge_connected": dll_bridge_running and dll_injected,

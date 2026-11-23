@@ -26,15 +26,29 @@ class PetTracker:
         self._owners = {}
         self._identified = set()
         self._refs = {}
+        self._visible_since = {}
         self._selectable = {}
         self._new_on_tile = Counter()
         self._confirmed_map = None
+        self._retired = {}
 
     def observe_map(self, cells, captured_at, slots, creatures=None):
         """Classify exact map occupants. Private stack identities stay in the engine."""
         counts = Counter(slots.values())
         slots = {slot: key for slot, key in slots.items() if counts[key] == 1}
+        positions = {key: slot[:3] for slot, key in slots.items()}
         with self._lock:
+            # A creature can remain in an old map frame after its observed death.
+            # The next positive sighting with independent, current identity/HP
+            # can start a new lifetime for the same numeric ID.
+            for key, died in list(self._retired.items()):
+                row = (creatures or {}).get(key, {})
+                if (row.get("source") == "dll" and row.get("t", 0) > died
+                        and abs(captured_at - row["t"]) <= .6 and row.get("health", 0) > 0
+                        and (row.get("x"), row.get("y"), row.get("z")) == positions.get(key)):
+                    self._retired.pop(key)
+                elif not counts[key] and captured_at - died > 2:
+                    self._retired.pop(key)
             continuous = 0 <= captured_at - self._captured <= 2
             for key in list(self._names):
                 if (isinstance(key, tuple) or key in self._manual) and (counts[key] != 1 or not continuous):
@@ -58,6 +72,8 @@ class PetTracker:
                     named[key] = label.strip()
                     self._identified.add(key)
             previous = self._refs if continuous else {}
+            self._visible_since = {key: self._visible_since.get(key, captured_at) if key in previous else captured_at
+                                   for key in slots.values()}
             self._refs = {key: previous.get(key) or secrets.token_hex(12) for key in slots.values()}
             self._selectable.clear()
             self._slots = slots
@@ -199,6 +215,21 @@ class PetTracker:
             else:
                 raise ValueError("Pet został już rozpoznany.")
 
+    def retire(self, cid, died):
+        """A confirmed death closes this identity, including any old owner proof."""
+        with self._lock:
+            if self._visible_since.get(cid, 0) > died:
+                return False
+            was_pet = self._names.pop(cid, None) is not None
+            self._owners.pop(cid, None)
+            self._manual.discard(cid)
+            self._identified.discard(cid)
+            self._refs.pop(cid, None)
+            if self._pending and self._pending[1] == cid:
+                self._pending = None
+            self._retired[cid] = died
+            return was_pet
+
     def is_pet(self, cid):
         with self._lock:
             return cid in self._names
@@ -210,7 +241,7 @@ class PetTracker:
                 return {}
             by_tile = defaultdict(list)
             for slot, key in self._slots.items():
-                if key not in self._names:
+                if key not in self._names and key not in self._retired:
                     by_tile[slot[:3]].append(key)
             return by_tile
 

@@ -132,6 +132,7 @@ class AdaptiveCavebot:
         self._unresolved_destination = None
         self._pending_shortcut = None
         self.navigation_hold=None
+        self.navigation_wait = None
         self._held_web=None
         self._pending_body_move=None
         self.variation_until=0;self.blockage=None;self._blockage_key=None;self._blockage_at=0
@@ -256,7 +257,7 @@ class AdaptiveCavebot:
         return {"path": points, "stop": stop}
 
     def snapshot(self):
-        return {"status":self.status,"reason":self.reason,"map_preview":self.map_preview(),"domains":self.domains.snapshot() if self.domains else None,"navigation_hold":self.navigation_hold,"name":self.name,"index":self.index,"total":len(self.path),
+        return {"status":self.status,"reason":self.reason,"map_preview":self.map_preview(),"domains":self.domains.snapshot() if self.domains else None,"navigation_hold":self.navigation_hold,"navigation_wait":self.wait_snapshot(),"name":self.name,"index":self.index,"total":len(self.path),
                 "mode":"combat" if self.combat_only else "route","scope":self.scope,"waypoint":self.waypoint_progress(),"resumable":bool(self.path and self.status in {"idle","paused","ready"}),"loops":self.laps,"loop":self.loop,"draft_id":self.draft_id,"combat":self.combat.snapshot(),"approach_remaining":max(0,self.loop_start-self.index) if self.path else 0,"position":self.path[self.index] if self.path else None,"logs":list(self.logs),"recovery_count":self.recovery_count,"blockage":self.blockage}
 
     def pause(self,reason):
@@ -1049,13 +1050,52 @@ class AdaptiveCavebot:
             else:
                 self._finish_walk_timing(outcome)
 
+    def wait_snapshot(self):
+        wait = self.navigation_wait
+        if wait is None or self.status != "running":
+            return None
+        reason, families, deadline = wait
+        return {"reason": reason, "observations": families,
+                "review_in_ms": max(0, round((deadline - time.monotonic()) * 1000))}
+
+    async def wait_for_navigation(self, reason, families, timeout, *, after=None):
+        from session_observations import session_observations
+        events = session_observations(self.state.game_state)
+        revision = events.revision_for(families) if after is None else after
+        wait = (reason, families, time.monotonic() + timeout)
+        self.navigation_wait = wait
+        try:
+            await events.wait(families, revision, timeout)
+        finally:
+            if self.navigation_wait is wait:
+                self.navigation_wait = None
+
+    async def wait_for_rejoin(self, origin):
+        # Most position samples confirm the same tile. Rebuilding the entire
+        # route on every one of them would compete with healing and combat.
+        from session_observations import session_observations
+        session = self.state.game_state
+        events = session_observations(session)
+        families = ("position",)
+        deadline = time.monotonic() + 1
+        while self.status == "running" and self.state.game_state is session:
+            revision = events.revision_for(families)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or list(session.position) != origin:
+                return
+            await self.wait_for_navigation(self.reason, families, remaining, after=revision)
+
     async def _await_fresh_map(self):
+        from session_observations import session_observations
+        families = ("map", "position")
+        events = session_observations(self.state.game_state)
         deadline=time.monotonic()+.8
         monitor = self.state.passive_map_monitor
         request = getattr(monitor, "request_refresh", None)
         while True:
             self.guard()
             if self.status!='running':raise ValueError(self.reason)
+            revision = events.revision_for(families)
             sample=monitor.snapshot()
             if (sample.get('status')=='ready' and not sample.get('stale') and
                     sample.get('age_seconds',99)<.6 and list(sample.get('center',[]))==list(self.state.game_state.position)):
@@ -1064,7 +1104,9 @@ class AdaptiveCavebot:
             if request is not None:
                 request()
                 request = None
-            await asyncio.sleep(.01)
+            await self.wait_for_navigation("Czekam na mapę zgodną z pozycją postaci.",
+                                           families, min(.01, max(0., deadline - time.monotonic())),
+                                           after=revision)
 
     async def send(self,payload,validate=None,skip_if_changed=False,defer_movement=False,route_destination=None):
         self.last_receipt=None
@@ -1574,17 +1616,20 @@ class AdaptiveCavebot:
                 self.domains.movement_state="held"
                 if self.status!='running' or not self.navigation_hold:continue
                 self.reason='Ruch wstrzymany: '+self.navigation_hold+' Walka aktywna.'
-                await asyncio.sleep(.05);continue
+                await self.wait_for_navigation(self.navigation_hold, ("map", "position"), .1)
+                continue
             if not self.combat_only and time.monotonic()<self.manual_until:
                 if pos!=manual_position:self.manual_until=time.monotonic()+.3
                 manual_position=pos
                 self.domains.movement_state="waiting"
-                await asyncio.sleep(.05);continue
+                self.reason = "Ruch ręczny. Czekam na pozycję przed powrotem na trasę."
+                await self.wait_for_navigation(self.reason, ("position",), .05)
+                continue
             knife = getattr(self.state.game_state, "hunter_knife", None)
             if not self.combat_only and knife and knife.hold():
                 self.domains.movement_state = "waiting"
                 self.reason = "Hunter Knife · czekam przy ciele."
-                await asyncio.sleep(.05)
+                await self.wait_for_navigation(self.reason, ("map", "position"), .05)
                 continue
             if not self.combat_only and pos!=self.path[self.index]:
                 if self.combat.config['enabled'] and self.combat.anchor is not None and pos[2]==self.path[self.index][2]:
@@ -1595,7 +1640,7 @@ class AdaptiveCavebot:
                 if not await self.recover_position(sample):
                     self.domains.movement_state="waiting"
                     self.reason='Powrót do trasy: czekam na wolne pole; walka aktywna.'
-                    await asyncio.sleep(.05)
+                    await self.wait_for_navigation(self.reason, ("map", "position"), .1)
                 continue
             self.skip_repeated_sweep()
             self.tolerate_waypoint(sample)
@@ -1618,7 +1663,7 @@ class AdaptiveCavebot:
                     if await self.reconnect_route_step(pos, anchor, closing=True):
                         continue
                     self.reason = f'Brak potwierdzonego domknięcia do {tuple(anchor)}.'
-                    await asyncio.sleep(1)
+                    await self.wait_for_rejoin(pos)
                     continue
                 self._observe_report('finish', True, 'okrążenie' if self.loop else 'koniec trasy')
                 self.laps+=1
@@ -1686,7 +1731,7 @@ class AdaptiveCavebot:
                     if await self.reconnect_route_step(pos, target):
                         continue
                     self.reason = f'Brak potwierdzonego połączenia trasy {tuple(pos)} → {tuple(target)}.'
-                    await asyncio.sleep(1)
+                    await self.wait_for_rejoin(pos)
                     continue
                 self.expire_movement_blocks()
                 tiles={(c['x'],c['y'],c['z']):c for c in sample['cells']}
@@ -1716,7 +1761,8 @@ class AdaptiveCavebot:
                         if (tuple(target) not in self.blocked and not self.combat.config['enabled']
                                 and not any(t.get('occupants',0) for t in sample['cells'])):
                             raise ValueError('Brak widocznego obejścia przeszkody; sprawdź trasę.')
-                        await asyncio.sleep(.1);continue
+                        await self.wait_for_navigation(self.reason, ("map", "position"), .1)
+                        continue
                 self._route_command=True;self._route_boundary=at_transition
                 self._pending_shortcut = [self.index, target] if shortcut else None
                 self.save_session_cursor(pending=target)

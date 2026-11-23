@@ -32,7 +32,12 @@ async def measure_steps(state, folder):
             ack_delay = (.018, .033, .026, .040)[i % 4]
             map_delay = (.016, .028, .012, .020)[i % 4]
             loop.call_later(ack_delay, setattr, gs, "position", tuple(target))
-            loop.call_later(ack_delay + map_delay, visible.__setitem__, slice(None), target)
+            def update_map():
+                visible[:] = target
+                journal = getattr(gs, "observations", None)
+                if journal is not None:
+                    journal.publish("map", ("map",))
+            loop.call_later(ack_delay + map_delay, update_map)
 
         state.game_proxy.inject_to_server = schedule_step
         dispatched = None

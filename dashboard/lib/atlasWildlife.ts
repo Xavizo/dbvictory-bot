@@ -6,6 +6,27 @@ export type Habitat={position:Position;species:[string,number][]};
 
 export type SpawnMark = {point:Position;name:string;count:number};
 
+export type WorldZones = {scope:string; revision:string; side:number; cells:Position[]; habitats:Habitat[]; spawns?:SpawnMark[]};
+export type ZoneUpdate = Pick<WorldZones, "scope"|"revision"|"side"> & Partial<Omit<WorldZones, "scope"|"revision"|"side">> & {
+  base_revision?:string; changed?:Position[];
+};
+
+/** Replace all overlay data in each changed sector. A removed spawn may sit outside the walked cells. */
+export function mergeWorldZones(current:WorldZones|null, update:ZoneUpdate):WorldZones|null {
+  if (!update.cells) return current?.scope === update.scope && current.revision === update.revision ? current : null;
+  const cells = update.cells, habitats = update.habitats ?? [], spawns = update.spawns ?? [];
+  const {scope,revision,side} = update;
+  if (!update.base_revision) return {scope,revision,side,cells,habitats,spawns};
+  if (!current || current.scope !== scope || current.revision !== update.base_revision || current.side !== side || !update.changed) return null;
+  const changed = new Set(update.changed.map(p=>p.join(",")));
+  const keep = (p:Position)=>!changed.has(p.join(","));
+  const keepSpawn = ({point:[x,y,z]}:SpawnMark)=>keep([Math.floor(x/side)*side,Math.floor(y/side)*side,z]);
+  return {scope,revision,side,
+    cells:[...current.cells.filter(keep),...cells],
+    habitats:[...current.habitats.filter(h=>keep(h.position)),...habitats],
+    spawns:[...(current.spawns??[]).filter(keepSpawn),...spawns]};
+}
+
 export function floorSpawns(rows:SpawnMark[],floor:number,species:string) {
   const markers = new Map<string,{point:Position;lines:string[]}>();
   for(const {point,name,count} of rows) {

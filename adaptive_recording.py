@@ -294,12 +294,20 @@ def hunting_excerpt(recording, observations, *, reorder=True, ordinary_tiles=(),
                "coverage_anchors": list(anchors.values()),
                "waypoints": waypoints}
     species = {}
+    last_samples = {}
     for event in encounters:
         if not start <= event["sample"] <= end:
             continue
         row = species.setdefault(event["name"], dict(name=event["name"], seen=0, target_xp=0, nearby_xp=0))
         row["seen"] += 1
-        row["last_seen"] = event["first_pos"]
+        sample = event.get("last_sample")
+        if type(sample) is int and event["sample"] <= sample <= end and position(event.get("last_pos")):
+            point = event["last_pos"]
+        else:
+            sample, point = event["sample"], event["first_pos"]
+        if sample >= last_samples.get(event["name"], -1):
+            row["last_seen"] = point
+            last_samples[event["name"]] = sample
         if event["outcome"] in ("target_xp", "nearby_xp"):
             row[event["outcome"]] += 1
     evidence = {**status, "reordered":reordered, "samples": len(selected), "total_samples": len(trace),

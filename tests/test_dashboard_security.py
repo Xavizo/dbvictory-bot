@@ -14,6 +14,23 @@ import dashboard_api as api
 from dashboard_security import DASHBOARD_ORIGIN, SESSION_TOKEN
 
 
+def test_action_catalog_reuses_and_invalidates_descriptions(tmp_path):
+    action = tmp_path / "measure.py"
+    action.write_text('"""Before"""\n', encoding="utf-8")
+    (tmp_path / "dll_bridge.py").write_text('"""Internal"""\n', encoding="utf-8")
+    ignored = {"dll_bridge"}
+    api._action_description.cache_clear()
+    assert api._action_catalog(tmp_path, ignored) == [("measure", "Before")]
+    assert api._action_catalog(tmp_path, ignored) == [("measure", "Before")]
+    assert api._action_description.cache_info().hits == 1
+    action.write_text('"""After edit"""\n', encoding="utf-8")
+    assert api._action_catalog(tmp_path, ignored) == [("measure", "After edit")]
+    action.rename(tmp_path / "renamed.py")
+    assert api._action_catalog(tmp_path, ignored) == [("renamed", "After edit")]
+    (tmp_path / "renamed.py").unlink()
+    assert api._action_catalog(tmp_path, ignored) == []
+
+
 @pytest.fixture
 def http_api(monkeypatch):
     mutations = []

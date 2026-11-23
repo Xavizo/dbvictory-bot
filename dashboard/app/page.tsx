@@ -1086,6 +1086,13 @@ function CavebotPanel({
 
 import BarrierBandPanel from "./BarrierBandPanel";
 
+const observationLabels: Record<string,string> = {
+  health:"HP i Ki", position:"Pozycja postaci", map:"Mapa i pola", creatures:"Stworzenia", target:"Wybrany cel",
+  walk_cancel:"Anulowanie kroku", messages:"Komunikaty gry", loot:"Loot", inventory:"Ekwipunek",
+  effects:"Efekty postaci", death:"Śmierć"
+};
+const observationStates = {fresh:"Aktualne", stale:"Nieaktualne", waiting:"Brak próbki", gap:"Luka", observed:"Zaobserwowano"};
+
 export default function Dashboard() {
   const { state, mcpConnected, refresh, dashboardError } = useBot();
 
@@ -1140,9 +1147,21 @@ export default function Dashboard() {
         <p>Przetworzone {state.packet_observer.applied} · pominięte obserwacje {state.packet_observer.dropped} · błędy {state.packet_observer.failures}</p>
         {state.packet_observer.last_problem && <p>Ostatni problem: {({overload:"przeciążenie kolejki",stale:"nieaktualna obserwacja",decode_failed:"nierozpoznana ramka",analysis_failed:"błąd analizy",invalid_frame:"nieprawidłowa ramka",worker_stopped:"analizator zatrzymany",notification_failed:"błąd powiadomienia"} as Record<string,string>)[state.packet_observer.last_problem] ?? "błąd obserwacji"}. Pominięte obserwacje dotyczą analizy bota; pakiety gry są przekazywane osobno.</p>}
       </div></details>}
+      {state?.observation_families && <details className="learned-drawer">
+        <summary>Odczyty sesji {state.observation_families.session_id}{mcpConnected ? "" : " · ostatni stan"}</summary>
+        <div className="diagnostic-grid">{Object.entries(state.observation_families.families).map(([name, value])=><div className="diagnostic-card" key={name}>
+          <span>{observationLabels[name] ?? name}</span><strong>{observationStates[value.state]}</strong>
+          {value.age_ms != null && <small>Wiek próbki {(value.age_ms / 1000).toLocaleString("pl-PL",{maximumFractionDigits:1})} s</small>}
+        </div>)}</div>
+        {state.adaptive_cavebot?.navigation_wait && <div className="p-3 text-xs">
+          <strong>Oczekiwanie ruchu</strong><p>{state.adaptive_cavebot.navigation_wait.reason}</p>
+          <p>Wznowienie oceny po obserwacji {state.adaptive_cavebot.navigation_wait.observations.map(name=>observationLabels[name] ?? name).join(", ")}
+            {" lub po "}{(state.adaptive_cavebot.navigation_wait.review_in_ms / 1000).toLocaleString("pl-PL",{maximumFractionDigits:2})} s.</p>
+        </div>}
+      </details>}
       <details className="learned-drawer"><summary>Wyuczone przejścia</summary><TransitionLearningPanel map={state?.passive_map}/></details>
       <div className="diagnostic-grid">
-        {[{label:"Panel / MCP",ok:mcpConnected},{label:"Sesja gry",ok:state?.connected},{label:"DLL w kliencie",ok:state?.dll_injected},{label:"Połączenie mostu",ok:state?.dll_bridge_connected}].map(s=><div key={s.label} className="diagnostic-card"><span>{s.label}</span><strong className={s.ok ? "text-emerald-300" : "text-gray-400"}>{s.ok ? "Aktywne" : "Nieaktywne"}</strong></div>)}
+        {[{label:"Panel / MCP",ok:mcpConnected},{label:"Sesja gry",ok:state?.connected},{label:"DLL w kliencie",ok:mcpConnected && state?.dll_injected},{label:"Połączenie mostu",ok:mcpConnected && state?.dll_bridge_connected}].map(s=><div key={s.label} className="diagnostic-card"><span>{s.label}</span><strong className={s.ok ? "text-emerald-300" : "text-gray-400"}>{s.ok ? "Aktywne" : "Nieaktywne"}</strong></div>)}
       </div>
       <div className="diagnostic-grid two-columns"><div className="diagnostic-card"><span>Pakiety z serwera</span><strong>{(state?.packets_from_server ?? 0).toLocaleString("pl-PL")}</strong></div><div className="diagnostic-card"><span>Pakiety z klienta</span><strong>{(state?.packets_from_client ?? 0).toLocaleString("pl-PL")}</strong></div></div>
       <RouteReplayPanel state={state} online={mcpConnected}/>

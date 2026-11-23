@@ -33,6 +33,8 @@ log = logging.getLogger("mcp_server")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dbv_revision import checkout_revision, revision_label, version_for
+from session_startup import LoginStartup
+from session_observations import session_observations, note_observation_gap, publish_semantic_result
 
 
 def _engine_label(root, revision=None):
@@ -115,8 +117,7 @@ class BotState:
         self.packet_observer = None
         self.ready: bool = False
         self._auto_task: asyncio.Task | None = None
-        self._login_wait_task: asyncio.Task | None = None
-        self._login_event: asyncio.Event | None = None
+        self.login_startup = LoginStartup()
         self._proxy_tasks: list[asyncio.Task] = []
         self.settings: dict = load_settings()
         self.automation_paused = bool(self.settings.get("automation_paused", False))
@@ -1128,6 +1129,9 @@ async def _reset_bot() -> str:
     import game_state as _gs_mod
 
     log.info("=== RESETTING BOT ===")
+    pending_start = state.login_startup.cancel()
+    if pending_start is not None:
+        await asyncio.gather(pending_start, return_exceptions=True)
 
     state._adaptive_prepare_token=None
     # 1. Stop all running actions
@@ -1214,20 +1218,10 @@ async def _reset_bot() -> str:
     globals()['parse_server_packet'] = _gs_mod.parse_server_packet
     from game_state import GameState
 
-    # 5b. Cancel the login-wait task
-    login_task = getattr(state, '_login_wait_task', None)
-    if login_task and not login_task.done():
-        login_task.cancel()
-        try:
-            await asyncio.wait_for(login_task, timeout=1.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-            pass
-
     # 6. Reset global state
     state.login_proxy = None
     state.game_proxy = None
     state.ready = False
-    state._login_event = asyncio.Event()
     state._auto_task = None
     state._action_tasks.clear()
     state.game_state = GameState()
@@ -1445,6 +1439,7 @@ async def start_bot() -> str:
         log.debug(f"[C->S] 0x{opcode:02X} ({name})")
         if opcode in (ClientOpcode.MOVE_THING, ClientOpcode.REQUEST_TRADE, ClientOpcode.ACCEPT_TRADE,
                       ClientOpcode.BUY_ITEM, ClientOpcode.SELL_ITEM):
+            session_observations(state.game_state).publish("client_action", ("inventory",))
             state.potion_diagnostics.invalidate_inventory()
             usage = getattr(state.game_state, 'senzu_usage', None)
             if usage is not None:
@@ -1454,6 +1449,7 @@ async def start_bot() -> str:
             try:
                 cid = reader.read_u32()
                 state.game_state.attack_target_id = cid
+                session_observations(state.game_state).publish("client_action", ("target",))
             except Exception:
                 pass
         # Log USE_ITEM details so we can discover item IDs
@@ -1479,6 +1475,8 @@ async def start_bot() -> str:
                 pass
 
     def on_login_success(keys):
+        if state.game_proxy is not observation_proxy or state.login_startup.owns(observation_proxy):
+            return
         if getattr(state,"packet_observer",None):state.packet_observer.invalidate()
         previous = getattr(state.game_state, "movement_history", None)
         if previous:previous.close()
@@ -1489,7 +1487,8 @@ async def start_bot() -> str:
         login_state.movement_history = MovementHistory()
         login_state.movement_history.start_worker()
         login_state.client_state_required = observer
-        login_state.session_id = getattr(state.game_proxy,'session_generation',0)
+        login_state.session_id = observation_proxy.session_generation
+        session_observations(login_state)
         monitor = getattr(state, "passive_map_monitor", None)
         if monitor:
             monitor.reset_learning_session()
@@ -1497,25 +1496,7 @@ async def start_bot() -> str:
         state.game_state.lure_active = False  # always clear stale lure state on reconnect
         log.info("=== BOT READY — game session established ===")
 
-        # Signal the login-wait task immediately (no polling delay)
-        event = getattr(state, '_login_event', None)
-        if event:
-            event.set()
-        # Direct auto-start: schedule action startup from the callback itself.
-        # This is the bulletproof path — no watcher task, no race condition.
-        async def _direct_start():
-            # Brief delay for proxy to finish setting up server_writer
-            for _ in range(10):
-                await asyncio.sleep(0.5)
-                if (state.game_proxy and state.game_proxy.logged_in
-                        and state.game_proxy.server_writer is not None):
-                    break
-            if (not state.connected or not state.game_proxy.logged_in
-                    or state.game_state is not login_state):
-                return
-            n = _start_all_enabled_actions()
-            log.info(f"on_login_success: {n} action(s) auto-started")
-        asyncio.ensure_future(_direct_start())
+        state.login_startup.schedule(state, _start_all_enabled_actions)
 
     # Only the owner loop can publish parser results or notify other domains.
     from packet_observer import PacketObserver, publish_server_feedback
@@ -1523,6 +1504,7 @@ async def start_bot() -> str:
 
     def apply_packet_observations(gs, result, kills):
         if gs is not state.game_state:return
+        publish_semantic_result(gs, result, kills)
         for message in result.messages:
             state.alert_center.observe_chat(message, state, gs)
         publish_server_feedback(gs, result, state.potion_diagnostics)
@@ -1535,6 +1517,7 @@ async def start_bot() -> str:
 
     def packet_observation_gap(reason):
         gs = state.game_state
+        note_observation_gap(gs, reason)
         history = getattr(gs, "movement_history", None)
         if history:history.observation_gap(reason)
         gs.client_walk_requests.clear()
@@ -1554,6 +1537,9 @@ async def start_bot() -> str:
         apply_packet_observations, packet_observation_gap)
 
     def on_disconnect():
+        if state.game_proxy is not observation_proxy:
+            return
+        state.login_startup.cancel()
         if getattr(state,"packet_observer",None):state.packet_observer.invalidate()
         history = getattr(state.game_state, "movement_history", None)
         if history:history.close()
@@ -1598,43 +1584,6 @@ async def start_bot() -> str:
     import dashboard_api
     dashboard_api.start_api(asyncio.get_running_loop(), state)
     _launch_dashboard()
-
-    # Background task: wait for login, then start actions automatically
-    # Uses an asyncio.Event for instant wakeup (no polling race condition).
-    state._login_event = asyncio.Event()
-    # If already ready (e.g. fast login), pre-set the event
-    if state.ready:
-        state._login_event.set()
-
-    async def _wait_for_login_and_start():
-        t0 = time.time()
-        log.info(f"[TIMING] waiting for login... t=0.0s")
-        try:
-            await asyncio.wait_for(state._login_event.wait(), timeout=120.0)
-        except asyncio.TimeoutError:
-            log.warning(f"[TIMING] No login detected after {time.time()-t0:.1f}s — actions not started.")
-            return
-
-        t1 = time.time()
-        log.info(f"[TIMING] login event fired at t={t1-t0:.1f}s — verifying proxy...")
-
-        # Verify proxy connection is functional
-        for i in range(10):
-            await asyncio.sleep(0.5)
-            if (state.game_proxy and state.game_proxy.logged_in
-                    and state.game_proxy.server_writer is not None):
-                t2 = time.time()
-                log.info(f"[TIMING] proxy verified at t={t2-t0:.1f}s (waited {t2-t1:.1f}s)")
-                break
-        else:
-            t2 = time.time()
-            log.info(f"[TIMING] proxy verify timeout at t={t2-t0:.1f}s — starting actions anyway")
-
-        actions_started = _start_all_enabled_actions()
-        t3 = time.time()
-        log.info(f"[TIMING] {actions_started} action(s) started at t={t3-t0:.1f}s")
-
-    state._login_wait_task = asyncio.create_task(_wait_for_login_and_start())
 
     status = _build_status_report()
     return (

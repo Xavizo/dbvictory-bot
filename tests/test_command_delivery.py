@@ -24,6 +24,28 @@ async def dispatched(p,receipt):
         task.cancel();await asyncio.gather(task,return_exceptions=True)
 
 
+def test_delivery_timings_stop_at_first_observed_result(monkeypatch):
+    from types import SimpleNamespace
+    clock = [10.]
+    monkeypatch.setattr('command_delivery.time', SimpleNamespace(monotonic=lambda: clock[0]))
+
+    async def exercise():
+        receipt = CommandReceipt(1, 3, 'server', 1)
+        assert receipt.snapshot()['delivery_result_ms'] is None
+        clock[0] += .125
+        receipt.finish('unknown')
+        assert receipt.snapshot()['effect_after_result_ms'] is None
+        clock[0] += .250
+        receipt.confirm('changed_slot')
+        clock[0] += 3
+        receipt.confirm('next_frame')
+        result = receipt.snapshot()
+        assert (result['delivery_result_ms'], result['effect_after_result_ms']) == (125, 250)
+        assert result['evidence'] == 'changed_slot'
+
+    asyncio.run(exercise())
+
+
 def test_written_is_not_executed_and_history_has_no_payload():
     async def exercise():
         p=transport();r=await p.inject_to_server(b'\x96private spell text')

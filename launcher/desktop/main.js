@@ -111,7 +111,7 @@ function watchSession(proc) {
         try {await fs.access(marker);} catch {return;}
         if (child!==proc) return;
         checkingPanel=false;clearTimeout(deadline);
-        set("running","Główne okno bota jest gotowe.");win.hide();
+        set("running","Panel gotowy. Stan zalogowania i odczyty postaci zobaczysz w głównym oknie.");win.hide();
       }
     } catch { /* A temporarily unavailable process listing does not end the session. */ }
     finally {probing=false;}

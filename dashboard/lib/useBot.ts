@@ -1,126 +1,156 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchState, type BotState } from "./api";
 import { getDashboardToken } from "./auth";
 import { PanelSession } from "./panelSession";
 
 const WS_URL = "ws://127.0.0.1:8090";
-const HTTP_FALLBACK_INTERVAL = 500;
+const POLL_MS = 500;
+const STALE_MS = 3000;
+const RETRY_MS = 2000;
+const REQUEST_TIMEOUT_MS = 5000;
+
+function isSnapshot(data: unknown): data is BotState {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<BotState>;
+  return typeof snapshot.connected === "boolean" && Array.isArray(snapshot.actions)
+    && (!snapshot.connected || (typeof snapshot.player?.hp === "number" && typeof snapshot.player.max_hp === "number"));
+}
 
 export function useBot() {
   const [state, setState] = useState<BotState | null>(null);
   const [mcpConnected, setMcpConnected] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const cancelledRef = useRef(false);
   const session = useRef<PanelSession | null>(null);
-  const lastReceived = useRef(-Infinity);
-  const accept = useCallback((data:BotState) => {
-    const now = performance.now()/1000;
-    lastReceived.current = now;
+  const received = useRef(-Infinity);
+  const request = useRef<{controller:AbortController; timeout:ReturnType<typeof setTimeout>} | null>(null);
+  const active = useRef(false);
+
+  const accept = useCallback((data: BotState) => {
+    const now = performance.now();
     session.current ??= new PanelSession();
-    setState(session.current.observe(data, now));
+    setState(session.current.observe(data, now / 1000));
+    received.current = now;
     setMcpConnected(true);
   }, []);
 
-  const refresh = useCallback(async () => {
-    const requested = performance.now()/1000;
+  const readStatus = useCallback(async (afterEdit: boolean) => {
+    if (!active.current) return;
+    if (request.current) {
+      if (!afterEdit) return;
+      clearTimeout(request.current.timeout);
+      request.current.controller.abort();
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+      if (request.current?.controller === controller) request.current = null;
+    }, REQUEST_TIMEOUT_MS);
+    request.current = {controller, timeout};
     try {
-      const data = await fetchState();
-      if (cancelledRef.current || lastReceived.current > requested) return;
-      accept(data);
+      const data = await fetchState(controller.signal);
+      if (active.current && !controller.signal.aborted && isSnapshot(data)) accept(data);
     } catch {
-      if (cancelledRef.current || lastReceived.current > requested) return;
-      setState(null);
-      setMcpConnected(false);
+      // The watchdog marks the last good state stale regardless of transport.
+    } finally {
+      clearTimeout(timeout);
+      if (request.current?.controller === controller) request.current = null;
     }
   }, [accept]);
 
+  const refresh = useCallback(() => readStatus(true), [readStatus]);
+
   useEffect(() => {
-    cancelledRef.current = false;
-    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    if (!window.dbvAuth) {
+      setDashboardError("Otwórz panel Electron ze skrótu DBVictory.");
+      return;
+    }
+    active.current = true;
+    received.current = -Infinity;
     let disposed = false;
-    const staleTimer = setInterval(() => {
-      if (performance.now()/1000 - lastReceived.current <= 2) return;
-      setState(previous => {
-        const stats = previous?.session_statistics;
-        return previous && stats?.source === "panel" && stats.status === "active"
-          ? {...previous,session_statistics:{...stats,status:"stale",xp_per_hour:null}} : previous;
-      });
-    }, 1000);
+    let socket: WebSocket | null = null;
+    let lastFrame = -Infinity;
+    let openedAt = performance.now();
+    let nextConnect = openedAt;
+    let fallback = false;
 
-    function connectWs() {
-      if (disposed) return;
+    function abortRead() {
+      if (request.current) {
+        clearTimeout(request.current.timeout);
+        request.current.controller.abort();
+        request.current = null;
+      }
+    }
 
+    function connect() {
+      openedAt = performance.now();
+      lastFrame = -Infinity;
       const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
+      socket = ws;
 
       ws.onopen = async () => {
         try {
           const token = await getDashboardToken();
-          if (!disposed && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ token }));
-          }
+          if (socket === ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({token}));
         } catch { ws.close(); }
       };
-
-      ws.onmessage = (event) => {
+      ws.onmessage = event => {
+        if (disposed || socket !== ws) return;
         try {
-          const data: BotState = JSON.parse(event.data);
-          if (disposed) return;
+          const data: unknown = JSON.parse(event.data);
+          if (!isSnapshot(data)) return;
+          abortRead();
           accept(data);
-          if (fallbackTimer) {
-            clearTimeout(fallbackTimer);
-            fallbackTimer = null;
-          }
-        } catch {}
+          lastFrame = performance.now();
+          fallback = false;
+        } catch { /* Keep the clock of the last valid snapshot. */ }
       };
-
       ws.onclose = () => {
-        if (wsRef.current === ws) wsRef.current = null;
-        if (!disposed) {
-          setMcpConnected(false);
-          // Fall back to HTTP polling, retry WS after 2s
-          startHttpFallback();
-          retryTimer = setTimeout(connectWs, 2000);
-        }
+        if (disposed || socket !== ws) return;
+        socket = null;
+        nextConnect = performance.now() + RETRY_MS;
+        fallback = true;
+        void readStatus(false);
       };
-
-      ws.onerror = () => {
-        ws.close();
-      };
+      ws.onerror = () => ws.close();
     }
 
-    function startHttpFallback() {
-      if (fallbackTimer || disposed) return;
-      async function poll() {
-        fallbackTimer = null;
-        if (disposed || wsRef.current?.readyState === WebSocket.OPEN) return;
-        await refresh();
-        if (!disposed && wsRef.current?.readyState !== WebSocket.OPEN) {
-          fallbackTimer = setTimeout(poll, HTTP_FALLBACK_INTERVAL);
-        }
+    connect();
+    const timer = setInterval(() => {
+      const now = performance.now();
+      if (now - received.current >= STALE_MS) {
+        setMcpConnected(false);
+        setState(previous => {
+          if (!previous || (!previous.connected && previous.session_statistics?.status !== "active")) return previous;
+          const stats = previous.session_statistics;
+          return {...previous, connected:false, session_statistics: stats?.status === "active"
+            ? {...stats, status:"stale", xp_per_hour:null} : stats};
+        });
       }
-      poll();
-    }
 
-    if (window.dbvAuth) connectWs();
-    else setDashboardError("Open the Electron dashboard through start_bot. Browser access is disabled.");
+      // A socket can remain OPEN without delivering any data, even before its first frame.
+      const quietMs = now - Math.max(openedAt, lastFrame);
+      if (quietMs >= STALE_MS) fallback = true;
+      if (socket && quietMs >= REQUEST_TIMEOUT_MS) {
+        const expired = socket;
+        socket = null;
+        nextConnect = now + RETRY_MS;
+        expired.close();
+      }
+      if (!socket && now >= nextConnect) connect();
+      if (fallback) void readStatus(false);
+    }, POLL_MS);
 
     return () => {
       disposed = true;
-      clearInterval(staleTimer);
-      cancelledRef.current = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      if (fallbackTimer) clearTimeout(fallbackTimer);
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
+      active.current = false;
+      clearInterval(timer);
+      abortRead();
+      socket?.close();
+      socket = null;
     };
-  }, [refresh, accept]);
+  }, [accept, readStatus]);
 
   return { state, mcpConnected, refresh, dashboardError };
 }

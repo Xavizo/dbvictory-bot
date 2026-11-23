@@ -127,9 +127,9 @@ def test_fresh_owned_body_survives_concurrent_route_step(monkeypatch, route_step
     attempts, moved, sent, done, owned, reason, claim_before_guard = asyncio.run(
         replay(monkeypatch, route_step)
     )
-    if (route_step is not None and moved and claim_before_guard and attempts == [(route_step, False)]
-            and sent == done == 0 and owned is False and reason == "Pole zmieniło się przed użyciem"):
-        pytest.xfail("Known race: a definitely unsent use discards the owned body after a route step")
+    if route_step is not None:
+        assert moved and claim_before_guard and attempts[0] == (route_step, False)
+        assert sum(valid for _, valid in attempts) == 1
     assert sent == done == 1
     assert owned is False
 
@@ -145,3 +145,27 @@ def test_unknown_delivery_never_repeats_use_on_the_same_unchanged_body(monkeypat
         assert done == 0 and reason == "Brak potwierdzenia zmiany pola"
     else:
         assert done == 1 and reason == "Obrobiono ciało"
+
+
+@pytest.mark.parametrize("manual", [None, 10.31])
+def test_stack_effect_confirms_only_uncontested_use_and_splits_local_delivery_wait(manual):
+    from hunter_knife import OwnedStack, body_counts
+
+    async def observe():
+        game = SimpleNamespace(knife_manual_use_at=manual)
+        worker = knife.KnifeAutomation(game)
+        worker.queue.stacks[BODY] = OwnedStack(1, 20., 10., 10.2)
+        items = tile(BODY, FRESH)["items"]
+        receipt = CommandReceipt(1, 1, "server", 0)
+        receipt.finish("unknown")
+        receipt.dispatched_at = 10.35
+        worker.pending = knife.Attempt(BODY, items[-1], body_counts(items), 9., 10.3, None, 1, receipt)
+        worker.acknowledge({BODY: tile(BODY, SPENT)}, 10., 10.55)
+        assert not worker.queue.stacks
+        if manual is None:
+            assert worker.last_timing_ms == dict(recognition=200, wait_for_use=100, delivery_wait=50, confirmation=200)
+            assert (worker.done, worker.unattributed, receipt.effect) == (1, 0, "confirmed")
+        else:
+            assert worker.last_timing_ms is None
+            assert (worker.done, worker.unattributed, receipt.effect) == (0, 1, "pending")
+    asyncio.run(observe())

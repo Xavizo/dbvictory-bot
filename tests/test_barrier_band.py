@@ -44,6 +44,36 @@ def test_stale_unchanged_or_missing_stock_cannot_trigger_and_attempts_are_bounde
     assert s.inspect(sample(32),cfg,32) is None and '3 próbach' in s.status
 
 
+@pytest.mark.parametrize("slot,observed,expected", [(9, 10.3, "confirmed"), (5, 10.3, "pending"),
+                                                   (9, 9.9, "pending"), (9, 14., "pending")])
+def test_seen_band_only_confirms_the_requested_slot_and_current_attempt(slot, observed, expected):
+    import asyncio
+    from command_delivery import CommandReceipt
+
+    async def run():
+        scheduler = BandScheduler()
+        scheduler.sent(10., slot=slot)
+        receipt = CommandReceipt(1, 1, "server", 0)
+        receipt.finish("unknown")
+        scheduler.receipt = receipt
+        scheduler.inspect(sample(observed, slots={9: 3088}), {}, max(10.1, observed))
+        assert scheduler.equipped_id == 3088 and receipt.effect == expected
+    asyncio.run(run())
+
+
+def test_unknown_delivery_does_not_repeat_equip_while_slot_is_unchanged():
+    scheduler = BandScheduler()
+    scheduler.sent(10., slot=9)
+    scheduler.receipt = SimpleNamespace(status="unknown")
+    for t in (10.5, 20., 20.5, 100., 101.):
+        assert scheduler.inspect(sample(t), {}, t) is None
+        assert scheduler.attempts == 1
+    # A different physical item followed by an empty slot starts a new decision.
+    assert scheduler.inspect(sample(102., slots={9: 3456}), {}, 102.) is None
+    assert scheduler.inspect(sample(103.), {}, 103.) is None
+    assert scheduler.inspect(sample(103.5), {}, 103.5)["slot"] == 9
+
+
 def test_final_guard_rechecks_player_source_destination_and_freshness():
     request=dict(container=2,index=3,item_id=3051,slot=9)
     assert can_equip(sample(),request,123,10)

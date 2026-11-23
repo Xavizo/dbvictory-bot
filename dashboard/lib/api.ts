@@ -248,6 +248,11 @@ export type LiveMovementPreview = {path:[number,number,number][];stop:[number,nu
 
 export interface BotState {
   commands?: {session:number} | null;
+  login_startup?: {phase:"waiting_for_login"|"waiting_for_session"|"activated"|"failed"} | null;
+  observation_families?: {
+    session_id:number; revision:number;
+    families:Record<string,{source:string|null;reason:string|null;state:"fresh"|"stale"|"waiting"|"gap"|"observed";age_ms:number|null;revision:number}>;
+  };
   senzu_usage?: {total:number; per_hour:number|null; window_seconds:number; ended:boolean}|null;
   packet_observer?: {status:"active"|"degraded"|"error"|"closed";pending:number;pending_bytes:number;processing:boolean;capacity:number;accepted:number;applied:number;dropped:number;failures:number;lag_ms:number;max_lag_ms:number;last_problem:string|null;last_applied_age_seconds:number|null}|null;
   session_statistics?: {
@@ -262,13 +267,13 @@ export interface BotState {
   profile_selection?:{combat:string|null;bot:string|null;routes:Record<string,string>};
   speed_up?:{status:string;remaining:number|null;offset:number|null;effect_active:boolean|null;confirmed:boolean;attempts:number};
   combat_profile?: import("./cavebotModel").CombatConfig;
-  adaptive_cavebot?: {map_preview?: LiveMovementPreview | null;domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
+  adaptive_cavebot?: {navigation_wait?:{reason:string;observations:string[];review_in_ms:number}|null;map_preview?: LiveMovementPreview | null;domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
   passive_map?: PassiveMapState;
   connected: boolean;
   automation_paused?: boolean;
   automation_pause_kind?: "manual"|"emergency"|null;
   potion_diagnostics?: PotionDiagnosticState;
-  hunter_knife?: {status:string;processed:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number};
+  hunter_knife?: {status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number};
   barrier_band?: {status:string;equipped_id:number|null;stock:number|null;attempts:number};
   actions: ActionInfo[];
   packets_from_server: number;
@@ -318,8 +323,8 @@ export interface MapAnnotationInput {
 export const saveMapAnnotation = (data:MapAnnotationInput) => control("/api/map/annotation",data);
 export const labelVisiblePet = (position:number[],ref:string,name:string|null) => control("/api/map/pet",{position,ref,name});
 
-export async function fetchState(): Promise<BotState> {
-  const res = await authenticatedFetch(`${API_BASE}/api/state`);
+export async function fetchState(signal?: AbortSignal): Promise<BotState> {
+  const res = await authenticatedFetch(`${API_BASE}/api/state`, {signal});
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

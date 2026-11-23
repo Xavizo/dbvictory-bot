@@ -6,6 +6,49 @@ const model = {};
 new Function('exports',ts.transpileModule(fs.readFileSync(require.resolve('../lib/atlasWildlife.ts'),'utf8'),
   {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(model);
 
+test('sector updates remove old spawns, preserve other floors and reject a foreign base',()=>{
+  const a=[8,8,7], b=[8,8,6];
+  const wolf={point:[11,13,7],name:'Wolf',count:2}, bat={point:[11,13,6],name:'Bat',count:1};
+  const previous={scope:'world',side:8,revision:'one',cells:[a,b],habitats:[],spawns:[wolf,bat]};
+  const delta={scope:'world',side:8,revision:'two',base_revision:'one',changed:[a],cells:[],habitats:[],spawns:[]};
+  const result=model.mergeWorldZones(previous,delta);
+  assert.deepEqual(result,{scope:'world',side:8,revision:'two',cells:[b],habitats:[],spawns:[bat]});
+  assert.equal(model.mergeWorldZones(previous,{...delta,base_revision:'old'}),null);
+  assert.equal(model.mergeWorldZones(previous,{...delta,scope:'other'}),null);
+  assert.equal(model.mergeWorldZones(result,{scope:'world',side:8,revision:'two'}),result);
+  assert.deepEqual(previous.cells,[a,b]);
+});
+
+test('world hook clears markers on a revision gap and recovers with a full snapshot',async()=>{
+  const oldSpawn={point:[11,13,7],name:'Wolf',count:2};
+  const newSpawn={point:[18,12,7],name:'Bat',count:1};
+  const full=(revision,spawn)=>({scope:'world',side:8,revision,cells:[],habitats:[],spawns:[spawn]});
+  const replies=[full('one',oldSpawn),{...full('lost',oldSpawn),base_revision:'wrong',changed:[]},full('three',newSpawn)];
+  const requests=[], values=[];
+  let tick,cleanup;
+  const react={useState(initial){const i=values.push(initial)-1;return [initial,value=>{values[i]=value;}];},
+    useEffect(effect){cleanup=effect();}};
+  const api={authenticatedFetch:async url=>{
+    requests.push(new URL(url).searchParams.get('since'));
+    return {ok:true,json:async()=>replies.shift()};
+  }};
+  const source=fs.readFileSync(require.resolve('../lib/useWorldZones.ts'),'utf8');
+  const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  const hook={};
+  new Function('exports','require','document','setInterval','clearInterval',js)(hook,
+    id=>({'react':react,'./auth':api,'./atlasWildlife':model})[id],
+    {hidden:false,addEventListener(){},removeEventListener(){}},fn=>{tick=fn;return 1;},()=>{});
+  hook.useWorldZones(true);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(values[0].spawns,[oldSpawn]);
+  await tick();
+  assert.equal(values[0],null);
+  await tick();
+  assert.deepEqual(values[0].spawns,[newSpawn]);
+  assert.deepEqual(requests,['delta:','delta:one','delta:']);
+  cleanup();
+});
+
 test('world locates each species at its first sighting and keeps different floors distinct',()=>{
   const mark={point:[10,12,6],observer_cell:[16,8,6],name:'Wolf',count:2};
   const index=model.sectorHabitats([mark,{...mark,name:'Bat',count:1},{...mark,point:[9,14,6]},

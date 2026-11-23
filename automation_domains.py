@@ -78,6 +78,19 @@ class CavebotDomains:
             except asyncio.TimeoutError:
                 pass
 
+    async def observe_combat_changes(self):
+        """Wake the existing combat worker on world changes while its timer covers cooldowns."""
+        from session_observations import session_observations
+        events = session_observations(self.owner.state.game_state)
+        families = ("target", "creatures", "position")
+        revision = events.revision_for(families)
+        while self.owner.status == "running":
+            await events.wait(families, revision, 30.)
+            current = events.revision_for(families)
+            if current != revision:
+                revision = current
+                self._review_requested.set()
+
     async def consume_movement(self,sample,boundary):
         """Called only by the movement worker. True means no route step this tick."""
         o = self.owner
@@ -112,7 +125,7 @@ class CavebotDomains:
             return True
         if decision['consumed'] or not o.combat.route_step_allowed(boundary):
             self.movement_state = 'waiting_for_combat'
-            await asyncio.sleep(.01)
+            await o.wait_for_navigation(o.reason, ('target', 'creatures', 'position'), .01)
             return True
         self.movement_state = 'running'
         return False
@@ -126,7 +139,8 @@ class CavebotDomains:
             except (InputsUnavailable,MovementDeferred) as exc:
                 self.movement_state='waiting';self.movement_error=str(exc)
                 o.reason=str(exc)
-                await asyncio.sleep(.05)
+                await o.wait_for_navigation(o.reason, ('map', 'position', 'health'), .05)
+                self.movement_error = None
             except Exception as exc:
                 if o.status != 'running':
                     return
@@ -147,6 +161,8 @@ class CavebotDomains:
         o=self.owner
         self.tasks=[asyncio.create_task(self.combat_loop(),name='cavebot-combat'),
                     asyncio.create_task(self.movement_loop(),name='cavebot-movement')]
+        if o.combat.config['enabled']:
+            self.tasks.append(asyncio.create_task(self.observe_combat_changes(), name='cavebot-observations'))
         try:
             while o.status=='running':
                 if getattr(o,'reporter',None) is not None:

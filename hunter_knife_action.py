@@ -4,12 +4,14 @@ from dataclasses import dataclass
 import time
 
 from cavebot_walking import distance, walkable
+from item_observations import observed_inputs, wait_for_inputs
 from hunter_knife import FRESH, KNIFE, SkinningQueue, body_counts, skinned
-from command_delivery import attempted
+from command_delivery import CommandReceipt, attempted, confirm
 from adaptive_cavebot import tool_location
 from protocol import build_move_item_packet, build_use_item_ex_packet
 
 NAME = "auto_hunter_knife"
+INPUTS = ("map", "position", "target", "death", "loot", "inventory", "health")
 WAITING_FOR_BODY = "Czekam na świeże ciało po Twojej walce"
 
 
@@ -22,7 +24,7 @@ def safe_drop(cell, origin, source):
     return (distance(spot, origin) <= 1 and distance(spot, source) == 1 and spot != origin
             and walkable(cell) and not cell.get("navigation") and not cell.get("transitions")
             and not cell.get("server_blocking") and not cell.get("occupants")
-            and bool(cell["items"]) and "ground" in cell["items"][0]["flags"]
+            and bool(cell.get("items")) and "ground" in cell["items"][0]["flags"]
             and all("not_moveable" in i["flags"] and "container" not in i["flags"]
                     for i in cell["items"][1:]))
 
@@ -36,6 +38,7 @@ class Attempt:
     sent: float
     drop: tuple | None
     before_on_source: int
+    receipt: CommandReceipt | None = None
 
 
 class KnifeAutomation:
@@ -47,6 +50,7 @@ class KnifeAutomation:
         self.pending = None
         self.frame = 0
         self.done = 0
+        self.unattributed = 0
         self.last_timing_ms = None
         self.status = "Sprawdzam mapę i wyposażenie"
         self.tool_ready = False
@@ -94,12 +98,23 @@ class KnifeAutomation:
             counts = body_counts(src["items"])
             if not a.drop and skinned(a.before, counts):
                 stack = self.queue.stacks.get(a.source)
+                manual = getattr(self.game, "knife_manual_use_at", None)
+                if manual is not None and a.sent <= manual <= now:
+                    self.queue.consumed(a.source)
+                    self.pending = None
+                    self.unattributed += 1
+                    self.status = "Ciało zmienione przy jednoczesnym ręcznym użyciu"
+                    return
+                delivered = a.receipt.dispatched_at if a.receipt else None
                 if stack and stack.appeared is not None and stack.assigned is not None:
                     self.last_timing_ms = {
                         "recognition": round(1000 * (stack.assigned - stack.appeared)),
                         "wait_for_use": round(1000 * (a.sent - stack.assigned)),
-                        "confirmation": round(1000 * (now - a.sent)),
+                        "confirmation": round(1000 * max(0, now - (delivered if delivered is not None else a.sent))),
                     }
+                    if delivered is not None:
+                        self.last_timing_ms["delivery_wait"] = round(1000 * max(0, delivered - a.sent))
+                confirm(a.receipt, "corpse_transformed")
                 self.queue.consumed(a.source)
                 self.done += 1
                 self.pending = None
@@ -122,8 +137,10 @@ class KnifeAutomation:
         cells = {point(c): c for c in sample["cells"]
                  if c.get("kind") != "unknown" and "items" in c}
         stamp = sample["captured_at"]
-        self.last_map = now
         self.actionable = False
+        if stamp < self.frame:
+            return None
+        self.last_map = now
         # Confirm a transformation before the new count invalidates the previous claim.
         self.acknowledge(cells, stamp, now)
         if stamp != self.frame:
@@ -132,6 +149,8 @@ class KnifeAutomation:
                 target_id = self.controller.combat.sent_target or target_id
             self.queue.observe(cells.values(), now, game=self.game, target_id=target_id, sampled_at=stamp)
             self.frame = stamp
+        else:
+            self.queue.settle(now)
         if self.pending or not self.tool_ready:
             return None
         fighting = self.fighting()
@@ -179,6 +198,7 @@ async def run_knife(bot):
     gs = bot.state.game_state
     runtime = KnifeAutomation(gs, getattr(bot.state, "adaptive_cavebot", None))
     player_id, proxy = bot.player_id, bot.state.game_proxy
+    generation = getattr(proxy, 'session_generation', None)
     gs.hunter_knife = runtime
     client = None
     try:
@@ -188,9 +208,11 @@ async def run_knife(bot):
         location = None
         def enabled():
             return (bot.is_connected and bot.state.game_state is gs and bot.player_id == player_id
-                    and bot.state.game_proxy is proxy and not bot.state.automation_paused
+                    and bot.state.game_proxy is proxy and getattr(proxy, 'session_generation', None) == generation
+                    and not bot.state.automation_paused
                     and bot.state.settings.get("actions", {}).get(NAME, {}).get("enabled", False))
         while enabled():
+            cursor = observed_inputs(gs, INPUTS)
             now = time.monotonic()
             sample = fresh_sample(bot)
             if not sample or gs.hp <= 0:
@@ -202,7 +224,7 @@ async def run_knife(bot):
                     if refresh:
                         refresh()
                 runtime.tool_ready = False
-                await bot.sleep(.12)
+                await wait_for_inputs(bot, INPUTS, cursor, .12)
                 continue
             if now >= next_inventory:
                 next_inventory = now + 1
@@ -214,6 +236,8 @@ async def run_knife(bot):
                     location = tool_location(await asyncio.to_thread(reader.snapshot), (KNIFE,))
                 except (OSError, ValueError):
                     location = None
+            if not enabled():
+                break
             if location and not runtime.tool_ready:
                 runtime.status = WAITING_FOR_BODY
             runtime.tool_ready = bool(location)
@@ -233,7 +257,7 @@ async def run_knife(bot):
                         return False
                     by_pos = {point(c):c for c in latest["cells"]}
                     cell = by_pos.get(a.source)
-                    if (not cell or cell.get("kind") == "unknown"
+                    if (not cell or cell.get("kind") == "unknown" or "items" not in cell
                             or cell.get("occupants", 0) > cell.get("occupant_types", {}).get("self", 0)
                             or runtime.queue.next_body(a.source, cell["items"]) !=
                                ("uncover" if a.drop else "skin", a.item)
@@ -252,9 +276,21 @@ async def run_knife(bot):
                 runtime.pending = a
                 runtime.status = "Odsuwam ciało" if a.drop else "Używam Hunter Knife"
                 await bot.inject_to_server(payload, guard=current)
-                if runtime.pending is a and not attempted(bot.last_receipt):
-                    runtime.abandon("Pole zmieniło się przed użyciem")
-            await bot.sleep(.1)
+                if runtime.pending is a:
+                    receipt = bot.last_receipt
+                    if attempted(receipt):
+                        if isinstance(receipt, CommandReceipt):
+                            a.receipt = receipt
+                    elif (enabled() and tuple(bot.position) != original
+                          and bot.position[2] == a.source[2]):
+                        # This attempt never left the queue. The next sample
+                        # independently checks the owned stack and current reach.
+                        runtime.pending = None
+                        runtime.actionable = False
+                        runtime.status = "Sprawdzam zasięg po kroku"
+                    else:
+                        runtime.abandon("Pole zmieniło się przed użyciem")
+            await wait_for_inputs(bot, INPUTS, cursor, .1)
     finally:
         if gs.hunter_knife is runtime:
             gs.hunter_knife = None

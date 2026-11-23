@@ -4,7 +4,7 @@ const headings = {
   available:"Dostępna aktualizacja", recovery:"Aktualizacja do dokończenia", problem:"Launcher wymaga uwagi",
   preparing:"Klient gry", detecting:"Uruchamianie", clientError:"Uruchamianie", starting:"Uruchamianie",
   panel:"Uruchamianie", waiting:"Oczekiwanie", closing:"Zamykanie sesji", closed:"Sesja zakończona", running:"Panel gotowy",
-  prepared:"Wybór postaci",connecting:"Łączenie z grą"
+  prepared:"Wybór postaci",connecting:"Przygotowanie połączenia"
 };
 const checkpoints = [
   {key:"client", pending:"Klient DBVictory", active:"Wykrywanie klienta DBVictory…", done:"Wykryto klienta DBVictory"},

@@ -15,6 +15,8 @@ LOOT_LINE = re.compile(
 )
 SETTLE = 1.0
 SOLO_SETTLE = .18
+EVIDENCE_WINDOW = 1.5
+PROVISIONAL_HOLD = .45
 MAX_WAIT = 8.0
 
 
@@ -108,10 +110,10 @@ class SkinningQueue:
                     and max(abs(p[0]-position[0]), abs(p[1]-position[1])) <= 1)
         if include_owned and any(nearby(p) and now < s.expires for p, s in self.stacks.items()):
             return True
-        return (any(nearby(p) and 0 <= now-at <= .45
+        return (any(nearby(p) and 0 <= now-at <= PROVISIONAL_HOLD
                     and p not in self.stacks and ((self.target and cid == self.target[0]) or any(n == name for _, n in self.loot))
                     for at, name, p, cid in self.deaths)
-                or any(target and nearby(p) and p not in self.stacks and 0 <= now-at <= SETTLE + .6
+                or any(target and nearby(p) and p not in self.stacks and 0 <= now-at <= PROVISIONAL_HOLD
                        for at, p, _, target in self.births))
 
     def personal_loot(self, text, now):
@@ -194,41 +196,58 @@ class SkinningQueue:
         self.combat_claims = {k: v for k, v in self.combat_claims.items() if k[0] >= cutoff}
         if self.births and self.xp_gains:
             self._claim_combat_bodies(current, game.creatures if game is not None else {}, now)
-        if self.last_event is None or now - self.last_event < SOLO_SETTLE:
+        self.settle(now)
+
+    def settle(self, now):
+        """Apply personal credits to the last observed stack without recounting a map frame."""
+        if self.last_event is None:
             return
-        settling = now - self.last_event < SETTLE
-        if settling and (not self.loot or not self.deaths or not self.births):
+        current = self.baseline
+        # Keep unmatched evidence for the entire correlation window. Closing
+        # this batch must leave later kills and credits for their own batch.
+        times = [row[0] for rows in (self.births, self.deaths, self.loot) for row in rows]
+        if not times:
+            self.last_event = None
             return
-        credit = Counter(name for _, name in self.loot)
+        deadline = min(times) + EVIDENCE_WINDOW
+        deaths = [d for d in self.deaths if d[0] <= deadline]
+        personal = [l for l in self.loot if l[0] <= deadline]
+        appeared = [b for b in self.births if b[0] <= deadline]
+        quiet = now - max(t for t in times if t <= deadline)
+        if quiet < SOLO_SETTLE:
+            return
+        credit = Counter(name for _, name in personal)
         observed = defaultdict(list)
-        for _, name, point, _ in self.deaths:
+        for _, name, point, _ in deaths:
             observed[name].append(point)
         births = Counter()
-        for _, point, n, _ in self.births:
+        for _, point, n, _ in appeared:
             births[point] += n
-        if settling and (self.other_player_at >= now - 1.5 or self.other_death_at >= now - 1.5
-                         or any(not name or not cid for _, name, _, cid in self.deaths)
-                         or credit != Counter(name for _, name, _, _ in self.deaths)
-                         or births != Counter(p for _, _, p, _ in self.deaths)):
+        complete = (credit == Counter(name for _, name, _, _ in deaths)
+                    and births == Counter(p for _, _, p, _ in deaths))
+        if not complete and now <= deadline:
+            return
+        if quiet < SETTLE and (self.other_player_at >= now - EVIDENCE_WINDOW
+                               or self.other_death_at >= now - EVIDENCE_WINDOW
+                               or any(not name or not cid for _, name, _, cid in deaths)):
             return
         grants = Counter()
-        times = [v[0] for source in (self.deaths, self.loot, self.births) for v in source]
-        if times and max(times) - min(times) <= 1.5 and "" not in observed:
+        if "" not in observed:
             for name, points in observed.items():
                 if credit[name] == len(points):
                     grants.update(points)
-        claimed = Counter(p for _, p in self.combat_claims)
+        claimed = Counter(p for at, p in self.combat_claims if at <= deadline)
         for p, n in grants.items():
             remaining = n - claimed[p]
             owned = self.stacks[p].fresh if p in self.stacks else 0
             if remaining > 0 and n == births[p] and current.get(p) == owned + remaining:
-                appeared = next(at for at, pos, _, _ in self.births if pos == p)
-                self.stacks[p] = OwnedStack(owned + remaining, now + MAX_WAIT, appeared, now)
-        self.deaths.clear()
-        self.loot.clear()
-        self.births.clear()
-        self.combat_claims.clear()
-        self.last_event = None
+                first_seen = next(at for at, pos, _, _ in appeared if pos == p)
+                self.stacks[p] = OwnedStack(owned + remaining, now + MAX_WAIT, first_seen, now)
+        self.deaths = [d for d in self.deaths if d[0] > deadline]
+        self.loot = [l for l in self.loot if l[0] > deadline]
+        self.births = [b for b in self.births if b[0] > deadline]
+        self.combat_claims = {k: v for k, v in self.combat_claims.items() if k[0] > deadline}
+        self.last_event = max((t for t in times if t > deadline), default=None)
 
     def _claim_combat_bodies(self, current, creatures, now):
         # Match before releasing the Loot batch. Late matching Loot cannot grant

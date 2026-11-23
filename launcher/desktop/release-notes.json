@@ -1,5 +1,17 @@
 [
   {
+    "version":"v1.26.0",
+    "changes":[
+      {"title":"Jedna inicjalizacja po zalogowaniu","detail":"Panel rozróżnia oczekiwanie na dane i gotową sesję. Ponowny sygnał logowania nie uruchamia modułów drugi raz."},
+      {"title":"Cavebot reaguje na aktualną mapę","detail":"Zmiana pozycji lub pola budzi oczekującą nawigację. W diagnostyce widać przyczynę oczekiwania i czas do ponownej oceny."},
+      {"title":"Hunter Knife zachowuje własne ciało po kroku","detail":"Przełożone użycie może dojść do skutku po powrocie w zasięg. Dwa własne ciała na polu mogą zostać rozpoznane także przy opóźnionym Loot."},
+      {"title":"Mikstury, band i Speed Up reagują na odczyty","detail":"Moduły ponownie oceniają warunki po zmianie stanu. Band i Speed Up rozróżniają ręczną zmianę i niepewny wynik wcześniejszej próby."},
+      {"title":"Atlas rozróżnia powrót i nowe spotkanie","detail":"Pet i dziki stwór tej samej nazwy są rozróżniani po dostępnych obserwacjach. Miejsce pierwszego kontaktu jest zapisywane osobno od miejsca zakończenia spotkania."},
+      {"title":"Aktualizacje zmienionych sektorów","detail":"Otwarta mapa świata odbiera zmienione sektory i ich znaczniki. Po utracie wersji bazowej pobiera cały obraz."},
+      {"title":"Panel wykrywa przerwę w odczytach","detail":"Panel oznacza nieaktualne dane i wznawia odczyt. Diagnostyka pokazuje źródło i wiek obserwacji."}
+    ]
+  },
+  {
     "version":"v1.25.2",
     "changes":[{"title":"Plan przebudowy silnika po audycie vBota","detail":"W bazie wiedzy opisaliśmy kolejność zmian w odczycie zdarzeń, rozpoznawaniu stworzeń, automatyce, Cavebocie i Atlasie oraz wyniki 512 testów bazowych."}]
   },

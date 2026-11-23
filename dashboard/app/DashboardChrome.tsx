@@ -34,32 +34,45 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
   const scrollRef=useRef<HTMLDivElement>(null);
   useEffect(()=>{if(scrollRef.current) scrollRef.current.scrollTop=0;},[view]);
   const running=state?.actions.filter(a=>a.running && a.name!=="dll_bridge") ?? [];
-  const connected=!!state?.connected, paused=!!state?.automation_paused, preview=!!state?.passive_map?.preview;
-  const player=state?.player;
+  const connected=mcpConnected && !!state?.connected, paused=!!state?.automation_paused, preview=!!state?.passive_map?.preview;
+  const player=state?.player, map=state?.passive_map, families=state?.observation_families?.families;
+  const healthFresh = families?.health ? families.health.state === "fresh"
+    : (player?.stats_age ?? -1) >= 0 && (player?.stats_age ?? Infinity) <= 2;
+  const mapFresh = map?.status === "ready" && !map.stale && !!map.center
+    && (!families?.map || families.map.state === "fresh");
+  const position = mapFresh ? map.center : families?.position?.state === "fresh" ? player?.position : null;
+  const worldReady = connected && !preview && healthFresh && mapFresh
+    && (!state?.login_startup || state.login_startup.phase === "activated");
   let gameStatus="Oczekiwanie na silnik";
-  if(preview) gameStatus="Demo";
-  else if(mcpConnected && connected) gameStatus="Sesja gry aktywna";
-  else if(mcpConnected && state?.proxy_sequence?.client_connected) gameStatus="Łączenie z grą…";
-  else if(mcpConnected && state?.proxy_sequence?.listening) gameStatus="Zaloguj się do gry";
+  if (!mcpConnected && state) gameStatus="Brak świeżych danych z panelu";
+  else if (preview) gameStatus="Demo";
+  else if (worldReady) gameStatus="Sesja gry aktywna";
+  else if (connected && state?.login_startup?.phase === "failed") gameStatus="Błąd uruchamiania automatyki";
+  else if (connected && !healthFresh) gameStatus="Czekam na HP i Ki";
+  else if (connected && !mapFresh) gameStatus="Czekam na pozycję i mapę";
+  else if (connected) gameStatus="Przygotowanie sesji";
+  else if (mcpConnected && state?.proxy_sequence?.client_connected) gameStatus="Łączenie z grą…";
+  else if (mcpConnected && state?.proxy_sequence?.listening) gameStatus="Zaloguj się do gry";
+  else if (mcpConnected) gameStatus="Czekam na klienta";
   return <div className="dashboard-shell">
     <header className="console-header">
       <div className="console-brand"><span aria-hidden="true">D<span>V</span></span><strong>DBVictory</strong><small>control panel</small></div>
       {preview && <em className="demo-badge">DEMO · BEZ GRY</em>}
       <div className="connection-cluster" aria-label="Stan połączenia">
         <span title={mcpConnected ? "Panel połączony z botem" : "Panel bez połączenia"}><i className={`status-dot ${mcpConnected ? "online" : ""}`}/>Panel</span>
-        <span role="status"><i className={`status-dot ${mcpConnected && connected && !preview ? "online" : ""}`}/>{gameStatus}</span>
-        <span title={state?.dll_bridge_connected ? "Most DLL połączony" : "Most DLL nieaktywny"}><i className={`status-dot ${state?.dll_bridge_connected ? "online" : ""}`}/>DLL</span>
+        <span role="status"><i className={`status-dot ${worldReady ? "online" : ""}`}/>{gameStatus}</span>
+        <span title={mcpConnected && state?.dll_bridge_connected ? "Most DLL połączony" : "Brak potwierdzenia mostu DLL"}><i className={`status-dot ${mcpConnected && state?.dll_bridge_connected ? "online" : ""}`}/>DLL</span>
       </div>
       <AlertBell alerts={state?.alerts} connected={mcpConnected} onRefresh={onRefresh}/>
       <span className={`automation-pill ${paused ? "paused" : running.length ? "active" : ""}`}>{paused ? "PAUZA" : `Aktywne: ${running.length}`}</span>
-      <button className="emergency-button" disabled={busy || !mcpConnected} onClick={onStop} title="Awaryjny STOP. Pause/Break: pauza i wznowienie poprzednich akcji."><span aria-hidden="true">■</span> STOP <small>wszystkie akcje</small></button>
+      <button className="emergency-button" disabled={busy || !state} onClick={onStop} title="Awaryjny STOP. Pause/Break: pauza i wznowienie poprzednich akcji."><span aria-hidden="true">■</span> STOP <small>wszystkie akcje</small></button>
     </header>
     {state?.pause_hotkey?.error&&<div role="alert" className="error-banner">Pause/Break: {state.pause_hotkey.error}</div>}
     <div className="player-ribbon">
-      <div className="level-display"><span>LVL</span><strong>{connected && player ? player.level : "—"}</strong></div>
-      <Resource label="HP" current={player?.hp ?? 0} max={player?.max_hp ?? 0} color="#e77983" available={connected && !!player?.max_hp}/>
-      <Resource label="KI" current={player?.mana ?? 0} max={player?.max_mana ?? 0} color="#70b5f3" available={connected && !!player?.max_mana}/>
-      <div className="position-display" title="Współrzędne postaci"><span>XYZ</span><strong>{connected && state?.passive_map?.center && !state.passive_map.stale ? state.passive_map.center.join(" · ") : connected && player?.position ? player.position.join(" · ") : "—"}</strong></div>
+      <div className="level-display"><span>LVL</span><strong>{connected && healthFresh && player ? player.level : "—"}</strong></div>
+      <Resource label="HP" current={player?.hp ?? 0} max={player?.max_hp ?? 0} color="#e77983" available={connected && healthFresh && !!player?.max_hp}/>
+      <Resource label="KI" current={player?.mana ?? 0} max={player?.max_mana ?? 0} color="#70b5f3" available={connected && healthFresh && !!player?.max_mana}/>
+      <div className="position-display" title="Współrzędne postaci"><span>XYZ</span><strong>{connected && position ? position.join(" · ") : "—"}</strong></div>
     </div>
     <nav className="console-tabs" aria-label="Widoki panelu">{workspaces.map(w=><button key={w.id} aria-current={view===w.id ? "page" : undefined} className={view===w.id ? "is-active" : ""} onClick={()=>onView(w.id)}>
       <Icon path={w.path}/><span>{w.nav}</span>

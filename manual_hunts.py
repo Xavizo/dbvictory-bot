@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from farming_telemetry import experience_for_level
 from hunt_areas import sector
-from hunt_sightings import concurrent_firsts, fresh_monster_name, merge_witnesses
+from hunt_sightings import concurrent_firsts, deaths_since, fresh_monster_name, merge_witnesses
 from transition_learning import position
 
 
@@ -39,6 +39,8 @@ class ManualVisits:
         self.previous_xp = None
         self.identities = {}
         self.pruned = 0
+        self.generation = -1
+        self.kill_count = getattr(game, 'session_kills', 0)
         self.reset_visit()
 
     def reset_visit(self):
@@ -89,6 +91,10 @@ class ManualVisits:
         now, point = frame['captured_at'], frame['center']
         if not position(point) or point[:2] in ([0,0], (0,0)):
             return
+        generation = frame['pet_map_generation']
+        if generation <= self.generation:
+            return
+        self.generation = generation
         p = tuple(point)
         cell = sector(p)
         before = self.previous
@@ -125,6 +131,22 @@ class ManualVisits:
                                  and not self.game.pets.is_pet(cid))
 
     def observe_creatures(self, generation, cell, now):
+        self.kill_count, deaths = deaths_since(self.game, self.kill_count)
+        for death in deaths:
+            cid = death.get('cid')
+            encounter = self.identities.get(cid)
+            if not encounter or encounter.first_at > death.get('t', now):
+                continue
+            # Preserve the old first contact while a delayed gain is still eligible.
+            # The same numeric ID may belong to a different living creature later.
+            closed = (cid, encounter.first_at)
+            self.identities.pop(cid)
+            self.identities[closed] = encounter
+            for marks in (self.pending_marks, self.marks):
+                if cid in marks:
+                    mark = marks.pop(cid)
+                    if death.get('creature_kind') != 'pet' and not self.game.pets.is_pet(cid):
+                        marks[closed] = mark
         # Only map identities confirmed as named creatures can contribute a mark.
         # Keep their first point even if the battle-list name arrives later.
         for tile, ids in self.game.pets.monster_slots_for_sample(generation).items():
@@ -139,7 +161,7 @@ class ManualVisits:
                 entry.last_at = now
                 if entry.identified or now-entry.first_at>30:
                     continue
-                name = fresh_monster_name(self.game,cid,now)
+                name = fresh_monster_name(self.game,cid,now,tile)
                 if name:
                     self.pending_marks[cid] = (entry.first_at,(entry.point,entry.origin,name))
                     entry.identified = True

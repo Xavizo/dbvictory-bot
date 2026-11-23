@@ -156,7 +156,10 @@ class RunHistory:
         if combat.target and combat.target.get('id'):
             members.add(combat.target['id'])
         wall_time = time.time()
+        pets = getattr(self.gs, "pets", None)
         for cid in members:
+            if pets and pets.is_pet(cid):
+                continue
             self.tracked[cid] = now
             if cid not in self.seen_contacts:
                 creature = self.gs.creatures.get(cid,{})
@@ -170,11 +173,16 @@ class RunHistory:
             log_rows = getattr(self.gs,'kill_log',())
             for i in range(min(kills-self.last_kills,len(log_rows)),0,-1):
                 row = log_rows[-i]
+                if row.get('creature_kind') == 'pet':
+                    self.tracked.pop(row.get('cid'), None)
+                    self.seen_contacts.discard(row.get('cid'))
+                    continue
                 if row.get('cid') in self.tracked:
                     pos = [row.get(k) for k in ('x','y','z')]
                     known = observed_position(pos) and pos[2] == frame['position'][2]
                     self.lap.event(frame,'death',row.get('name') or None,pos if known else None)
                     self.tracked.pop(row['cid'])
+                    self.seen_contacts.discard(row['cid'])
         self.last_kills = kills
         self._lost_contacts(frame, now)
 

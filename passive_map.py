@@ -424,6 +424,12 @@ class PassiveMapMonitor:
         # Navigation needs the annotated live cells as soon as they are ready.
         # Atlas persistence uses the same immutable frame, on the reader thread.
         self._result = {**result, "asset": asset}
+        journal = getattr(game_state, "observations", None)
+        if journal is not None and result.get("status") == "ready":
+            # The frame may have waited during learning. Keep its capture age.
+            captured = time.monotonic() - max(0., time.time() - result["captured_at"])
+            families = ("map", "creatures") if "pet_map_generation" in result else ("map",)
+            journal.publish("map_snapshot", families, captured)
         history = getattr(game_state, "movement_history", None)
         if history:
             history.frame(result, getattr(self.state, "packet_observer", None))

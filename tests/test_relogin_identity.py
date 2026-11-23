@@ -133,20 +133,27 @@ def callback(name, env):
 
 def test_login_callback_replaces_old_state_and_old_delayed_start_cannot_run():
     async def exercise():
-        pending=[];starts=[]
-        async def no_delay(_): pass
+        from session_startup import LoginStartup
+        from session_observations import session_observations
+        starts=[]
         old=GameState();old.player_id=0x100002F6;old.haste_cast_at=100
         old.client_snapshot={'hp':100,'conditions':2}
         settings={'actions':{'speed_up':{'enabled':True}}}
-        state=NS(game_state=old,ready=False,connected=True,game_proxy=NS(logged_in=True,server_writer=object()),settings=settings)
+        proxy = NS(logged_in=True, server_writer=object(), session_generation=1)
+        state = NS(game_state=old, ready=False, connected=True, game_proxy=proxy,
+                   settings=settings, login_startup=LoginStartup())
         fn=callback('on_login_success',dict(state=state,GameState=GameState,observer=True,log=logging.getLogger('test'),
-            asyncio=NS(sleep=no_delay,ensure_future=pending.append),_start_all_enabled_actions=lambda:starts.append(1) or 1))
+            observation_proxy=proxy, session_observations=session_observations,
+            _start_all_enabled_actions=lambda:starts.append(state.game_state.session_id) or 1))
         fn(None);first=state.game_state
         assert first is not old and first.player_id==0 and first.client_snapshot is None
         assert first.client_state_required and not hasattr(first,'haste_cast_at')
         fn(None)
-        await pending[0];assert starts==[]
-        await pending[1];assert starts==[1]
+        assert state.game_state is first  # repeated signal for the same login
+        proxy.session_generation += 1
+        fn(None)
+        await asyncio.sleep(0)
+        assert starts == [2] and state.login_startup.phase == 'activated'
         assert state.settings is settings and settings['actions']['speed_up']['enabled']
         assert not first.movement_history.status()["active"]
         assert state.game_state.movement_history.status()["active"]
@@ -159,7 +166,9 @@ def test_disconnect_cancels_passive_reader_as_well_as_user_actions():
     state=NS(game_state=GameState(),_action_tasks={'dll_bridge':object(),'speed_up':object()},
              _auto_task=None,automation_paused=True,game_proxy=NS(pause_injections=lambda:None),
              potion_diagnostics=NS(invalidate_inventory=lambda:invalidated.append(True)))
-    callback('on_disconnect',dict(state=state,_stop_action=stopped.append))( )
+    from session_startup import LoginStartup
+    state.login_startup = LoginStartup()
+    callback('on_disconnect',dict(state=state,observation_proxy=state.game_proxy,_stop_action=stopped.append))()
     assert stopped==['dll_bridge','speed_up']
     assert not state.ready and invalidated==[True]
 

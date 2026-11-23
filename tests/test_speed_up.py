@@ -75,3 +75,38 @@ def test_cooldown_confirmation_is_only_read_at_known_boundaries(monkeypatch):
     packet=b'\xa4'+bytes([195])+struct.pack('<I',1000)
     game_state.scan_packet(b'\xff'+packet,gs);assert not hasattr(gs,'haste_cast_at')
     game_state.scan_packet(packet,gs);assert gs.haste_cast_at==123
+
+
+def test_unknown_delivery_waits_for_new_effect_evidence_instead_of_retrying_on_time():
+    from types import SimpleNamespace
+
+    scheduler = SpeedScheduler(lambda a,b: 0)
+    cfg = config()
+    assert scheduler.inspect(sample(10), cfg, now=10)
+    scheduler.sent(10)
+    scheduler.receipt = SimpleNamespace(status="unknown")
+    for t in (11, 15, 25, 100):
+        assert not scheduler.inspect(sample(t), cfg, now=t)
+        assert scheduler.attempts == 1
+    # A later manual effect establishes a new cycle, without confirming the old request.
+    assert not scheduler.inspect(sample(101, True), cfg, now=101)
+    assert scheduler.confirmed and scheduler.attempts == 0 and scheduler.due == 121
+
+
+@pytest.mark.parametrize("ack,expected", [(10.1, "confirmed"), (9.9, "pending"), (14., "pending")])
+def test_speed_effect_only_confirms_a_current_attempt(ack, expected):
+    import asyncio
+    from command_delivery import CommandReceipt
+
+    async def run():
+        scheduler = SpeedScheduler()
+        cfg = config()
+        scheduler.inspect(sample(10), cfg, now=10)
+        scheduler.sent(10.)
+        receipt = CommandReceipt(1, 1, "server", 0)
+        receipt.finish("unknown")
+        scheduler.receipt = receipt
+        observed = max(10.2, ack + .1)
+        scheduler.inspect(sample(observed, True), cfg, ack=ack, now=observed)
+        assert scheduler.confirmed and receipt.effect == expected
+    asyncio.run(run())

@@ -3,9 +3,11 @@ import asyncio
 import math
 import random
 import time
+from item_observations import observed_inputs, wait_for_inputs
 from protocol import build_say_packet
 
 NAME='speed_up'
+INPUTS=('effects','health')
 # One passive measurement: 33.266 s, +/-470 speed; user may override.
 DEFAULT_DURATION=33.3
 
@@ -41,7 +43,8 @@ class SpeedScheduler:
         self.offset=self.draw(-cfg['before'],cfg['after'])
         self.end=started+cfg['duration'];self.due=max(self.last_sent+2,self.end+self.offset)
         from command_delivery import confirm
-        confirm(getattr(self,'receipt',None),'haste_observed')
+        if self.pending is not None and 0 <= started - self.pending <= 3:
+            confirm(self.receipt,'haste_observed')
         self.receipt=None
         self.pending=None;self.attempts=0;self.confirmed=True
 
@@ -66,13 +69,20 @@ class SpeedScheduler:
             if active:self.status='Efekt już aktywny · czekam na jego koniec'
             else:self.due=now
         if self.previous is True and not active:
+            # A new expiry after an uncertain renewal starts a separate cycle.
+            if (self.pending is not None and getattr(self.receipt, 'status', None) == 'unknown'
+                    and now - self.pending >= 3):
+                self.pending=None;self.receipt=None
             # Prefer observed expiry to the estimate, retaining the same draw.
             if self.offset is None:self.offset=self.draw(-cfg['before'],cfg['after'])
             if self.pending is None:self.end=now;self.due=max(self.last_sent+2,now+max(0,self.offset))
         self.previous=active
         if self.pending is not None:
             if now-self.pending<3:self.status='Czekam na potwierdzenie Speed Up';return False
-            self.pending=None
+            if getattr(self.receipt, 'status', None) == 'unknown':
+                self.status='Niepewny wynik Speed Up · czekam na zmianę efektu'
+                return False
+            self.pending=None;self.receipt=None
             # An unconfirmed renewal cannot cause repeated casts into an active effect.
             self.due=None if active else now+10
             self.status='Brak potwierdzenia · czekam na koniec efektu' if active else 'Brak potwierdzenia · ponowię za 10 s'
@@ -95,15 +105,20 @@ class SpeedScheduler:
 async def run_speed(bot):
     state=bot.state;gs=state.game_state;proxy=state.game_proxy;pid=bot.player_id
     scheduler=state.speed_scheduler;scheduler.begin();task=asyncio.current_task();alive=True
+    generation=getattr(proxy,'session_generation',None)
+    def same_session():
+        return (state.game_proxy is proxy and state.game_state is gs and bot.player_id==pid
+                and getattr(proxy,'session_generation',None)==generation)
     try:
-        while bot.is_connected and state.game_proxy is proxy and state.game_state is gs and bot.player_id==pid:
+        while bot.is_connected and same_session():
+            cursor=observed_inputs(gs,INPUTS)
             cfg=validate_config(state.settings.get('actions',{}).get(NAME,{}))
             if not cfg.get('enabled') or state.automation_paused:break
             sample=getattr(gs,'client_snapshot',None)
             if scheduler.inspect(sample,cfg,getattr(gs,'haste_cast_at',0)):
                 def guard():
                     return bool(alive and not task.cancelling() and not task.done() and not state.automation_paused
-                                and state.game_proxy is proxy and proxy.logged_in and state.game_state is gs and bot.player_id==pid
+                                and same_session() and proxy.logged_in
                                 and validate_config(state.settings.get('actions',{}).get(NAME,{}))==cfg
                                 and fresh(getattr(gs,'client_snapshot',None),time.monotonic()))
                 from command_delivery import delivery,attempted
@@ -114,6 +129,6 @@ async def run_speed(bot):
                 else:
                     scheduler.status='Speed Up nie wysłano: '+str(receipt.reason)
                     scheduler.due=time.monotonic()+.5
-            await bot.sleep(.1)
+            await wait_for_inputs(bot,INPUTS,cursor,.1)
     finally:
         alive=False;scheduler.status='Wyłączony'

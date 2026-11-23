@@ -1,7 +1,8 @@
 """World-wide hunting sectors and first sightings, independent of sketch names."""
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from contextlib import closing
 from functools import lru_cache
+from threading import Lock
 import hashlib
 import json
 import sqlite3
@@ -103,3 +104,45 @@ def world_zones(atlas, since=None):
     result.update(cells=sorted(cells),habitats=[dict(position=p,species=names) for p,names in species.items()],
                   spawns=spawns)
     return result
+
+
+# Only panels that request deltas keep recent views. A cache miss sends a full
+# snapshot, so a reconnect or an evicted revision always recovers.
+_zone_indexes = OrderedDict()
+_zone_indexes_lock = Lock()
+
+
+def _sector_index(snapshot):
+    index = {tuple(pos): [True, None, []] for pos in snapshot["cells"]}
+    for habitat in snapshot["habitats"]:
+        index.setdefault(tuple(habitat["position"]), [False, None, []])[1] = habitat
+    for spawn in snapshot["spawns"]:
+        index.setdefault(sector(spawn["point"]), [False, None, []])[2].append(spawn)
+    return index
+
+
+def world_zone_update(atlas, since=None):
+    if not since or not since.startswith("delta:"):
+        return world_zones(atlas, since)
+    requested = since[len("delta:"):]
+    snapshot = world_zones(atlas, requested or None)
+    if "cells" not in snapshot:
+        return snapshot
+    key = (str(atlas.path), atlas.scope)
+    index = _sector_index(snapshot)
+    with _zone_indexes_lock:
+        previous = _zone_indexes.get((*key, requested))
+        current_key = (*key, snapshot["revision"])
+        _zone_indexes[current_key] = index
+        _zone_indexes.move_to_end(current_key)
+        while len(_zone_indexes) > 4:
+            _zone_indexes.popitem(last=False)
+    if previous is None:
+        return snapshot
+    changed = sorted(pos for pos in previous.keys() | index.keys() if previous.get(pos) != index.get(pos))
+    rows = [(pos, index[pos]) for pos in changed if pos in index]
+    return dict(scope=atlas.scope, side=snapshot["side"], revision=snapshot["revision"],
+                base_revision=requested, changed=changed,
+                cells=[pos for pos, row in rows if row[0]],
+                habitats=[row[1] for _, row in rows if row[1]],
+                spawns=[mark for _, row in rows for mark in row[2]])
