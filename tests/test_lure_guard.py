@@ -139,6 +139,37 @@ def test_unknown_threat_behind_wall_does_not_latch_capacity(state,tmp_path):
     cells[-1].update(occupants=3,occupant_types={'monster':3})
     assert c.combat.route_step_allowed(boundary=True)
 
+
+@pytest.mark.parametrize("case,hold", [
+    ("outside",False), ("room_cleared",False), ("previous_lap",False),
+    ("inside",True), ("gate",True), ("stairs",True), ("adjacent",True), ("mixed",True),
+])
+def test_lure_recognizes_which_side_of_the_open_door_contains_targets(state,tmp_path,case,hold):
+    c,cells = armed(state,tmp_path,mode="lure",lure_count=5,engage="visible")
+    c.status="running"
+    origin,door,exit_tile = [10,10,7],[11,10,7],[12,10,7]
+    c.path = [origin,exit_tile,[13,10,7]]
+    for tile in cells:
+        if tile['x']==11:
+            tile['kind']='blocked' if tile['y']!=10 and case!='stairs' else 'clear'
+            if tile['y']==10:
+                tile['navigation']=[dict(kind={'gate':'level_gate','stairs':'stairs'}.get(case,'door'),door_state_hint='open')]
+    edge = dict(origin=origin,entry=door,exit=exit_tile,action='use_then_step')
+    if case=='previous_lap':
+        c.path.insert(1,door)
+        edge=dict(edge,exit=door)
+    c.edges=[edge]
+    if case=='room_cleared':
+        c.combat.policy_mode='lure'
+        c.combat.latch_lure('transition')
+    x,y = (10,12) if case=='inside' else (10,11) if case=='adjacent' else (13,10)
+    monster(state,cells,x=x,y=y)
+    if case=='mixed':
+        monster(state,cells,x=10,y=12,cid=0x40000002)
+    assert asyncio.run(c.combat.tick(c.map_now(),at_transition=True)) is hold
+    assert c.combat.route_step_allowed(boundary=True) is not hold
+    assert (c.combat.lure_stop_reason=='transition') is hold
+
 def test_known_ignored_monsters_do_not_hold_room_exit(state,tmp_path):
     c,cells=armed(state,tmp_path,mode='lure',lure_count=3);c.status='running';three(c,state,cells)
     configure_rules(c,[dict(pattern='Wolf',action='ignore'),dict(pattern='Dragon',action='attack')])

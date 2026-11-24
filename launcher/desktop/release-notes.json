@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.26.7",
+    "changes":[
+      {"title":"Wyjście z budynku bez cofania w drzwiach","detail":"Cavebot zapamiętuje wejście na próg i sprawdza drogę po drugiej stronie. W trybie lurowania może przejść przez otwarte drzwi do potworów przed sobą."},
+      {"title":"Kontener na waypoincie a start trasy","detail":"Luźny kontener na przechodnim podłożu nie blokuje startu szkicu. Przy rzeczywistym polu do omijania komunikat wskazuje współrzędne i odcinek."}
+    ]
+  },
+  {
     "version":"v1.26.6",
     "changes":[
       {"title":"Kolory odkrywanego terenu na mapie świata","detail":"Atlas uzupełnia mapę świata kolorami pól obserwowanych podczas gry. Widok odświeża się również przy ponownej wizycie na znanym piętrze, zanim klient zapisze minimapę."}

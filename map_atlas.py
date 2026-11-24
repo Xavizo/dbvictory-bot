@@ -18,6 +18,7 @@ import uuid
 from transition_learning import position,gate_entry_record
 from cavebot_combat import validate_combat
 from navigation_tools import WEB_ITEM_IDS, cuttable_web, has_cut_web, tool_kind, web_edge
+from map_navigation import movable_container_cover
 from recorded_rope import recorded_rope_edges
 from world_minimap import tile_color, save_colors
 
@@ -279,6 +280,8 @@ def decode_tile(row, web_definitions=None):
         [cell.get(k) for k in ("x","y","z")]!=[x,y,z] or cell.get("kind") not in KINDS
         or not isinstance(cell.get("items"),list) or len(cell["items"])>16):
         raise ValueError("Nieprawidłowe pole w atlasie.")
+    if cell["kind"] == "avoid" and movable_container_cover(cell["items"]):
+        cell["kind"] = "clear"
     if web_definitions:
         if has_cut_web(cell['items'],web_definitions):
             cell['web_cut'] = True

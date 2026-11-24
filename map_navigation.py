@@ -16,6 +16,22 @@ _catalogue_value = {}
 _location_value = {}
 
 
+def movable_container_cover(items):
+    """A soft pathfinding flag belonging only to loose containers on walkable ground."""
+    if not any("ground" in item.get("flags", ()) for item in items):
+        return False
+    found = False
+    for item in items:
+        flags = item.get("flags", ())
+        if "not_walkable" in flags:
+            return False
+        if "not_pathable" in flags:
+            if "container" not in flags or any(f in flags for f in ("not_moveable", "ground", "floor_change")):
+                return False
+            found = True
+    return found
+
+
 def load_confirmed_types(path=CATALOGUE_PATH, asset_sha256=ASSET_SHA256):
     """Reload bounded data only when changed; never execute code or send commands."""
     global _catalogue_key, _catalogue_value, _location_value

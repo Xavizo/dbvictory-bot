@@ -13,7 +13,7 @@ from pathlib import Path
 import struct
 import threading
 import time
-from map_navigation import navigation_features, load_confirmed_types, load_location_notes
+from map_navigation import navigation_features, load_confirmed_types, load_location_notes, movable_container_cover
 from navigation_tools import has_cut_web
 
 CLIENT_SHA256 = "828ea9e11c6890f92cc14956733bac3aa7b80f57bfd8bb8e225568780c6e4b40"
@@ -81,7 +81,7 @@ def classify_tile(items, server_blocking):
         kind = "blocked"
     elif "ground" not in flags:
         kind = "no_ground"
-    elif "not_pathable" in flags:
+    elif "not_pathable" in flags and not movable_container_cover(items):
         kind = "avoid"
     else:
         kind = "clear"

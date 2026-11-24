@@ -6,7 +6,7 @@ import time
 from cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker, better_pack_tile, gap, group_needs_time, melee_capacity, open_sides,
                           lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches,
                           pack_access_before_choke, walking_distances)
-from combat_reachability import reachable_tiles
+from combat_reachability import reachable_tiles, ordinary_terrain
 from combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
 from combat_wave import facing
 
@@ -338,6 +338,48 @@ class CombatRuntime:
             if self.anchor is None:self.anchor=list(self.owner.state.game_state.position)
         self.phase='fight';self.lure_waiting=False
 
+    def finish_before_boundary(self, boundary, sample, targets, physical):
+        if not boundary or not targets or self.manual_target:
+            return boundary
+        o = self.owner
+        points = [tuple(p) for p in o.path[o.index:o.index+4]]
+        if len(points) < 2 or tuple(o.state.game_state.position) != points[0]:
+            return True
+        monsters = {tuple(t['position']) for t in targets}
+        if any(t['distance'] <= 1 for t in targets) or any(p not in monsters for p,_ in physical):
+            return True
+        cells = {(c['x'],c['y'],c['z']):c for c in sample['cells']}
+        edge = next((e for e in o.edges if tuple(e['origin'])==points[0] and tuple(e['exit'])==points[1]), None)
+        if edge:
+            if edge['action'] not in ('step','use_then_step'):
+                return True
+            door = tuple(edge['entry'])
+            if door != points[1]:
+                points = [points[0], door, points[1]]
+        for inside, door, outside in zip(points, points[1:], points[2:]):
+            features = cells.get(door, {}).get('navigation', ())
+            if not features:
+                continue
+            if (not all(f['kind']=='door' and f.get('door_state_hint')=='open' for f in features)
+                    or not inside[2]==door[2]==outside[2]
+                    or gap(inside,door)!=1 or gap(door,outside)!=1 or inside==outside):
+                return True
+            terrain = {p for p,c in cells.items() if ordinary_terrain(c)}
+            if not {inside,door,outside} <= terrain:
+                return True
+            terrain.remove(door)
+            from_inside = walking_distances(terrain,inside)
+            from_outside = walking_distances(terrain,outside)
+            dx,dy = outside[0]-inside[0], outside[1]-inside[1]
+            if all((p[0]-door[0])*dx + (p[1]-door[1])*dy > 0 and
+                   from_outside.get(p,math.inf) < from_inside.get(p,math.inf) for p in monsters):
+                # The original room can clear while more monsters appear outside.
+                if self.lure_stop_reason == 'transition' and self.anchor in (None,list(points[0])):
+                    self.lure_stop_reason = self.battle_started = self.lure_started = self.anchor = None
+                return False
+            return True
+        return True
+
     def route_step_allowed(self,boundary=False,destination=None):
         """Recheck at enqueue AND dispatch, after any awaited spell/attack."""
         if not self.config['enabled'] or self.owner.combat_only:return True
@@ -345,6 +387,7 @@ class CombatRuntime:
         mode=self.policy_mode or self.config['mode']
         if mode!='lure':return not targets
         physical=self.visible_group(sample,targets)
+        boundary=self.finish_before_boundary(boundary,sample,targets,physical)
         following=self.refresh_lure_limit(targets,physical,boundary,sample,destination)
         if self.blocking_target(targets,sample):return False
         if self.lure_stop_reason or self.battle_started:
@@ -660,6 +703,7 @@ class CombatRuntime:
             # Capacity is a safety stop, not a claim about aggro ownership.
             # Adjacent eligible monsters count even before two pursuit samples.
             physical=self.visible_group(sample,candidates)
+            finish_here=self.finish_before_boundary(at_transition,sample,candidates,physical)
             self.nearby_count=max(len(adjacent),sum(gap<=1 for _,gap in physical))
             engaged=adjacent|{c['id'] for c in followers}
             known_positions={tuple(c['position']) for c in candidates if c['id'] in engaged}
@@ -670,7 +714,7 @@ class CombatRuntime:
                 # gathering interval. Start the limit when a real group forms.
                 if self.lure_started is None and self.confirmed_count:self.lure_started=now
                 if not self.lure_stop_reason:
-                    self.lure_stop_reason = self.gather_stop_reason(sample, candidates, engaged, at_transition)
+                    self.lure_stop_reason = self.gather_stop_reason(sample, candidates, engaged, finish_here)
                 if (not self.lure_stop_reason and self.lure_started is not None
                         and (self.blocker_since or now)-self.lure_started>=cfg['lure_seconds']):
                     self.lure_stop_reason='timeout'
@@ -778,7 +822,9 @@ class CombatRuntime:
         if luring:
             fresh=o.map_now()
             latest=self.candidates(fresh)
-            self.refresh_lure_limit(latest,self.visible_group(fresh,latest),at_transition,fresh)
+            physical=self.visible_group(fresh,latest)
+            finish_here=self.finish_before_boundary(at_transition,fresh,latest,physical)
+            self.refresh_lure_limit(latest,physical,finish_here,fresh)
             luring = self.lure_stop_reason is None
             if luring and self.engaged_count>=cfg['lure_count']:
                 o.reason='Sprawdzam odczyt grupy przed dalszym lurowaniem.'

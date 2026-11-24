@@ -55,6 +55,51 @@ def test_explicit_execution_acknowledges_each_position_then_completes(state,tmp_
     assert len(sent)==3 and not state.game_proxy._client_packet_callbacks
 
 
+def test_doorway_cursor_survives_occupied_landing_and_two_rounds(state,tmp_path):
+    origin, entry, far = [1573,561,7],[1572,561,7],[1571,561,7]
+    cells=[cell(x,y) for x,y,z in (origin,entry,far)]
+    c,_,_=setup(state,tmp_path,cells,[origin,far,origin])
+    cells[1].update(items=[dict(id=5126,stack=1,flags=[])],
+                    navigation=[dict(kind='door',door_state_hint='open')])
+    edge=dict(origin=origin,entry=entry,exit=far,action='use_then_step',item_id=5125,open_item_id=5126)
+    c.path=[origin,far,origin]
+    c.edges=[edge,dict(edge,origin=far,exit=origin)]
+    c.checkpoints=[dict(index=i,waypoint=i) for i in range(3)]
+    c.loop=True
+    connect_fake_walk(state,c)
+    walk=state.game_proxy.inject_to_server
+    visited=[]
+    async def walk_then_occupy(payload,guard=None):
+        await walk(payload,guard)
+        pos=list(state.game_state.position)
+        visited.append(pos)
+        if len(visited)==1:
+            cells[2]['occupants']=1
+            asyncio.get_running_loop().call_later(.2,cells[2].update,{'occupants':0})
+    state.game_proxy.inject_to_server=walk_then_occupy
+    def report(method,*args):
+        if c.laps==2:
+            c.status='complete'
+    c._observe_report=report
+    asyncio.run(asyncio.wait_for(c.run(),4))
+    assert visited==[entry,far,entry,origin]*2
+    assert len(c.path)==5 and len(c.edges)==4
+
+
+def test_walkable_ground_under_loose_container_in_historical_and_live_maps():
+    import json
+    from map_atlas import decode_tile
+    from passive_map import classify_tile
+    items=[dict(id=408,stack=0,flags=['ground','not_moveable']),dict(id=2519,stack=1,flags=['container','not_pathable'])]
+    assert classify_tile(items,False)[0]=='clear'
+    assert classify_tile(items,True)[0]=='blocked'
+    tile=dict(x=1571,y=561,z=7,kind='avoid',items=items)
+    assert decode_tile((1571,561,7,json.dumps(tile),0))[1]['kind']=='clear'
+    for flags in (['not_pathable'],['container','not_moveable','not_pathable'],['ground','not_pathable']):
+        assert classify_tile([*items,dict(id=456,stack=2,flags=flags)],False)[0]=='avoid'
+    assert classify_tile([*items,dict(id=1,stack=2,flags=['not_walkable'])],False)[0]=='blocked'
+
+
 def test_default_loop_has_real_return_path_and_repeats_whole_route(state,tmp_path):
     c,_,draft=setup(state,tmp_path,points=[[10,10,7],[13,10,7],[10,10,7]])
     c.prepare('a'*64,draft)  # default: loop

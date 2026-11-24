@@ -374,7 +374,11 @@ class AdaptiveCavebot:
         if unsupported:
             i,e=unsupported
             raise ValueError(f"T{i} na {tuple(e['entry'])}: użycie narzędzia lub czaru ({e['action']}, ID {e.get('tool_id')}) nie jest obsługiwane lub nie ma pełnych danych przejścia.")
-        if route['avoid_tiles']:raise ValueError("Trasa zawiera pola oznaczone jako omijane. Zmień szkic przed uruchomieniem.")
+        if route['avoid_tiles']:
+            tile = route['avoid_tiles'][0]
+            leg = next((leg for leg in route['legs'] if tile in route['path'][leg['start']:leg['end']+1]), None)
+            segment = f" na odcinku {leg['from_index']+1} → {leg['to_index']+1}" if leg else ""
+            raise ValueError(f"Trasa zawiera pole oznaczone jako omijane: {tuple(tile)}{segment}. Sprawdź pole w Atlasie.")
         # Pick the reachable waypoint with the shortest known ordinary approach,
         # rather than requiring A or choosing a geometrically close wall.
         joins={leg['from_index']:leg['start'] for leg in reversed(route['legs']) if not leg.get('returning')}
@@ -1700,7 +1704,23 @@ class AdaptiveCavebot:
                 self._route_command=True;self._route_boundary=True
                 self._pending_shortcut = None
                 self.save_session_cursor(pending=target)
-                try:await self.transition(edge,sample)
+                try:
+                    entry = edge['entry']
+                    # Commit the doorway as soon as the first step is acknowledged.
+                    # Temporary contention on the far side must not rewind this leg.
+                    two_steps = (pos != target and edge['action'] in ('step', 'use_then_step')
+                                 and distance(pos, entry) == distance(entry, target) == 1
+                                 and any([c['x'],c['y'],c['z']] == entry and
+                                         any(f['kind'] == 'door' for f in c.get('navigation', ()))
+                                         for c in sample['cells']))
+                    if two_steps:
+                        door_step = {**edge, 'exit':entry}
+                        await self.transition(door_step, sample)
+                        self.replace_path(self.index, self.index+1, [pos, entry, target])
+                        if not any(e['origin']==pos and e['exit']==entry for e in self.edges):
+                            self.edges.append(door_step)
+                    else:
+                        await self.transition(edge, sample)
                 except MovementDeferred as exc:
                     self.reason=str(exc);await asyncio.sleep(.05);continue
                 except ValueError as exc:
