@@ -31,6 +31,37 @@ def distance(a, b):
     return max(abs(a[0]-b[0]), abs(a[1]-b[1])) if a[2] == b[2] else 65535
 
 
+def ordinary_door_variants(changes):
+    """Resolve closed appearances with one common open state at a single entrance."""
+    if not changes or any(c.get('kind') != 'door' or c['behavior'] == 'use_enters' for c in changes):
+        return None
+    opened = {c['open_id'] for c in changes}
+    closed = {c['closed_id'] for c in changes}
+    witnessed = {c['closed_id'] for c in changes
+                 if c['behavior'] in {'open_then_step', 'manual_close', 'stays_open'}}
+    if len(opened) != 1 or opened & closed or closed != witnessed:
+        return None
+    return sorted(closed), opened.pop()
+
+
+def ordinary_door_item(tile, closed_ids, opened_id):
+    """Return the single known door object on this tile, including its live stack index."""
+    features = tile.get('navigation', ())
+    if not features or any(f['kind'] != 'door' for f in features):
+        return None
+    objects = [obj for obj in tile['items'] if obj['id'] == opened_id or obj['id'] in closed_ids]
+    if len(objects) != 1:
+        return None
+    obj = objects[0]
+    expected_state = 'open' if obj['id'] == opened_id else 'closed'
+    for feature in features:
+        if feature.get('item_id', obj['id']) != obj['id']:
+            return None
+        if feature.get('door_state_hint') in {'open', 'closed'} and feature['door_state_hint'] != expected_state:
+            return None
+    return obj
+
+
 def gate_entry_record(row):
     """A witnessed use that moved onto the door is already a directed edge.
 
@@ -603,14 +634,20 @@ class TransitionLearner:
                 observed=[r for r in changes.get(key,[]) if item["id"] in (r["object_change"]["closed_id"],r["object_change"]["open_id"])]
                 if not observed:continue
                 pairs={(r["object_change"]["closed_id"],r["object_change"]["open_id"]) for r in observed}
-                if len(pairs)!=1:continue  # Conflicting pairs require review.
-                closed,opened=next(iter(pairs));facts={r["object_change"]["behavior"] for r in observed}
+                if len(pairs) != 1:
+                    model = ordinary_door_variants([r['object_change'] for r in observed])
+                    if not model:
+                        continue
+                    opened = model[1]
+                else:
+                    _, opened = next(iter(pairs))
+                facts={r["object_change"]["behavior"] for r in observed}
                 old=next((f for f in features if f.get("item_id")==item["id"]),{})
                 change=observed[-1]["object_change"]
                 feature={**old,"kind":old.get("kind",change["kind"]),"item_id":item["id"],"stack":item["stack"],
                          "source":"observed" if old.get("source")!="user_annotation" else "user_annotation",
                          "observation_count":sum(r["count"] for r in observed),
-                         "door_state_hint":"closed" if item["id"]==closed else "open",
+                         "door_state_hint":"closed" if item["id"]!=opened else "open",
                          "behavior_hint":"use_enters" if "use_enters" in facts else "open_then_step" if "open_then_step" in facts else "unknown",
                          "closing_policy":"after_exit" if "closes_after_exit" in facts else "observed_open" if "stays_open" in facts else "manual" if "manual_close" in facts else "unknown"}
                 features=[f for f in features if f.get("item_id")!=item["id"]]+[feature]

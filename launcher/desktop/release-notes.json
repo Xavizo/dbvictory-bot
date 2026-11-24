@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.26.8",
+    "changes":[
+      {"title":"Rozpoznawanie zamkniętych drzwi w zapisanych szkicach","detail":"Cavebot otwiera wariant drzwi widoczny na wybranej kratce. Zachowuje zapisane przejście, gdy na tym samym polu nauczysz Atlas drugiego wariantu."}
+    ]
+  },
+  {
     "version":"v1.26.7",
     "changes":[
       {"title":"Wyjście z budynku bez cofania w drzwiach","detail":"Cavebot zapamiętuje wejście na próg i sprawdza drogę po drugiej stronie. W trybie lurowania może przejść przez otwarte drzwi do potworów przed sobą."},

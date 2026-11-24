@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 
-from transition_learning import position,gate_entry_record
+from transition_learning import position,gate_entry_record,ordinary_door_variants,ordinary_door_item
 from cavebot_combat import validate_combat
 from navigation_tools import WEB_ITEM_IDS, cuttable_web, has_cut_web, tool_kind, web_edge
 from map_navigation import movable_container_cover
@@ -196,7 +196,7 @@ def remap_links(links,before,after):
 
 def navigation_edges(tiles,observations):
     """Shared validated directed edges for preview, execution and the editor."""
-    edges={};ambiguous={};door_pairs={};normal_doors={};tool_exits={}
+    edges={};ambiguous={};door_pairs={};changes_by_entry={};tool_exits={}
     for r in observations:
         kind=tool_kind(r)
         if kind and r.get('evidence')=='observed':
@@ -205,8 +205,9 @@ def navigation_edges(tiles,observations):
         change=r.get('object_change')
         if change and r.get('evidence')=='observed' and r.get('entry'):
             door_pairs.setdefault(tuple(r['entry']),set()).add((change['closed_id'],change['open_id']))
-            if change.get('kind')=='door' and change.get('behavior') in {'open_then_step','stays_open','manual_close'}:
-                normal_doors.setdefault(tuple(r['entry']),set()).add((change['closed_id'],change['open_id']))
+            changes_by_entry.setdefault(tuple(r['entry']), []).append(change)
+    normal_doors = {entry: model for entry, changes in changes_by_entry.items()
+                    if (model := ordinary_door_variants(changes))}
     if isinstance(tiles,PagedTiles):
         # Learned entrances are sparse across many floors. Loading a whole tile
         # page for each one dominates the cost of editing an existing route.
@@ -227,12 +228,22 @@ def navigation_edges(tiles,observations):
         pairs=door_pairs.get(entry,set())
         # A recorded walk through an open normal door remains valid when the
         # door is later closed, but only with independently observed opening.
-        normal=normal_doors.get(entry,set())
-        if r['action']=='step' and r.get('reason')=='door_crossing' and len(normal)==len(pairs)==1 and normal==pairs:
-            closed,opened=next(iter(normal))
-            if opened in r.get('entry_items',[]):r={**r,'action':'use_then_step','item_id':closed,'automatic_door':True}
         if r.get('object_change') and len(pairs)!=1:continue
         opened_id=next(iter(pairs))[1] if len(pairs)==1 and next(iter(pairs))[0]==r.get('item_id') else None
+        model = normal_doors.get(entry)
+        if model and origin[2] == entry[2] == dest[2]:
+            closed_ids, door_open = model
+            recorded_walk = (r['action'] == 'step' and r.get('reason') == 'door_crossing'
+                             and door_open in r.get('entry_items', ()))
+            recorded_use = r['action'] == 'use_then_step' and r.get('item_id') in closed_ids
+            if recorded_walk or recorded_use:
+                obj = ordinary_door_item(tile, closed_ids, door_open)
+                if obj is None:
+                    continue
+                closed = obj['id'] if obj['id'] != door_open else closed_ids[0]
+                opened_id = door_open
+                r = {**r, 'action':'use_then_step', 'item_id':closed, 'door_closed_ids':closed_ids,
+                     'automatic_door':recorded_walk or r.get('automatic_door', False)}
         if r.get("item_id") is not None:
             if r["item_id"] not in ids and r.get("prepared_item_id") not in ids and not (r['action'] in {'use','use_then_step'} and opened_id in ids):continue
         elif not r.get("entry_items") or not set(r["entry_items"])<=ids:continue
@@ -253,12 +264,11 @@ def navigation_edges(tiles,observations):
     # A normal door does not choose a destination or change floors. Once its
     # opening mechanism is observed, known adjacent floor tiles define the
     # available exits. This does not generalize to level gates or holes.
-    for entry,pairs in normal_doors.items():
-        if len(pairs)!=1 or pairs!=door_pairs.get(entry):continue
-        closed,opened=next(iter(pairs));tile=tiles.get(entry,{})
-        ids={i['id'] for i in tile.get('items',[])};features=tile.get('navigation',[])
-        if not ids.intersection({closed,opened}) or any(f['kind']=='level_gate' for f in features):continue
-        if not any(f['kind']=='door' for f in features):continue
+    for entry, (closed_ids, opened) in normal_doors.items():
+        obj = ordinary_door_item(tiles.get(entry, {}), closed_ids, opened)
+        if obj is None:
+            continue
+        closed = obj['id'] if obj['id'] != opened else closed_ids[0]
         x,y,z=entry;neighbors=[]
         for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)):
             p=(x+dx,y+dy,z);cell=tiles.get(p,{})
@@ -266,8 +276,11 @@ def navigation_edges(tiles,observations):
         for origin in neighbors:
             for dest in neighbors:
                 if origin==dest:continue
-                identity='door-'+hashlib.sha256(repr((origin,entry,dest,closed,opened)).encode()).hexdigest()[:20]
-                row=dict(id=identity,origin=list(origin),entry=list(entry),exit=list(dest),action='use_then_step',
+                # Each closed appearance may already be part of a saved sketch's link ID.
+                identities = ['door-' + hashlib.sha256(repr((origin,entry,dest,i,opened)).encode()).hexdigest()[:20]
+                              for i in closed_ids]
+                row=dict(id=identities[0],link_aliases=identities[1:],origin=list(origin),entry=list(entry),
+                         exit=list(dest),action='use_then_step',door_closed_ids=closed_ids,
                          item_id=closed,open_item_id=opened,entry_items=[closed,opened],automatic_door=True,
                          evidence='derived',direction='same_floor',count=1)
                 edges.setdefault(origin,[]).append((dest,row))
@@ -759,12 +772,12 @@ class MapAtlas:
             if index in selected:
                 origins={a} | stair_origins.get(index,set())
                 choices=[r for origin in origins for dest,r in edges.get(origin,[])
-                         if dest==b and r.get('id')==selected[index]]
+                         if dest==b and (r.get('id')==selected[index] or selected[index] in r.get('link_aliases',()))]
                 exact=[r for r in choices if tuple(r['origin'])==a]
                 choices=exact or choices
                 if len(choices)!=1:
                     gaps.append({'segment':index,'from':list(a),'to':list(b),'reason':'Wybrane przejście nie pasuje do aktualnych danych; wybierz je ponownie.'});break
-                transition=choices[0]
+                transition={**choices[0], 'id':selected[index]}
                 walk_goal=tuple(transition['origin'])
             elif a[2]!=b[2]:
                 gaps.append({'segment':index,'from':list(a),'to':list(b),'reason':'Dodaj jawne przejście między piętrami z menu mapy.'});break
@@ -819,7 +832,7 @@ class MapAtlas:
             if transition:
                 path.append(list(b))
                 leg_actions.append(transition)
-            actions.extend({k:row.get(k) for k in ("origin","entry","exit","action","item_id","tool_id","prepared_item_id","tool_ids","entry_items","id","open_item_id")} for row in leg_actions)
+            actions.extend({k:row.get(k) for k in ("origin","entry","exit","action","item_id","tool_id","prepared_item_id","tool_ids","entry_items","id","open_item_id","door_closed_ids")} for row in leg_actions)
             legs.append({"from_index":index,"to_index":0 if closing else index+1,"start":start,"end":len(path)-1,**({'closing':True} if closing else {})})
             if closing:loop_closed=True
         return_start=len(path)-1;return_mode='closed' if loop_closed else None;return_error=None

@@ -12,6 +12,7 @@ from collections import deque
 from cavebot_combat import CombatRuntime,validate_combat
 from protocol import ClientOpcode,build_walk_packet,build_use_item_packet,build_use_item_ex_packet,build_move_item_packet
 from combat_wave import TURN_OPCODES
+from transition_learning import ordinary_door_item
 from navigation_tools import WEB_ITEM_IDS, covering_bodies, covering_body, cuttable_web, supported_transition, transition_tools, web_edge
 
 class MovementDeferred(ValueError):
@@ -1464,6 +1465,13 @@ class AdaptiveCavebot:
         features=tile.get('navigation',[]);opened=any(f.get('door_state_hint')=='open' for f in features)
         if any((f.get('required_level') or 0)>self.state.game_state.level for f in features):raise ValueError("Poziom postaci jest zbyt niski dla tej bramki.")
         ids={i['id'] for i in tile['items']};item=edge.get('item_id')
+        door_variants = edge.get('door_closed_ids')
+        if door_variants:
+            door_object = ordinary_door_item(tile, door_variants, edge['open_item_id'])
+            if door_object is None:
+                raise ValueError(f"Nie rozpoznano wariantu drzwi na polu {tuple(entry)}.")
+            item = door_object['id']
+            opened = item == edge['open_item_id']
         matches=item in ids if item is not None else bool(edge.get('entry_items')) and set(edge['entry_items'])<=ids
         if not matches and not (opened and edge['action'] in {'use','use_then_step'} and edge.get('open_item_id') in ids):raise ValueError("Obiekt przejścia zmienił się; potrzebny nowy odczyt i plan.")
         stair_step = edge['action']=='step' and origin[2]!=dest[2] and any(f['kind']=='stairs' for f in features)
@@ -1506,7 +1514,13 @@ class AdaptiveCavebot:
             while time.monotonic()<deadline:
                 current=await self.fresh_map()
                 door=next((c for c in current['cells'] if [c['x'],c['y'],c['z']]==entry),None)
-                if door and door['kind']=='clear' and any(f.get('door_state_hint')=='open' for f in door.get('navigation',[])):break
+                if door and door['kind']=='clear':
+                    if door_variants:
+                        obj = ordinary_door_item(door, door_variants, edge['open_item_id'])
+                        if obj and obj['id'] == edge['open_item_id']:
+                            break
+                    elif any(f.get('door_state_hint')=='open' for f in door.get('navigation',[])):
+                        break
                 await asyncio.sleep(.05)
             else:raise ValueError("Drzwi nie potwierdziły otwarcia.")
         for target in (entry,dest):
