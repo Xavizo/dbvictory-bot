@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from copy import copy,deepcopy
 from route_identity import navigation_revision,same_route
+from map_navigation import is_step_floor_tile
 from cavebot_walking import WALK_DETAILS, WalkOutcome, OFFSETS, distance, walkable, step_clear, detour, varied_detour, waypoint_tile
 from collections import deque
 from cavebot_combat import CombatRuntime,validate_combat
@@ -75,24 +76,16 @@ class WalkTiming:
                  self.number, self.target, self.position_ms,
                  "-" if self.map_ms is None else f"{self.map_ms:.1f}", outcome)
 
-def visible_linked_stairs(tile, edge):
-    if not tile or tile.get('kind') not in {'clear', 'blocked'}:
-        return False
-    observed = tile.get('transitions', ())
-    return (any(f['kind'] == 'stairs' for f in tile.get('navigation', ()))
-            and any(t['id'] == edge['id'] and t['action'] == 'step' for t in observed)
-            and all(t['exit'] == edge['exit'] for t in observed))
-
-
 def matches_floor_crossing(tile, edge):
     if not tile or tile.get('kind') not in ('clear', 'blocked'):
         return False
     links = tile.get('transitions', ())
-    return (any(f['kind'] in ('stairs', 'passage') for f in tile.get('navigation', ()))
-            and any(t['id'] == edge['id'] for t in links)
+    ids = {item['id'] for item in tile.get('items', ())}
+    return (is_step_floor_tile(tile)
+            and (not links or any(t['id'] == edge['id'] for t in links))
             and all(t['action'] == 'step' and t['exit'] == edge['exit'] for t in links)
-            and bool(edge.get('entry_items'))
-            and set(edge['entry_items']).issubset(item['id'] for item in tile.get('items', ())))
+            and (edge['item_id'] in ids if edge.get('item_id') is not None
+                 else bool(edge.get('entry_items')) and set(edge['entry_items']) <= ids))
 
 
 def web_passable(tile):
@@ -395,17 +388,44 @@ class AdaptiveCavebot:
         # rather than requiring A or choosing a geometrically close wall.
         joins={leg['from_index']:leg['start'] for leg in reversed(route['legs']) if not leg.get('returning')}
         joins.setdefault(len(points)-1,route['return_start'])
-        best=None;seen=set()
-        for i in sorted(joins,key=lambda i:(distance(pos,points[i]),i)):
-            p=points[i];key=tuple(p)
-            if p[2]!=pos[2] or key in seen:continue
+        route_path = route['path']
+        stair_edges = {(e['id'],tuple(e['origin']),tuple(e['exit'])):e for e in route['transitions']
+                       if e.get('recorded_origin')}
+        linked = {link['from_index']:link['id'] for link in draft.get('links', ())}
+        candidates = []
+        for waypoint, offset in joins.items():
+            side = route_path[offset]
+            if side[2] != pos[2]:
+                continue
+            edge = (stair_edges.get((linked[waypoint],tuple(side),tuple(route_path[offset+1])))
+                    if waypoint in linked and offset+1 < len(route_path) else None)
+            lower_bound = max(0,distance(pos,edge['entry'])-1) if edge else distance(pos,side)
+            candidates.append((lower_bound,waypoint,side,edge))
+        best = None
+        seen = set()
+        for lower_bound, waypoint, side, edge in sorted(candidates):
+            if best and lower_bound >= best[0]:
+                break
+            key = (tuple(side), edge['id'] if edge else None)
+            if key in seen:
+                continue
             seen.add(key)
-            if best and distance(pos,p)>=len(best[1]['path'])-1:continue
-            entry={'complete':True,'path':[pos],'transitions':[],'avoid_tiles':[]} if pos==p else atlas.plan([pos,p],observations)
-            if (entry['complete'] and not entry['avoid_tiles'] and all(supported_transition(e) for e in entry['transitions'])
-                and (best is None or len(entry['path'])<len(best[1]['path']))):best=(i,entry)
+            crossing = edge is not None and pos != side
+            if pos == side:
+                entry = dict(complete=True, path=[pos], transitions=[], avoid_tiles=[])
+            elif crossing:
+                entry = atlas.plan([pos,side,edge['exit']], observations, links=[dict(from_index=1,id=edge['id'])])
+            else:
+                entry = atlas.plan([pos,side],observations)
+            if (entry['complete'] and not entry['avoid_tiles']
+                    and all(supported_transition(e) for e in entry['transitions'])):
+                steps = len(entry['path']) - 1 - int(crossing)
+                if best is None or steps < best[0]:
+                    best = (steps,waypoint,entry,crossing)
         if best is None:raise ValueError('Brak znanego dojścia do waypointów na obecnym piętrze. Podejdź do dostępnej części trasy.')
-        join,entry=best;offset=joins[join];approach=entry['path'];route_path=route['path']
+        _,join,entry,crossing = best
+        offset = joins[join] + int(crossing)
+        approach = entry['path']
         if loop:route_path=route_path[offset:-1]+route_path[:offset+1]
         else:route_path=route_path[offset:]
         self.path=approach[:-1]+route_path;self.loop_start=len(approach)-1;self.edges=entry['transitions']+route['transitions']
@@ -413,6 +433,9 @@ class AdaptiveCavebot:
         size=len(route['path'])-1
         self.checkpoints=sorted([dict(index=len(approach)-1+(n-offset if n>=offset else n-offset+size),waypoint=w)
                                  for n,w in anchors if loop or n>=offset],key=lambda c:(c['index'],c['waypoint']))
+        if crossing:
+            # Until the actual landing arrives, the prefix still belongs to the approach waypoint.
+            self.checkpoints.insert(0,dict(index=len(approach)-2,waypoint=join))
         self.last_waypoint=None;self.tolerated_waypoints=0
         self.loop=loop;self.index=0;self.laps=0;self.name=draft['name'];self.status='ready';self.reason=f'Trasa przygotowana od waypointu {join+1}.'
         self._pending_shortcut=None
@@ -515,127 +538,90 @@ class AdaptiveCavebot:
         elif start<=self.variation_until<=end:self.variation_until=start
         self.path[start:end+1]=local;self.checkpoints=sorted(rows,key=lambda r:(r['index'],r['waypoint']))
 
-    def linked_step_after_approach(self, index=None):
-        i = self.index if index is None else index
-        if i+2>=len(self.path) or i<self.loop_start:return None
-        origin,approach,landing=self.path[i:i+3]
-        if origin[2]==landing[2] or distance(origin,approach)!=1:return None
-        if any(cp['index']==i+1 for cp in self.checkpoints):return None
-        if any(e['origin']==origin and e['exit']==approach for e in self.edges):return None
-        draft=self.route_draft or {}
-        points=draft.get('points',[])
-        starts={cp['waypoint'] for cp in self.checkpoints if cp['index']==i}
-        ends={cp['waypoint'] for cp in self.checkpoints if cp['index']==i+2}
-        ids={link['id'] for link in draft.get('links',[]) if link['from_index'] in starts
-             and link['from_index']+1 in ends and points[link['from_index']:link['from_index']+2]==[origin,landing]}
-        options=[e for e in self.edges if e['origin']==approach and e['exit']==landing and e['id'] in ids and e['action']=='step']
-        return options[0] if len(options)==1 and distance(origin,options[0]['entry'])==1 else None
+    def floor_edge_at(self, index):
+        origin, landing = self.path[index:index+2]
+        choices = [e for e in self.edges if e['origin'] == origin and e['exit'] == landing]
+        if len(choices) < 2:
+            return next(iter(choices), None)
+        if len({(e.get('id'),tuple(e['entry']),e['action']) for e in choices}) == 1:
+            return choices[0]
+        # Two nearby stair tiles can lead to the same landing. Keep the link
+        # explicitly selected for this occurrence of the waypoint pair.
+        starts = {c['waypoint'] for c in self.checkpoints if c['index'] == index}
+        ends = {c['waypoint'] for c in self.checkpoints if c['index'] == index+1}
+        ids = {link['id'] for link in (self.route_draft or {}).get('links', ())
+               if link['from_index'] in starts and link['from_index']+1 in ends}
+        matches = [e for e in choices if e.get('id') in ids]
+        if len({(e['id'],tuple(e['entry']),e['action']) for e in matches}) == 1:
+            return matches[0]
+        return None
 
-    def stairs_after_next_waypoint(self):
+    def upcoming_floor_crossing(self):
+        """Find the next planned stairs without bypassing another waypoint or interaction."""
         i = self.index
-        if i < self.loop_start or i + 3 >= len(self.path):
-            return None
-        origin, waypoint = self.path[i:i+2]
-        if distance(origin, waypoint) != 1 or any(
-                e['origin'] == origin and e['exit'] == waypoint for e in self.edges):
-            return None
-        return self.linked_step_after_approach(i + 1)
+        for j in range(i, min(i + 7, len(self.path) - 1)):
+            start, end = self.path[j:j+2]
+            if start[2] != end[2]:
+                edge = self.floor_edge_at(j)
+                if edge and edge.get('recorded_origin'):
+                    return j, edge
+                break
+            if j != i and any(cp['index'] == j for cp in self.checkpoints):
+                break
+            if any(e['origin'] == start and e['exit'] == end for e in self.edges):
+                break
+        return None
 
-    def detour_to_stair_approach(self, sample):
-        """Walk around an unreadable waypoint to the recorded side of its linked stairs."""
-        edge = self.stairs_after_next_waypoint()
-        if not edge:
+    def reroute_floor_approach(self, sample, *, blocked_step=False):
+        """Keep the linked entrance and landing when its planned side is occupied or unreadable."""
+        i = self.index
+        origin = self.path[i]
+        # Normally the atlas already chose the closest side. Running the local
+        # search is only necessary at the entrance or after a rejected walk.
+        if not blocked_step and (i + 2 >= len(self.path)
+                                 or self.path[i+1][2] == self.path[i+2][2]):
             return False
-        i = self.index
-        origin, waypoint, approach = self.path[i:i+3]
+        crossing = self.upcoming_floor_crossing()
+        if not crossing or crossing[0] == i or sample.get('center') != origin:
+            return False
+        j, edge = crossing
+        entry = tuple(edge['entry'])
+        if not blocked_step and distance(origin, entry) != 1:
+            return False
         cells = sample['cells']
         tiles = {(c['x'], c['y'], c['z']): c for c in cells}
-        if sample.get('center') != origin or tiles.get(tuple(waypoint), {}).get('kind') != 'unknown':
-            return False
-        if not visible_linked_stairs(tiles.get(tuple(edge['entry'])), edge):
-            return False
-        excluded = set(self.blocked) | {tuple(waypoint), tuple(edge['entry'])}
-        excluded.update(p for p, c in tiles.items() if c.get('transitions') or c.get('navigation') or c.get('stairs'))
-        local = detour(cells, origin, approach, excluded)
-        if not local or len(local) > 7:
-            return False
-        anchors = [cp['waypoint'] for cp in self.checkpoints if cp['index'] == i + 1]
-        self.replace_path(i, i + 2, local)
-        self.checkpoints.extend(dict(index=i + len(local) - 1, waypoint=w) for w in anchors)
-        self.checkpoints.sort(key=lambda cp: (cp['index'], cp['waypoint']))
-        self.mark_waypoint()
-        self.logs.append(f'Omijam nieczytelne pole {tuple(waypoint)}. Podejście do schodów: {tuple(approach)}.')
-        return True
-
-    def replace_unreadable_link_origin(self, sample):
-        """Reach the same recorded floor crossing from a visible neighboring tile."""
-        i = self.index
-        if i < self.loop_start or i + 2 >= len(self.path):
-            return False
-        origin, anchor, landing = self.path[i:i+3]
-        if origin != sample.get('center') or anchor[2] == landing[2] or distance(origin, anchor) != 1:
-            return False
-        tiles = {(c['x'], c['y'], c['z']): c for c in sample['cells']}
-        if tiles.get(tuple(anchor), {}).get('kind') != 'unknown':
-            return False
-        draft = self.route_draft or {}
-        anchors = [cp['waypoint'] for cp in self.checkpoints if cp['index'] == i+1]
-        ends = {cp['waypoint'] for cp in self.checkpoints if cp['index'] == i+2}
-        ids = {link['id'] for link in draft.get('links', ()) if link['from_index'] in anchors
-               and link['from_index']+1 in ends
-               and draft['points'][link['from_index']:link['from_index']+2] == [anchor, landing]}
-        matches = [e for e in self.edges if e['id'] in ids and e['origin'] == anchor
-                   and e['exit'] == landing and e['action'] == 'step']
-        if len(matches) != 1:
-            return False
-        edge = matches[0]
-        entry = tuple(edge['entry'])
         tile = tiles.get(entry, {})
         if entry in self.blocked or tile.get('occupants') != 0 or not matches_floor_crossing(tile, edge):
             return False
-        excluded = set(self.blocked) | {tuple(anchor), entry}
+        excluded = set(self.blocked) | {entry}
         excluded.update(p for p, c in tiles.items() if c.get('navigation') or c.get('transitions') or c.get('stairs'))
+        delayed = self.delayed_departures(origin)
         candidates = []
         for dx, dy in OFFSETS:
             side = (entry[0]+dx, entry[1]+dy, entry[2])
-            if side in excluded or not walkable(tiles.get(side)):
+            if side != tuple(origin) and (side in excluded or not walkable(tiles.get(side))):
                 continue
-            existing = [e for e in self.edges if e['origin'] == list(side) and e['exit'] == landing]
+            existing = [e for e in self.edges if e['origin'] == list(side) and e['exit'] == edge['exit']]
             if any(e['entry'] != edge['entry'] or e['id'] != edge['id'] for e in existing):
                 continue
-            path = detour(sample['cells'], origin, side, excluded)
+            path = detour(cells, origin, side, excluded, skip_first=delayed)
             if path and len(path) <= 7:
-                candidates.append((len(path), bool(dx and dy), path))
+                candidates.append((len(path), list(side) != edge['recorded_origin'], path))
         if not candidates:
             return False
-        _, _, path = min(candidates)
+        path = min(candidates)[2]
+        if path == self.path[i:j+1]:
+            return False
         side = path[-1]
-        if not any(e['origin'] == side and e['exit'] == landing for e in self.edges):
-            self.edges.append({**edge, 'origin':side, 'alternate_approach':True})
-        self.replace_path(i, i+1, path)
-        self.checkpoints.extend(dict(index=i+len(path)-1, waypoint=w) for w in anchors)
-        self.checkpoints.sort(key=lambda cp: (cp['index'], cp['waypoint']))
+        if not any(e['origin'] == side and e['exit'] == edge['exit'] for e in self.edges):
+            self.edges.append({**edge, 'origin':side})
+        anchors = [cp['waypoint'] for cp in self.checkpoints if cp['index'] == j]
+        self.replace_path(i, j, path)
+        if side != edge['origin']:
+            self.checkpoints.extend(dict(index=i+len(path)-1, waypoint=w) for w in anchors)
+            self.checkpoints.sort(key=lambda cp: (cp['index'], cp['waypoint']))
         self.mark_waypoint()
-        self.logs.append(f'Obchodzę nieczytelne podejście {tuple(anchor)}. Wejście {entry} od {tuple(side)}.')
-        return True
-
-    def use_stairs_from_saved_waypoint(self, sample):
-        """Bypass only an unreadable approach between a linked waypoint and its landing."""
-        edge=self.linked_step_after_approach()
-        if not edge:return False
-        i=self.index
-        origin,approach,landing=self.path[i:i+3]
-        if sample.get('center')!=origin:return False
-        cells={(c['x'],c['y'],c['z']):c for c in sample['cells']}
-        if cells.get(tuple(approach),{}).get('kind')!='unknown':return False
-        tile=cells.get(tuple(edge['entry']),{})
-        if tile.get('occupants') != 0 or not visible_linked_stairs(tile, edge):return False
-        existing=[e for e in self.edges if e['origin']==origin and e['exit']==landing]
-        if any(e['entry']!=edge['entry'] or e['id']!=edge['id'] for e in existing):return False
-        if not existing:
-            self.edges.append({**edge,'origin':origin,'preferred_origin':approach})
-        self.replace_path(i+1,i+2,[landing])
-        self.logs.append(f'Niepełny odczyt podejścia {tuple(approach)}. Sprawdzam schody z waypointu {tuple(origin)}.')
+        self.logs.append(f'Podejście do przejścia {entry} od {tuple(side)}.')
         return True
 
     def checkpoint_limit(self,default):
@@ -947,12 +933,9 @@ class AdaptiveCavebot:
                     e.get('action')=='step' and e['origin']==origin and e['exit']==pos for e in self.edges):
                 landing_index=self.index+1
             else:
-                edge=self.linked_step_after_approach()
-                landing_index=self.index+2 if edge and edge['exit']==pos else None
-                if landing_index is None:
-                    edge = self.stairs_after_next_waypoint()
-                    if edge and edge['exit'] == pos:
-                        landing_index = self.index + 3
+                crossing = self.upcoming_floor_crossing()
+                landing_index = (crossing[0]+1 if crossing and crossing[1]['exit'] == pos
+                                 and distance(origin, crossing[1]['entry']) <= 2 else None)
             if landing_index is not None:
                 self.guard()
                 self.index=landing_index
@@ -1525,7 +1508,7 @@ class AdaptiveCavebot:
         origin=list(self.state.game_state.position);entry=edge['entry'];dest=edge['exit']
         tile=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==entry),None)
         if not tile or distance(origin,entry)>1:raise ValueError("Brak świeżego odczytu wejścia przejścia.")
-        alternate = edge.get('alternate_approach', False)
+        alternate = bool(edge.get('recorded_origin') or edge.get('alternate_approach'))
         if alternate and not matches_floor_crossing(tile, edge):
             raise MovementDeferred("Czekam na potwierdzenie tego samego wejścia i wyjścia przejścia.")
         features=tile.get('navigation',[]);opened=any(f.get('door_state_hint')=='open' for f in features)
@@ -1767,11 +1750,20 @@ class AdaptiveCavebot:
             sample=await self.fresh_map()
             if list(self.state.game_state.position) != pos:
                 continue
+            if self.reroute_floor_approach(sample):
+                continue
             delayed = self.delayed_departures(pos)
             shortcut = self.pass_ordinary_waypoint(sample) and tuple(self.path[self.index+2]) not in delayed
             if not shortcut and not self.combat.placement:self.vary_leg(sample)
             target=self.path[self.index + (2 if shortcut else 1)]
-            edge=next((e for e in self.edges if e['origin']==pos and e['exit']==target),None)
+            if pos[2] != target[2]:
+                edge = self.floor_edge_at(self.index)
+                if edge is None and any(e['origin'] == pos and e['exit'] == target for e in self.edges):
+                    self.reason = 'Brak jednoznacznego przejścia na wybrane piętro.'
+                    await self.wait_for_navigation(self.reason, ("map", "position"), .1)
+                    continue
+            else:
+                edge=next((e for e in self.edges if e['origin']==pos and e['exit']==target),None)
             if edge is None and distance(pos,target)==1:
                 # A web can reappear on a route saved while the field was clear.
                 next_tile=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
@@ -1779,10 +1771,6 @@ class AdaptiveCavebot:
                 if web:
                     edge=web_edge(pos,target,web['id'])
             if edge:
-                preferred=edge.get('preferred_origin')
-                if preferred and step_clear(sample['cells'],pos,preferred,self.blocked):
-                    self.replace_path(self.index+1,self.index+1,[preferred,target])
-                    continue
                 self._route_command=True;self._route_boundary=True
                 self._pending_shortcut = None
                 self.save_session_cursor(pending=target)
@@ -1838,6 +1826,8 @@ class AdaptiveCavebot:
                 self.expire_movement_blocks()
                 tiles={(c['x'],c['y'],c['z']):c for c in sample['cells']}
                 if tuple(target) in delayed or not step_clear(sample['cells'],pos,target,self.blocked):
+                    if self.reroute_floor_approach(sample, blocked_step=True):
+                        continue
                     # Rejoin within the next eight ordinary steps, never skip a transition.
                     candidates=[]
                     limit=min(len(self.path),self.index+9,self.loop_start+1 if self.index<self.loop_start else len(self.path))
@@ -1857,9 +1847,6 @@ class AdaptiveCavebot:
                         if tuple(target) in delayed:
                             self.reason = 'Brak potwierdzenia kroku. Czekam przed ponowieniem z tego pola.'
                             await asyncio.sleep(.1)
-                            continue
-                        if (self.use_stairs_from_saved_waypoint(sample) or self.detour_to_stair_approach(sample)
-                                or self.replace_unreadable_link_origin(sample)):
                             continue
                         self.describe_blockage(sample,target)
                         if (tuple(target) not in self.blocked and not self.combat.config['enabled']

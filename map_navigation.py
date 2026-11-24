@@ -115,6 +115,13 @@ LENS_HELP_TYPES = {
 }
 
 
+def is_step_floor_tile(tile):
+    """Ground entrances that can be stepped on from a neighboring tile."""
+    return any(f.get('kind') in {'stairs', 'passage', 'hole', 'descent'}
+               and f.get('activation_hint') in (None, 'step')
+               for f in tile.get('navigation', ()))
+
+
 def navigation_features(items, confirmed_types=None):
     """Return per-object annotations, keeping ground/decorative layers distinct."""
     features = []

@@ -5,7 +5,7 @@ import time
 import pytest
 
 from cavebot_walking import WalkOutcome
-from adaptive_cavebot import OFFSETS
+from adaptive_cavebot import OFFSETS, MovementDeferred
 from game_state import scan_packet
 from protocol import ServerOpcode, WALK_OPCODES
 from test_adaptive_cavebot import cell, connect_fake_walk, setup
@@ -149,7 +149,46 @@ def test_cancelled_route_step_replans_and_finishes_without_manual_resume(state, 
     assert any("serwer anulował krok" in msg for msg in ctrl.logs)
 
 
-def test_stair_cancel_retries_from_observed_side_after_entrance_clears(state,tmp_path):
+
+@pytest.mark.parametrize('start_x', [11, 14])
+def test_join_stairs_from_other_side_without_walking_to_recorded_origin(state,tmp_path,start_x):
+    recorded,entry,landing = [9,10,7],[10,10,7],[10,11,6]
+    side = [11,10,7]
+    floor = cell(*entry,kind='blocked',item=5259,navigation=[dict(kind='stairs')])
+    edge = dict(id='up',origin=recorded,entry=entry,exit=landing,action='step',entry_items=[5259],evidence='observed')
+    cells = [cell(*p) for p in (recorded,landing)] + [cell(x,10,7) for x in range(11,15)] + [floor]
+    ctrl,_,draft = setup(state,tmp_path,cells,[recorded,landing],[edge])
+    gs = state.game_state
+    gs.position = (start_x,10,7)
+    ctrl.prepare(state.passive_map_monitor.atlas.scope,draft,False)
+    assert ctrl.path == [[x,10,7] for x in range(start_x,10,-1)] + [landing]
+    assert ctrl.checkpoints == [dict(index=start_x-11,waypoint=0),dict(index=start_x-10,waypoint=1)]
+    async def dispatch(payload,guard):
+        assert guard()
+        if list(gs.position) == side:
+            assert ctrl.last_waypoint == 0
+            gs.position = tuple(landing)
+        else:
+            gs.position = (gs.position[0]-1,10,7)
+        ctrl.last_command = 0
+    state.game_proxy.inject_to_server=dispatch
+    asyncio.run(asyncio.wait_for(ctrl.run(),2))
+    assert ctrl.status == 'complete' and ctrl.last_waypoint == 1
+
+
+def test_stairs_with_same_landing_respect_selected_entrance(state,tmp_path):
+    side,entry,landing = [10,10,7],[10,11,7],[10,11,6]
+    stairs = cell(*entry,kind='blocked',item=5259,navigation=[dict(kind='stairs')])
+    edge = dict(id='chosen',origin=side,entry=entry,exit=landing,action='step',entry_items=[5259],evidence='observed')
+    ctrl,_,_=setup(state,tmp_path,[cell(*side),stairs,cell(*landing)],[side,landing],[edge])
+    chosen = ctrl.edges[0]
+    ctrl.edges.insert(0,{**chosen,'id':'other','entry':[11,11,7]})
+    assert ctrl.floor_edge_at(0) == chosen
+    ctrl.route_draft['links'] = []
+    assert ctrl.floor_edge_at(0) is None
+
+
+def test_stair_cancel_retries_from_current_side_after_entrance_clears(state,tmp_path):
     anchor,approach,entry,landing=[1039,1300,4],[1038,1299,4],[1038,1300,4],[1037,1300,3]
     stairs=cell(*entry,kind='blocked',item=5259,navigation=[{'kind':'stairs'}])
     cells=[cell(*p) for p in (anchor,approach,landing)]+[stairs]
@@ -164,18 +203,17 @@ def test_stair_cancel_retries_from_observed_side_after_entrance_clears(state,tmp
     async def simulate_step(payload,guard):
         assert guard()
         walked.append(gs.position)
-        if gs.position==tuple(anchor):
-            gs.position=tuple(approach)
-        elif len(walked)==2:
+        assert gs.position == tuple(anchor)
+        if len(walked)==1:
             cancel_walk(gs,2,time.perf_counter())
             stairs.update(occupants=1,occupant_types={'monster':1})
             asyncio.get_running_loop().call_later(.15,stairs.update,dict(occupants=0,occupant_types={}))
         else:
-            assert not stairs['occupants'] and gs.position==tuple(approach)
+            assert not stairs['occupants'] and ctrl.last_waypoint == 0
             gs.position=tuple(landing)
     state.game_proxy.inject_to_server=simulate_step
     asyncio.run(asyncio.wait_for(ctrl.run(),2))
-    assert walked==[tuple(anchor),tuple(approach),tuple(approach)]
+    assert walked==[tuple(anchor),tuple(anchor)]
     assert ctrl.status=='complete' and ctrl.laps==1
 
 
@@ -192,14 +230,16 @@ def test_gotrunks_unknown_approach_takes_linked_stairs_and_preserves_progress(st
     draft=atlas.save_draft('WP66-67',[anchor,landing,onward],links=[dict(from_index=0,id='up')])
     state.game_state.position=tuple(anchor)
     ctrl.prepare(atlas.scope,draft,False)
-    assert ctrl.path==[anchor,approach,landing,onward]
+    assert ctrl.path==[anchor,landing,onward]
     cells[1]['kind']='unknown'
     sample=state.passive_map_monitor.snapshot()
     stairs['transitions'].append(dict(id='other',exit=[1039,1300,1],action='step'))
-    assert not ctrl.use_stairs_from_saved_waypoint(sample)
+    with pytest.raises(MovementDeferred, match='potwierdzenie'):
+        asyncio.run(ctrl.transition(ctrl.edges[0],sample))
     stairs['transitions'].pop()
     stairs['occupants']=1
-    assert not ctrl.use_stairs_from_saved_waypoint(sample)
+    with pytest.raises(MovementDeferred, match='zajęte'):
+        asyncio.run(ctrl.transition(ctrl.edges[0],sample))
     stairs['occupants']=0
     # If the player takes this exact staircase manually, recovery credits the
     # landing, even while the cursor is still before the unreadable approach.
@@ -212,7 +252,7 @@ def test_gotrunks_unknown_approach_takes_linked_stairs_and_preserves_progress(st
         asyncio.run(ctrl.recover_position({**state.passive_map_monitor.snapshot(),'stale':True}))
     assert ctrl.index==0
     assert asyncio.run(ctrl.recover_position(state.passive_map_monitor.snapshot()))
-    assert ctrl.index==2 and ctrl.last_waypoint==1 and state.game_proxy._inject_queue.empty()
+    assert ctrl.index==1 and ctrl.last_waypoint==1 and state.game_proxy._inject_queue.empty()
     state.game_state.position=tuple(anchor)
     ctrl.prepare(atlas.scope,draft,False)
     visited=[]
@@ -224,13 +264,13 @@ def test_gotrunks_unknown_approach_takes_linked_stairs_and_preserves_progress(st
             cancel_walk(state.game_state,3,time.perf_counter())
             cells[1]['kind']='clear'
             return
-        dest=onward if current==landing else approach if current==anchor and restore_preferred else landing
+        dest=onward if current==landing else landing
         state.game_state.position=tuple(dest)
     state.game_proxy.inject_to_server=step
     asyncio.run(asyncio.wait_for(ctrl.run(),2.5))
     assert ctrl.status=='complete' and ctrl.last_waypoint==2
-    assert visited==([anchor,anchor,approach,landing] if restore_preferred else [anchor,landing])
-    assert ctrl.path[-1]==onward and (approach in ctrl.path)==restore_preferred
+    assert visited==([anchor,anchor,landing] if restore_preferred else [anchor,landing])
+    assert ctrl.path==[anchor,landing,onward]
 
 
 @pytest.mark.parametrize("manual", [False, True])
@@ -249,8 +289,8 @@ def test_gotrunks_62_unreadable_waypoint_before_known_stairs(state, tmp_path, ma
     gs = state.game_state
     gs.position = tuple(start)
     ctrl.prepare(atlas.scope, draft, False)
-    assert ctrl.path == [start, waypoint, observed, landing, onward]
-    cells[1]['kind'] = 'unknown'
+    assert ctrl.path == [start, side, landing, onward]
+    cells[2]['kind'] = 'unknown'
     ctrl.status = 'running'
     if manual:
         gs.position = tuple(onward)
@@ -261,11 +301,11 @@ def test_gotrunks_62_unreadable_waypoint_before_known_stairs(state, tmp_path, ma
         assert ctrl.path[ctrl.index] == landing and ctrl.last_waypoint == 2
         assert state.game_proxy._inject_queue.empty()
         return
-    cells[2]['kind'] = 'blocked'
-    assert not ctrl.detour_to_stair_approach(ctrl.map_now())
-    cells[2]['kind'] = 'clear'
+    cells[1]['kind'] = 'blocked'
+    assert not ctrl.reroute_floor_approach(ctrl.map_now(), blocked_step=True)
+    cells[1]['kind'] = 'clear'
     stair['transitions'].append(dict(id='wrong', exit=onward, action='step'))
-    assert not ctrl.detour_to_stair_approach(ctrl.map_now())
+    assert not ctrl.reroute_floor_approach(ctrl.map_now(), blocked_step=True)
     stair['transitions'].pop()
     positions = []
     async def dispatch(payload, guard):
@@ -275,13 +315,13 @@ def test_gotrunks_62_unreadable_waypoint_before_known_stairs(state, tmp_path, ma
         requested = [x + dx, y + dy, z]
         positions.append(requested)
         if requested == stairs:
-            assert gs.position == tuple(observed) and ctrl.last_waypoint == 1
+            assert gs.position == tuple(waypoint) and ctrl.last_waypoint == 1
         gs.position = tuple(landing if requested == stairs else requested)
         ctrl.last_command = 0
     state.game_proxy.inject_to_server = dispatch
     asyncio.run(asyncio.wait_for(ctrl.run(), 2))
     assert ctrl.status == 'complete' and ctrl.last_waypoint == 3
-    assert positions == [side, observed, stairs, onward]
+    assert positions == [waypoint, stairs, onward]
 
 
 @pytest.mark.parametrize("case", ["queued_before_write", "old_origin", "ambiguous_retry",
@@ -404,17 +444,20 @@ def test_gotrunks_unreadable_link_origin_keeps_exact_entry_and_landing(
     edge = dict(id='recorded', origin=anchor, entry=entry, exit=exit_tile, action='step',
                 entry_items=[item], evidence='observed')
     ctrl, _, _ = setup(state,tmp_path,cells,[origin,anchor,exit_tile],[edge])
-    cells[1].update(kind='unknown', items=[])
+    planned = ctrl.path[1]
+    backup = side if planned == anchor else anchor
+    cells_by_pos = {(c['x'],c['y'],c['z']):c for c in cells}
+    cells_by_pos[tuple(planned)].update(occupants=1)
     sample = ctrl.map_now()
     stair['occupants'] = 1
-    assert not ctrl.replace_unreadable_link_origin(sample)
+    assert not ctrl.reroute_floor_approach(sample, blocked_step=True)
     stair['occupants'] = 0
     stair['transitions'].append(dict(id='wrong', action='step', exit=origin))
-    assert not ctrl.replace_unreadable_link_origin(sample)
+    assert not ctrl.reroute_floor_approach(sample, blocked_step=True)
     stair['transitions'].pop()
-    cells[2]['kind'] = 'blocked'
-    assert not ctrl.replace_unreadable_link_origin(sample)
-    cells[2]['kind'] = 'clear'
+    cells_by_pos[tuple(backup)]['kind'] = 'blocked'
+    assert not ctrl.reroute_floor_approach(sample, blocked_step=True)
+    cells_by_pos[tuple(backup)]['kind'] = 'clear'
     visited = []
     async def dispatch(payload, guard):
         assert guard()
@@ -427,5 +470,5 @@ def test_gotrunks_unreadable_link_origin_keeps_exact_entry_and_landing(
         ctrl.last_command = 0
     state.game_proxy.inject_to_server = dispatch
     asyncio.run(asyncio.wait_for(ctrl.run(), 2))
-    assert visited == [side,entry]
+    assert visited == [backup,entry]
     assert ctrl.status == 'complete' and ctrl.last_waypoint == 2

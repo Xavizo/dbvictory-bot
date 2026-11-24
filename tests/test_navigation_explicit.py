@@ -92,7 +92,7 @@ def test_recorded_hole_from_another_side_and_saved_links_survive_new_approach(tm
 
 
 @pytest.mark.parametrize('reachable',[True,False])
-def test_stairs_use_the_observed_side_within_the_original_leg(tmp_path,reachable):
+def test_stairs_enter_from_current_side_even_if_recorded_side_is_blocked(tmp_path,reachable):
     anchor,entry,approach,landing=[1039,1300,4],[1038,1300,4],[1038,1299,4],[1037,1300,3]
     onward=[1036,1300,3]
     cells=[cell(*p) for p in (anchor,landing,onward)]
@@ -103,15 +103,45 @@ def test_stairs_use_the_observed_side_within_the_original_leg(tmp_path,reachable
     row=dict(id='up',origin=approach,entry=entry,exit=landing,action='step',entry_items=[5259],evidence='observed')
     points=[anchor,landing,onward]
     plan=atlas.plan(points,[row],links=[dict(from_index=0,id='up')])
-    if reachable:
-        assert plan['complete'] and plan['points']==points
-        assert plan['path']==[anchor,approach,landing,onward]
-        assert [(leg['start'],leg['end']) for leg in plan['legs']]==[(0,2),(2,3)]
-        action,=plan['transitions']
-        assert (action['origin'],action['entry'],action['exit'])==(approach,entry,landing)
-    else:
-        assert not plan['complete'] and not plan['transitions']
-        assert plan['gaps'][0]['to']==landing and '(1038, 1299, 4)' in plan['gaps'][0]['reason']
+    assert plan['complete'] and plan['points']==points
+    assert plan['path']==[anchor,landing,onward]
+    assert [(leg['start'],leg['end']) for leg in plan['legs']]==[(0,1),(1,2)]
+    action,=plan['transitions']
+    assert (action['origin'],action['entry'],action['exit'])==(anchor,entry,landing)
+
+
+@pytest.mark.parametrize('kind,dz', [('stairs', -1), ('passage', 1), ('hole', 1), ('descent', 1)])
+def test_each_adjacent_side_enters_immediately(tmp_path, kind, dz):
+    entry, recorded, landing = [20,20,7], [20,19,7], [21,20,7+dz]
+    sides = [[20+dx,20+dy,7] for dx in (-1,0,1) for dy in (-1,0,1) if dx or dy]
+    atlas = MapAtlas(tmp_path, 'b'*64)
+    atlas.observe(dict(status='ready', cells=[cell(*p) for p in [*sides,landing]] +
+                       [cell(*entry,kind='blocked',item=413,navigation=[dict(kind=kind)])]))
+    edge = dict(id='floor', origin=recorded, entry=entry, exit=landing, action='step',
+                entry_items=[413], evidence='observed')
+    for side in sides:
+        plan = atlas.plan([side,landing],[edge],links=[dict(from_index=0,id='floor')])
+        assert plan['complete'] and plan['path'] == [side,landing]
+        assert plan['transitions'][0]['entry'] == entry
+
+
+def test_stair_prefers_recorded_side_only_on_equal_cost(tmp_path):
+    start, join, entry, landing = [14,10,7], [11,9,7], [10,10,7], [9,10,6]
+    recorded, other = [11,11,7], [11,9,7]
+    atlas = MapAtlas(tmp_path, 'b'*64)
+    atlas.observe(dict(status='ready', cells=[cell(*p) for p in
+                       (start,[13,10,7],[12,10,7],recorded,other,landing)] +
+                       [cell(*entry,kind='blocked',item=5259,navigation=[dict(kind='stairs')])]))
+    edge = dict(id='up',origin=recorded,entry=entry,exit=landing,action='step',entry_items=[5259],evidence='observed')
+    def route():
+        return atlas.plan([start,join,landing],[edge],links=[dict(from_index=1,id='up')])
+    assert route()['path'][-2] == recorded
+    atlas.observe(dict(status='ready',cells=[cell(11,10,7)]))
+    plan = route()
+    assert plan['path'][-2] == [11,10,7] and plan['points'][1] == join
+    assert plan['legs'][0]['end'] == plan['legs'][1]['start']
+    atlas.observe(dict(status='ready',cells=[cell(11,10,7,kind='blocked'),cell(*recorded,kind='blocked')]))
+    assert route()['path'][-2] == other
 
 
 def test_specific_use_from_recorded_approach_is_not_lost_when_latest_origin_changes(tmp_path):

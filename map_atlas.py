@@ -18,7 +18,7 @@ import uuid
 from transition_learning import position,gate_entry_record,ordinary_door_variants,ordinary_door_item
 from cavebot_combat import validate_combat
 from navigation_tools import WEB_ITEM_IDS, cuttable_web, has_cut_web, tool_kind, web_edge
-from map_navigation import movable_container_cover
+from map_navigation import is_step_floor_tile, movable_container_cover
 from recorded_rope import recorded_rope_edges
 from world_minimap import tile_color, save_colors
 
@@ -727,20 +727,28 @@ class MapAtlas:
         # approach. Preserve saved links after learning a different approach.
         bound=list(observations)
         bound_approaches=set()
-        stair_origins={}
+        step_exits = {}
+        if links:
+            for row in observations:
+                if row.get('evidence') == 'observed' and row.get('action') == 'step' and row.get('entry'):
+                    step_exits.setdefault(tuple(row['entry']), set()).add(tuple(row['exit']))
+        floor_links = {}
         for link in links:
             a,b=points[link['from_index']:link['from_index']+2]
             for source in observations:
                 if source.get('id')!=link['id'] or source.get('exit')!=b:continue
+                entry = source.get('entry')
+                if (source.get('action') == 'step' and source.get('evidence') == 'observed' and entry
+                        and a[2] == entry[2] and abs(a[2] - b[2]) == 1
+                        and max(abs(a[n] - entry[n]) for n in (0, 1)) == 1
+                        and is_step_floor_tile(tiles.get(tuple(entry), {}))):
+                    if step_exits.get(tuple(entry)) == {tuple(b)}:
+                        floor_links.setdefault(link['from_index'], []).append(source)
+                    # A directional entrance with conflicting exits keeps its exact recorded side.
+                    continue
                 row=transition_from_origin(source,a,observations)
                 key=(link['id'],tuple(a),tuple(b))
                 if row is not None and row['origin']!=source['origin'] and key not in bound_approaches:
-                    if source['action']=='step' and a[2]!=b[2] and any(
-                        feature.get('kind')=='stairs' for feature in tiles.get(tuple(source['entry']),{}).get('navigation',())
-                    ):
-                        # A stair landing can depend on the direction of the final step.
-                        stair_origins.setdefault(link['from_index'],set()).add(tuple(source['origin']))
-                        continue
                     bound.append(row)
                     bound_approaches.add(key)
         edges=navigation_edges(tiles,bound)
@@ -757,11 +765,23 @@ class MapAtlas:
                 return tile['kind']
             web = cuttable_web(tile)
             return web['id'] if web else None
+        # Only verified physical entrances can replace an authored approach. Keep
+        # the waypoint number attached to the side actually reached on this leg.
+        crossings = {}
+        for index, sources in floor_links.items():
+            valid = [edge for source in sources for dest, edge in edges.get(tuple(source['origin']), ())
+                     if edge.get('id') == selected[index] and edge['entry'] == source['entry']
+                     and dest == tuple(points[index + 1]) and edge['action'] == 'step']
+            if valid and len({tuple(edge['entry']) for edge in valid}) == 1:
+                edge = next((r for r in valid if r['origin'] == points[index]), valid[0])
+                x, y, z = edge['entry']
+                sides = {(x+dx, y+dy, z) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy}
+                crossings[index] = (edge, sides)
         path=[list(points[0])];actions=[];gaps=[];legs=[];expanded=0
         pairs=list(zip(points,points[1:]))
         for index,(a,b) in enumerate(pairs):
             closing=index==len(points)-1
-            a,b=tuple(a),tuple(b)
+            a,b=tuple(path[-1]),tuple(b)
             entered_gate=index>0 and any(tuple(t['exit'])==a and tuple(t['entry'])==a and t['action']=='use' for t in actions)
             open_door=tiles.get(a,{}).get('kind')=='clear' and any(f.get('door_state_hint')=='open' for f in tiles.get(a,{}).get('navigation',[]))
             if a not in tiles or (not terrain(a) and a not in edges and not entered_gate and not open_door):
@@ -769,9 +789,16 @@ class MapAtlas:
                 break
             walk_goal=b
             transition=None
-            if index in selected:
-                origins={a} | stair_origins.get(index,set())
-                choices=[r for origin in origins for dest,r in edges.get(origin,[])
+            goals={b}
+            preferred=b
+            if index in crossings:
+                edge, sides = crossings[index]
+                preferred = tuple(edge['origin'])
+                goals = {p for p in sides if p == a or terrain(p) == 'clear'}
+                walk_goal = preferred
+                transition = {**edge, 'recorded_origin': edge['origin']}
+            elif index in selected:
+                choices=[r for dest,r in edges.get(a,[])
                          if dest==b and (r.get('id')==selected[index] or selected[index] in r.get('link_aliases',()))]
                 exact=[r for r in choices if tuple(r['origin'])==a]
                 choices=exact or choices
@@ -779,16 +806,24 @@ class MapAtlas:
                     gaps.append({'segment':index,'from':list(a),'to':list(b),'reason':'Wybrane przejście nie pasuje do aktualnych danych; wybierz je ponownie.'});break
                 transition={**choices[0], 'id':selected[index]}
                 walk_goal=tuple(transition['origin'])
+                goals={walk_goal}
             elif a[2]!=b[2]:
                 gaps.append({'segment':index,'from':list(a),'to':list(b),'reason':'Dodaj jawne przejście między piętrami z menu mapy.'});break
-            found=a==walk_goal
-            queue=[] if found else [(0,a)]
+            elif index + 1 in crossings:
+                edge, sides = crossings[index + 1]
+                preferred = tuple(edge['origin'])
+                goals = {p for p in sides if p == a or terrain(p) == 'clear'}
+            found=a in goals
+            if found:
+                walk_goal=a
+            queue=[] if found or not goals else [(0, False, a)]
             cost={a:0};parent={}
             while queue and expanded<MAX_EXPANSIONS:
-                distance,p=heapq.heappop(queue)
+                distance,_,p=heapq.heappop(queue)
                 if distance!=cost[p]:continue
                 expanded+=1
-                if p==walk_goal:found=True;break
+                if p in goals:
+                    walk_goal=p;found=True;break
                 neighbors=[]
                 for dx,dy in ((1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)):
                     q=(p[0]+dx,p[1]+dy,p[2])
@@ -811,11 +846,11 @@ class MapAtlas:
                 for q,step,row in neighbors:
                     new=distance+step
                     if new<cost.get(q,float("inf")):
-                        cost[q]=new;parent[q]=(p,row);heapq.heappush(queue,(new,q))
+                        cost[q]=new;parent[q]=(p,row);heapq.heappush(queue,(new,q != preferred,q))
             if not found:
                 target=tiles.get(walk_goal)
                 reason=('Osiągnięto limit wyszukiwania drogi.' if expanded>=MAX_EXPANSIONS else
-                        f'Brak dojścia do potwierdzonej strony schodów {walk_goal}.' if transition else
+                        'Brak dojścia do wolnego pola obok wybranego przejścia.' if index in crossings or index + 1 in crossings else
                         'Pole docelowe nie zostało zapisane w atlasie.' if target is None else
                         'Pole docelowe jest przejściem; brakuje przypisanego wejścia i wyjścia.' if any(f.get('kind') != 'web' for f in target.get('navigation', ())) and not terrain(b) else
                         'Pole docelowe jest zapisane jako zablokowane.' if not terrain(b) else
@@ -831,8 +866,13 @@ class MapAtlas:
             leg_actions=list(reversed(used))
             if transition:
                 path.append(list(b))
-                leg_actions.append(transition)
-            actions.extend({k:row.get(k) for k in ("origin","entry","exit","action","item_id","tool_id","prepared_item_id","tool_ids","entry_items","id","open_item_id","door_closed_ids")} for row in leg_actions)
+                leg_actions.append({**transition, 'origin':list(walk_goal)})
+            for row in leg_actions:
+                action = {k:row.get(k) for k in ("origin","entry","exit","action","item_id","tool_id",
+                          "prepared_item_id","tool_ids","entry_items","id","open_item_id","door_closed_ids")}
+                if 'recorded_origin' in row:
+                    action['recorded_origin'] = row['recorded_origin']
+                actions.append(action)
             legs.append({"from_index":index,"to_index":0 if closing else index+1,"start":start,"end":len(path)-1,**({'closing':True} if closing else {})})
             if closing:loop_closed=True
         return_start=len(path)-1;return_mode='closed' if loop_closed else None;return_error=None
