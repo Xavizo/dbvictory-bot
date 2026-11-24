@@ -4,6 +4,7 @@ Auto-injects the DLL if needed, then polls creature data every 100ms
 and updates game_state.creatures with authoritative memory-read data.
 """
 import sys
+import asyncio
 import os
 import glob
 import json
@@ -287,18 +288,16 @@ async def run(bot):
     dump_creature_sent = set()  # creature IDs we've already dumped (one-shot diagnostic)
     dump_creature_pending = False  # waiting for dump_creature response
 
+    vitals_task = None
     try:
+        if player_reader is not None:
+            from client_player_state import poll_bound_vitals
+            vitals_task = asyncio.create_task(poll_bound_vitals(bot, state, gs, player_reader, POLL_INTERVAL))
         while bot.is_connected and state.game_state is gs:
-            if player_reader is not None:
-                try:
-                    gs.client_snapshot = player_reader.snapshot()
-                    gs.client_state_error = None
-                    history = getattr(gs, "movement_history", None)
-                    if history:
-                        history.player_position(gs.client_snapshot["position"])
-                except Exception as exc:
-                    # Existing samples expire after 500 ms; packet cache cannot override them.
-                    gs.client_state_error = type(exc).__name__
+            if player_reader is not None and gs.client_snapshot and not gs.client_state_error:
+                history = getattr(gs, "movement_history", None)
+                if history:
+                    history.player_position(gs.client_snapshot["position"])
             creatures = bridge.read_creatures()
             if bridge.read_only:
                 bridge.refresh_target_marker(active=_marker_active(state,gs,marker_proxy))
@@ -637,7 +636,15 @@ async def run(bot):
                     del gs.creatures[cid]
 
             await bot.sleep(POLL_INTERVAL)
+    except Exception:
+        if vitals_task is None:
+            raise
+        log.exception("Creature diagnostics stopped; continuing the bound vitals sampler")
+        await vitals_task
     finally:
+        if vitals_task is not None:
+            vitals_task.cancel()
+            await asyncio.gather(vitals_task, return_exceptions=True)
         if marker_callback is not None and getattr(marker_proxy,'client_target_marker',None) is marker_callback:marker_proxy.client_target_marker=None
         if player_source is not None:
             player_source.close()

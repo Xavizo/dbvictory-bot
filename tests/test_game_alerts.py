@@ -184,3 +184,66 @@ def test_settings_persist_only_alert_preferences_and_history_stays_in_memory(mon
     monkeypatch.setattr(server,'save_settings',lambda value:(_ for _ in ()).throw(OSError('synthetic disk error')))
     with pytest.raises(OSError):asyncio.run(server._async_alerts('configure',{'config':default_config()}))
     assert state.alert_center.snapshot()==previous
+
+
+def test_vitals_outage_during_hunt_warns_once_before_disconnect_and_rearms(monkeypatch):
+    from client_player_state import FRESH_SECONDS
+    from potions import PotionScheduler
+    from test_potions import config, rule
+
+    center, state, _ = setup()
+    clock = [100.]
+    center.monotonic = lambda:clock[0]
+    monkeypatch.setattr('time.monotonic', center.monotonic)
+    gs = state.game_state
+    gs.client_state_required = True
+    scheduler = PotionScheduler()
+    cfg = config(rules=[rule('hp',8465)])
+    def sample(hp):
+        gs.client_snapshot = dict(hp=hp, max_hp=100, mana=64, max_mana=100,
+                                  monotonic=clock[0], stats_updated_at=100.,position=(100,100,7))
+    sample(100)
+    center.observe_players(state)
+    clock[0] += FRESH_SECONDS + .01
+    center.observe_players(state)
+    assert not center.events and gs.max_hp == 0
+    for elapsed in (1.5, 3.923, 9.916, 40.732):
+        clock[0] = 100 + elapsed
+        center.observe_players(state)
+        assert scheduler.next_rule(cfg, gs, clock[0],100) is None
+        assert center.snapshot()['vitals_alarm_id'] == 1
+    assert len(center.events) == 1 and '100/100' in center.events[0]['text']
+    state.connected = False
+    center.observe_players(state)
+    assert center.snapshot()['vitals_alarm_id'] is None
+    state.connected = True
+    sample(40)
+    center.observe_players(state)
+    assert scheduler.next_rule(cfg,gs,clock[0],100)['id'] == 'hp'
+    clock[0] += 2
+    center.observe_players(state)
+    assert center.snapshot()['vitals_alarm_id'] == 2
+
+
+def test_vitals_alarm_only_after_valid_data_with_active_automation():
+    center,state,_ = setup()
+    center.monotonic = lambda:100.
+    gs = state.game_state
+    gs.client_state_required = True
+    center.observe_players(state)
+    assert not center.events
+    state.adaptive_cavebot.status = 'stopped'
+    gs.client_snapshot = dict(hp=80,max_hp=100,monotonic=100.,stats_updated_at=100.,position=(100,100,7))
+    center.observe_players(state)
+    center.monotonic = lambda:102.
+    center.observe_players(state)
+    assert not center.events
+    state._action_tasks['auto_potions'] = NS(done=lambda:False)
+    center.monotonic = lambda:100.
+    center.observe_players(state)
+    center.monotonic = lambda:102.
+    center.observe_players(state)
+    assert len(center.events) == 1
+    state.automation_paused = True
+    center.observe_players(state)
+    assert center.snapshot()['vitals_alarm_id'] is None

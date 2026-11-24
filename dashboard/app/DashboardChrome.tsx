@@ -67,6 +67,9 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
       <span className={`automation-pill ${paused ? "paused" : running.length ? "active" : ""}`}>{paused ? "PAUZA" : `Aktywne: ${running.length}`}</span>
       <button className="emergency-button" disabled={busy || !state} onClick={onStop} title="Awaryjny STOP. Pause/Break: pauza i wznowienie poprzednich akcji."><span aria-hidden="true">■</span> STOP <small>wszystkie akcje</small></button>
     </header>
+    {state?.alerts?.vitals_alarm_id != null && <div role="alert" className="error-banner">
+      Brak aktualnego HP postaci. Automatyczne leczenie czeka na odczyt.
+    </div>}
     {state?.pause_hotkey?.error&&<div role="alert" className="error-banner">Pause/Break: {state.pause_hotkey.error}</div>}
     <div className="player-ribbon">
       <div className="level-display"><span>LVL</span><strong>{connected && healthFresh && player ? player.level : "—"}</strong></div>

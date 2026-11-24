@@ -34,6 +34,9 @@ def play(kind):
     except Exception:
         # An unavailable window or Windows desktop must not suppress the sound.
         pass
+    if kind == "vitals":
+        winsound.PlaySound("SystemHand", winsound.SND_ALIAS)
+        return
     sound = Path(__file__).with_name("sounds") / {"message": "message.wav", "player": "player.wav"}[kind]
     winsound.PlaySound(str(sound), winsound.SND_FILENAME | winsound.SND_NODEFAULT)
 

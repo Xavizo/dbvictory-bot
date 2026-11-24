@@ -246,12 +246,14 @@ def test_changed_asset_does_not_reuse_confirmed_ids(world):
 
 def test_corrupt_definition_is_unknown_not_walkable(world):
     struct.pack_into("<H",world.mem.regions[world.definition],26,999)
-    assert center_cell(world.reader.snapshot())["kind"] == "unknown"
+    tile = center_cell(world.reader.snapshot())
+    assert tile["kind"] == "unknown" and "Definicja obiektu" in tile["reason"]
 
 
 def test_recycled_tile_is_unknown(world):
     struct.pack_into("<I",world.mem.regions[world.tile],56,101)
-    assert center_cell(world.reader.snapshot())["kind"] == "unknown"
+    tile = center_cell(world.reader.snapshot())
+    assert tile["kind"] == "unknown" and "Pole zmieniło położenie" in tile["reason"]
 
 
 def test_tree_cycle_fails_boundedly(world):

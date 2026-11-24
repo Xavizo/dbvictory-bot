@@ -387,3 +387,45 @@ def test_lost_confirmation_skips_only_first_hop_and_can_enter_same_tile(state, t
     asyncio.run(asyncio.wait_for(ctrl.run(), 1))
     assert sent == [tuple(target),(10,11,7),tuple(target)]
     assert ctrl.status == 'complete' and ctrl.laps == 1 and not ctrl.blocked
+
+
+@pytest.mark.parametrize("origin,anchor,entry,exit_tile,side,kind,item", [
+    ([1037,1299,3], [1038,1298,3], [1039,1298,3], [1039,1297,2], [1038,1299,3], 'stairs', 5258),
+    ([1039,1300,6], [1039,1299,6], [1039,1298,6], [1039,1299,7], [1038,1299,6], 'passage', 413),
+])
+def test_gotrunks_unreadable_link_origin_keeps_exact_entry_and_landing(
+        state, tmp_path, origin, anchor, entry, exit_tile, side, kind, item):
+    stair = cell(*entry, kind='blocked', item=item, navigation=[dict(kind=kind)])
+    stair['transitions'] = [dict(id='recorded', action='step', exit=exit_tile)]
+    adjacent = [entry[0]+1, entry[1], entry[2]]
+    other = cell(*adjacent, kind='blocked', item=item, navigation=[dict(kind=kind)])
+    other['transitions'] = [dict(id='other', action='step', exit=[exit_tile[0]+1,*exit_tile[1:]])]
+    cells = [cell(*p) for p in (origin,anchor,side,exit_tile)] + [stair,other]
+    edge = dict(id='recorded', origin=anchor, entry=entry, exit=exit_tile, action='step',
+                entry_items=[item], evidence='observed')
+    ctrl, _, _ = setup(state,tmp_path,cells,[origin,anchor,exit_tile],[edge])
+    cells[1].update(kind='unknown', items=[])
+    sample = ctrl.map_now()
+    stair['occupants'] = 1
+    assert not ctrl.replace_unreadable_link_origin(sample)
+    stair['occupants'] = 0
+    stair['transitions'].append(dict(id='wrong', action='step', exit=origin))
+    assert not ctrl.replace_unreadable_link_origin(sample)
+    stair['transitions'].pop()
+    cells[2]['kind'] = 'blocked'
+    assert not ctrl.replace_unreadable_link_origin(sample)
+    cells[2]['kind'] = 'clear'
+    visited = []
+    async def dispatch(payload, guard):
+        assert guard()
+        x,y,z = state.game_state.position
+        dx,dy = next(d for d, direction in OFFSETS.items() if int(WALK_OPCODES[direction]) == payload[0])
+        requested = [x+dx,y+dy,z]
+        visited.append(requested)
+        state.game_state.position = tuple(exit_tile if requested == entry else requested)
+        state.game_state.stats_updated_at = time.time()
+        ctrl.last_command = 0
+    state.game_proxy.inject_to_server = dispatch
+    asyncio.run(asyncio.wait_for(ctrl.run(), 2))
+    assert visited == [side,entry]
+    assert ctrl.status == 'complete' and ctrl.last_waypoint == 2

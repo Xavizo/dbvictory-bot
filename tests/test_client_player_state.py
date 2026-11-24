@@ -80,3 +80,67 @@ def test_verified_conditions_and_speed_are_optional_and_never_replace_health(rea
         return original(address,size)
     r.source.read=fail_conditions
     s=r.snapshot();assert 'conditions' not in s and s['hp']==36
+
+
+def test_bound_vitals_continue_through_optional_worker_wait_and_reader_error():
+    import asyncio
+    from unittest.mock import Mock
+
+    async def exercise():
+        reads = 0
+        delayed = asyncio.Event()
+        gs = GameState()
+        bot = SimpleNamespace(is_connected=True)
+        state = SimpleNamespace(game_state=gs)
+        values = [dict(hp=100,position=(1,1,7)), RuntimeError(), dict(hp=40,position=(1,1,7))]
+        reader = Mock(snapshot=Mock(side_effect=values))
+        async def tick(_):
+            nonlocal reads
+            reads += 1
+            if reads == 2:
+                assert gs.client_state_error == 'RuntimeError' and gs.client_snapshot['hp'] == 100
+            if reads == 3:
+                state.game_state = GameState()
+            await asyncio.sleep(0)
+        bot.sleep = tick
+        auxiliary = asyncio.create_task(delayed.wait())
+        try:
+            await cp.poll_bound_vitals(bot,state,gs,reader,.016)
+            assert reads == 3 and not auxiliary.done()
+            assert gs.client_snapshot['hp'] == 40 and gs.client_state_error is None
+            assert state.game_state.client_snapshot is None
+        finally:
+            auxiliary.cancel()
+            await asyncio.gather(auxiliary,return_exceptions=True)
+    asyncio.run(exercise())
+
+def test_creature_diagnostic_failure_does_not_stop_bound_vitals(monkeypatch, tmp_path):
+    import asyncio
+    import sys
+    from unittest.mock import AsyncMock, Mock
+    import actions.dll_bridge as action
+
+    gs = GameState()
+    state = SimpleNamespace(game_state=gs,game_proxy=SimpleNamespace())
+    bot = SimpleNamespace(is_connected=True,player_id=1)
+    samples = [dict(hp=90,position=(1,1,7)), dict(hp=40,position=(1,1,7))]
+    reader = Mock(snapshot=Mock(side_effect=samples))
+    bridge = Mock(read_only=True,read_creatures=Mock(side_effect=RuntimeError('auxiliary stream lost')))
+    source = Mock()
+    monkeypatch.setattr(sys.modules['__main__'],'state',state,raising=False)
+    monkeypatch.setattr(action,'DEBUG_LOG',str(tmp_path/'diagnostic.log'))
+    monkeypatch.setattr(action,'_make_bridge',lambda:bridge)
+    monkeypatch.setattr(action,'_connect_with_inject',AsyncMock(return_value=True))
+    monkeypatch.setattr('passive_map_win32.ReadOnlyClient',lambda:source)
+    monkeypatch.setattr(cp,'ClientPlayerReader',lambda *_:reader)
+    monkeypatch.setattr(cp,'bind_local_player',AsyncMock(return_value=True))
+    async def tick(_):
+        if reader.snapshot.call_count == 2:
+            bot.is_connected = False
+        await asyncio.sleep(0)
+    bot.sleep = tick
+    asyncio.run(asyncio.wait_for(action.run(bot),1))
+    assert reader.snapshot.call_count == 2 and gs.client_snapshot['hp'] == 40
+    assert state.game_proxy.client_target_marker is None
+    source.close.assert_called_once()
+    bridge.disconnect.assert_called_once()

@@ -3,7 +3,7 @@
 import {useEffect, useRef, useState} from "react";
 import {acknowledgeAlerts, configureAlerts, setAlertsPaused, type AlertConfig, type AlertKind, type AlertState} from "@/lib/api";
 
-const labels:Record<AlertKind,string>={private:"Wiadomość prywatna",default:"Czat Default",player:"Pojawienie się gracza"};
+const labels:Record<AlertKind|"vitals",string>={vitals:"Utrata odczytu HP",private:"Wiadomość prywatna",default:"Czat Default",player:"Pojawienie się gracza"};
 const kinds:AlertKind[]=["private","default","player"];
 type AlertEvent = AlertState["events"][number];
 

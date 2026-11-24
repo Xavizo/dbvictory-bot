@@ -127,3 +127,17 @@ test('an unread preview stays dismissible even after four seconds; a read alert 
  assert.doesNotMatch(render(5,0),/class="alert-peek"/);
  assert.match(after,/class="alert-count">1</);
 });
+
+test('vitals loss sounds on first poll, repeats while active and stops on recovery or mute',()=>{
+  let time=100000;
+  const sounds=[], consumer=createSoundConsumer(kind=>sounds.push(kind),()=>time);
+  const alarm=snapshot([event(4,{kind:'vitals'})],{vitals_alarm_id:4});
+  consumer.consume(alarm);
+  time+=1500;consumer.consume(alarm);
+  time+=500;consumer.consume(alarm);
+  time+=3000;consumer.consume({...alarm,paused:true});
+  consumer.consume({...alarm,vitals_alarm_id:null});
+  assert.deepEqual(sounds,['vitals','vitals']);
+  consumer.consume({...alarm,vitals_alarm_id:6});
+  assert.deepEqual(sounds,['vitals','vitals','vitals']);
+});

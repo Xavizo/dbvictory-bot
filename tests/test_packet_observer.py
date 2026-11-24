@@ -426,3 +426,51 @@ def test_byte_limit_and_malformed_frames_invalidate_only_observation():
             assert obs.offered == obs.applied + obs.dropped == 3
         finally:await obs.close()
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('wire,error,stage,reason', [
+    (b'',None,'header','eof'),(b'x',None,'header','truncated'),
+    (bytes([4,0,42]),None,'body','truncated'),(bytes(2),None,'header','empty_frame'),
+    (b'',TimeoutError(10060,'timeout'),'header','TimeoutError'),
+    (b'',ConnectionResetError(10054,'reset'),'header','ConnectionResetError')])
+def test_stream_end_records_side_stage_and_freshness_without_payload(wire,error,stage,reason,caplog):
+    async def run():
+        p=OTProxy.__new__(OTProxy)
+        reader=p.server_reader=asyncio.StreamReader()
+        p.last_server_read=time.monotonic()-2
+        p.last_client_forward=time.monotonic()-1
+        if error:
+            reader.set_exception(error)
+        else:
+            reader.feed_data(wire)
+            reader.feed_eof()
+        assert await p._read_packet(reader) is None
+    with caplog.at_level('INFO'):
+        asyncio.run(run())
+    assert f'side=server stage={stage} reason={reason}' in caplog.text
+    assert 'last_server_read_ms=2' in caplog.text and 'last_client_forward_ms=1' in caplog.text
+    if error:
+        assert f'errno={error.errno}' in caplog.text
+
+def test_failure_forwarding_to_client_is_observed_and_other_workers_stop(caplog):
+    async def run():
+        p = OTProxy.__new__(OTProxy)
+        reader = p.server_reader = asyncio.StreamReader()
+        reader.feed_data(bytes([1,0,42]))
+        p.logged_in = True
+        p.packets_from_server = 0
+        p.last_server_read = p.last_client_forward = None
+        p.client_writer = Mock(drain=AsyncMock(side_effect=ConnectionResetError(10054,'reset')))
+        completed = []
+        async def wait():
+            try:
+                await asyncio.Future()
+            finally:
+                completed.append(True)
+        p._relay_client_to_server = p._process_inject_queue = wait
+        await asyncio.wait_for(p._run_relay_loop(),1)
+        assert completed == [True,True]
+        assert p.last_server_read is not None and p.last_client_forward is None
+    with caplog.at_level('INFO'):
+        asyncio.run(run())
+    assert 'side=towards_client stage=relay reason=ConnectionResetError errno=10054' in caplog.text

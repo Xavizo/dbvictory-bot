@@ -244,8 +244,10 @@ class MapReader:
                         cell = self._tile(ptr, (xx, yy, z), types, count, cache)
                     else:
                         cell["reason"] = "Pole nie jest załadowane przez klienta."
-                except (MapReadError, struct.error):
-                    cell["reason"] = "Odczyt pola niepełny; czekam na kolejną próbkę."
+                except MapReadError as exc:
+                    cell["reason"] = f"Odczyt pola niepełny. {exc}"
+                except struct.error:
+                    cell["reason"] = "Odczyt pola niepełny. Brak kompletnych danych pola."
                 cells.append(cell)
         if self.read(self.base + self.profile.map_center, 12) != struct.pack("<III", *center):
             raise MapChanged("Pozycja zmieniła się podczas odczytu; czekam na następną próbkę.")

@@ -238,7 +238,8 @@ export interface AlertState {
   paused?:boolean;silenced_through?:number;
   session:string;config:AlertConfig;latest_id:number;unread:number;cavebot_active:boolean;map_fresh:boolean;
   chat_received:number;last_chat_at:number|null;
-  events:{id:number;kind:AlertKind;at:number;sender:string;text:string;sound:boolean;position?:number[]}[];
+  vitals_alarm_id?:number|null;
+  events:{id:number;kind:AlertKind|"vitals";at:number;sender:string;text:string;sound:boolean;position?:number[]}[];
 }
 export const configureAlerts=(config:AlertConfig)=>control("/api/alerts",{command:"configure",config});
 export const acknowledgeAlerts=(through:number)=>control("/api/alerts",{command:"acknowledge",through});

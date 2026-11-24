@@ -74,6 +74,7 @@ class OTProxy:
         self.injections_paused = False
 
         # Stats
+        self.last_server_read = self.last_client_forward = None
         self.packets_from_server = 0
         self.packets_from_client = 0
 
@@ -161,6 +162,7 @@ class OTProxy:
                 self.client_reader=reader;self.client_writer=writer
                 self.server_reader=None;self.server_writer=None
                 self.logged_in=False;self.xtea_keys=None
+                self.last_server_read = self.last_client_forward = None
                 self._ts_client_connected=time.time()
             self.server_reader,self.server_writer=await asyncio.open_connection(self.server_host,self.server_port)
             self._ts_server_connected=time.time()
@@ -317,17 +319,32 @@ class OTProxy:
             log.debug("Login response modification traceback:", exc_info=True)
             return None
 
+    def _log_stream_end(self, side, stage, reason, exc=None):
+        now = time.monotonic()
+        def age(stamp):
+            return round((now-stamp)*1000) if stamp is not None else None
+        log.info("Stream ended: side=%s stage=%s reason=%s errno=%s winerror=%s "
+                 "last_server_read_ms=%s last_client_forward_ms=%s", side, stage, reason,
+                 getattr(exc, 'errno', None), getattr(exc, 'winerror', None),
+                 age(getattr(self, 'last_server_read', None)), age(getattr(self, 'last_client_forward', None)))
+
     async def _read_packet(self, reader: asyncio.StreamReader) -> bytes | None:
-        """Read a full OT protocol packet (length-prefixed)."""
+        """Read one complete frame. Record only reason and timing on stream loss."""
+        side = 'server' if reader is self.server_reader else 'client'
+        stage = 'header'
         try:
             header = await reader.readexactly(2)
             length = struct.unpack('<H', header)[0]
-            if length == 0 or length > 65535:
+            if length == 0:
+                self._log_stream_end(side, stage, 'empty_frame')
                 return None
-            data = await reader.readexactly(length)
-            return data
-        except (asyncio.IncompleteReadError, ConnectionError):
-            return None
+            stage = 'body'
+            return await reader.readexactly(length)
+        except asyncio.IncompleteReadError as exc:
+            self._log_stream_end(side, stage, 'eof' if stage == 'header' and not exc.partial else 'truncated')
+        except OSError as exc:
+            self._log_stream_end(side, stage, type(exc).__name__, exc)
+        return None
 
     def _wrap_packet(self, data: bytes) -> bytes:
         """Wrap data with length header."""
@@ -353,7 +370,11 @@ class OTProxy:
                         pass
                 raise
 
-            # Normal end: client or server disconnected
+            for task in done:
+                if not task.cancelled() and (error := task.exception()) is not None:
+                    direction = ('towards_client' if task is server_task else
+                                 'towards_server' if task is client_task else 'command_worker')
+                    self._log_stream_end(direction, 'relay', type(error).__name__, error)
             for t in pending:
                 t.cancel()
             for t in pending:
@@ -399,6 +420,7 @@ class OTProxy:
                 log.info("Server disconnected")
                 break
 
+            self.last_server_read = time.monotonic()
             self.packets_from_server += 1
 
             if not self.logged_in and self.xtea_keys is not None:
@@ -416,6 +438,7 @@ class OTProxy:
                 break
             self.client_writer.write(self._wrap_packet(raw))
             await self.client_writer.drain()
+            self.last_client_forward = time.monotonic()
 
             # The MCP observer owns bounded asynchronous analysis. Never decrypt
             # a large server frame on the socket-forwarding path in this mode.

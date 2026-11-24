@@ -1,9 +1,11 @@
 """Passive, bounded in-memory alerts. Never sends game commands or logs chat."""
 import asyncio
 import copy
+import logging
 import threading
 import time
 import uuid
+from client_player_state import FRESH_SECONDS
 import json
 from pathlib import Path
 from collections import deque
@@ -45,7 +47,10 @@ def cavebot_running(state):
 
 
 class AlertCenter:
-    def __init__(self, config=None, clock=time.time, spells=None):
+    def __init__(self, config=None, clock=time.time, spells=None, monotonic=time.monotonic):
+        self.monotonic = monotonic
+        self.last_vitals = None
+        self.vitals_alarm_id = None
         self.clock = clock
         self.lock = threading.RLock()
         try:
@@ -80,6 +85,7 @@ class AlertCenter:
         with self.lock:
             return {'session': self.session, 'config': copy.deepcopy(self.config),
                     'events': copy.deepcopy(list(self.events)), 'latest_id': self.latest_id,
+                    'vitals_alarm_id': self.vitals_alarm_id,
                     'unread': sum(e['id'] > self.read_id for e in self.events),
                     'cavebot_active': self.active, 'map_fresh': self.map_fresh,
                     'chat_received': self.chat_received, 'last_chat_at': self.last_chat_at}
@@ -92,6 +98,10 @@ class AlertCenter:
         sound = row['sound'] and now - self.last_sound >= 3
         if sound:
             self.last_sound = now
+        self._append(kind, sender, text, sound, **details)
+
+    def _append(self, kind, sender, text, sound, **details):
+        now = self.clock()
         self.latest_id += 1
         self.events.append({'id': self.latest_id, 'kind': kind, 'at': now,
                             'sender': sender[:64], 'text': text[:512], 'sound': sound, **details})
@@ -103,6 +113,7 @@ class AlertCenter:
         connected = bool(online and gs.stats_updated_at and self.clock() - gs.stats_updated_at < 2)
         identity = (id(gs), gs.player_id, id(getattr(state, 'game_proxy', None))) if online else None
         if identity != self.identity:
+            self.last_vitals = self.vitals_alarm_id = None
             self.players.clear()
             self.known_players.clear()
             self.seen_messages.clear()
@@ -139,9 +150,35 @@ class AlertCenter:
             self.seen_messages[key] = now
             self._emit(kind, name, message['text'], self.active)
 
+    def _watch_vitals(self, state):
+        gs = state.game_state
+        potion_task = getattr(state, '_action_tasks', {}).get('auto_potions')
+        potions = potion_task is not None and not potion_task.done()
+        if (self.identity is None or getattr(state, 'automation_paused', False)
+                or not getattr(gs, 'client_state_required', False)
+                or not (potions or cavebot_running(state))):
+            self.last_vitals = self.vitals_alarm_id = None
+            return
+        now = self.monotonic()
+        sample = gs.client_snapshot or {}
+        if (0 <= now - sample.get('monotonic', float('-inf')) <= FRESH_SECONDS
+                and sample.get('max_hp', 0) > 0 and 0 <= sample.get('hp', -1) <= sample['max_hp']):
+            self.last_vitals = (sample['monotonic'], sample['hp'], sample['max_hp']) if sample['hp'] else None
+            self.vitals_alarm_id = None
+        elif self.last_vitals and self.vitals_alarm_id is None and now - self.last_vitals[0] >= 1.5:
+            stamp, hp, maximum = self.last_vitals
+            text = f'Ostatni odczyt: {hp}/{maximum} HP. Automatyczne leczenie czeka na aktualne HP.'
+            self._append('vitals', 'Brak aktualnego HP', text, True)
+            self.vitals_alarm_id = self.latest_id
+            logging.getLogger(__name__).warning('Vitals unavailable: age_ms=%d last_hp=%s/%s source_error=%s',
+                                                round((now-stamp)*1000), hp, maximum,
+                                                getattr(gs, 'client_state_error', None))
+
     def observe_players(self, state):
         with self.lock:
-            if not self._context(state):
+            connected = self._context(state)
+            self._watch_vitals(state)
+            if not connected:
                 self.map_fresh = False
                 return
             monitor = getattr(state, 'passive_map_monitor', None)

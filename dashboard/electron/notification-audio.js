@@ -9,7 +9,7 @@ function createNotificationAudio({fallback, run=execFile, platform=process.platf
       if (platform !== 'win32') { fallback(); return true; }
       const python = path.resolve(directory, '../../venv/Scripts/pythonw.exe');
       const helper = path.join(directory, 'windows_alert.py');
-      child = run(python, ['-I', '-B', helper, kind === 'message' ? 'message' : 'player'],
+      child = run(python, ['-I', '-B', helper, ['message', 'vitals'].includes(kind) ? kind : 'player'],
         {windowsHide: true, timeout: 4000}, error => {
           child = null;
           if (error && !stopped) fallback();

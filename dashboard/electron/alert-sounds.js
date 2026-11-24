@@ -11,14 +11,21 @@ function visiblePlayers(data, now) {
 
 function createSoundConsumer(playSound, now=Date.now) {
   let session=null,cursor=0,lastPlayer=-Infinity,lastMessage=-Infinity,lastTest=-Infinity,queue=[];
+  let alarmId=null, lastAlarm=-Infinity;
   const allowed=(state,kind)=>{const cfg=state.config?.[kind];return cfg?.enabled===true&&cfg.sound===true&&
     (cfg.scope==='always'||(cfg.scope==='cavebot'&&state.cavebot_active===true));};
   return {
     consume(state, players=[]) {
       if(!state||typeof state.session!=='string'||!Number.isSafeInteger(state.latest_id)||!Array.isArray(state.events))return;
-      if(state.session!==session){session=state.session;cursor=state.latest_id;queue=[];lastPlayer=-Infinity;}
+      if(state.session!==session){session=state.session;alarmId=null;cursor=state.latest_id;queue=[];lastPlayer=-Infinity;}
       if(state.paused){
         cursor=state.latest_id;queue=[];lastPlayer=-Infinity;
+        return;
+      }
+      const activeAlarm=state.vitals_alarm_id??null;
+      if(activeAlarm!==alarmId){alarmId=activeAlarm;lastAlarm=-Infinity;}
+      if(alarmId!==null && now()-lastAlarm>=2000 && playSound('vitals')!==false){
+        lastAlarm=now();
         return;
       }
       const silencedThrough=state.silenced_through??0;

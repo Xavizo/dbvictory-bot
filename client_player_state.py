@@ -121,6 +121,19 @@ class ClientPlayerReader:
             raise
 
 
+async def poll_bound_vitals(bot, state, gs, reader, interval):
+    """Keep the existing vitals source on its own schedule during diagnostic waits."""
+    while bot.is_connected and state.game_state is gs:
+        try:
+            sample = reader.snapshot()
+        except Exception as exc:
+            gs.client_state_error = type(exc).__name__
+        else:
+            gs.client_snapshot = sample
+            gs.client_state_error = None
+        await bot.sleep(interval)
+
+
 async def bind_local_player(bot, state, gs, reader):
     """Bind one verified LocalPlayer for this login, never an old packet ID."""
     gs.client_state_required = True

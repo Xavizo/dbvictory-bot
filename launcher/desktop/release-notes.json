@@ -1,5 +1,12 @@
 [
   {
+    "version":"v1.26.9",
+    "changes":[
+      {"title":"Podejście do schodów i zejść z innej strony","detail":"Gdy pole przed zapisanym przejściem jest nieczytelne, Cavebot sprawdza dojście przez sąsiednie wolne pola do tego samego wejścia."},
+      {"title":"Ostrzeżenie przy utracie odczytu HP","detail":"Odczyty HP mają własny harmonogram. Podczas działania Cavebota lub mikstur panel ostrzega o przerwie dłuższej niż 1,5 s. Dziennik połączenia zapisuje stronę, etap i czasy ostatniej transmisji."}
+    ]
+  },
+  {
     "version":"v1.26.8",
     "changes":[
       {"title":"Rozpoznawanie zamkniętych drzwi w zapisanych szkicach","detail":"Cavebot otwiera wariant drzwi widoczny na wybranej kratce. Zachowuje zapisane przejście, gdy na tym samym polu nauczysz Atlas drugiego wariantu."}
