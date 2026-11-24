@@ -856,6 +856,8 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
             return -1
         if opcode == 0xA4 and data[pos] == 195:
             gs.haste_cast_at = time.monotonic()
+        elif opcode == 0xA4 and data[pos] == 219:
+            gs.barrier_cast_at = time.monotonic()
         return pos + 5
 
     # PLAYER_ICONS — 2 bytes: u16 icons bitmask

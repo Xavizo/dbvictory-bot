@@ -1085,6 +1085,7 @@ function CavebotPanel({
 }
 
 import BarrierBandPanel from "./BarrierBandPanel";
+import BarrierSpellPanel from "./BarrierSpellPanel";
 
 const observationLabels: Record<string,string> = {
   health:"HP i Ki", position:"Pozycja postaci", map:"Mapa i pola", creatures:"Stworzenia", target:"Wybrany cel",
@@ -1116,7 +1117,7 @@ export default function Dashboard() {
   }
   const potion=state?.actions.find(a=>a.name==="auto_potions");
 
-  const actions=(state?.actions ?? []).filter(a=>!["auto_potions","auto_barrier_band","speed_up","auto_hunter_knife","cavebot","cavebot2","adaptive_cavebot"].includes(a.name));
+  const actions=(state?.actions ?? []).filter(a=>!["auto_potions","auto_barrier_band","barrier_spell","speed_up","auto_hunter_knife","cavebot","cavebot2","adaptive_cavebot"].includes(a.name));
   const shownActions=actions.filter(a=>(`${actionTitles[a.name] ?? ""} ${a.name} ${a.description}`).toLowerCase().includes(search.toLowerCase()) &&
     (actionFilter==="all" || (actionFilter==="running" ? a.running : actionFilter==="enabled" ? a.enabled : !a.enabled)));
 
@@ -1129,6 +1130,7 @@ export default function Dashboard() {
         legacyActions={actions.filter(a=>["auto_senzu","mana_recovery_20","mana_recovery_70"].includes(a.name))}/> :
         <div className="empty-panel"><h2>Czekam na ustawienia reguł</h2><p>Pojawią się po połączeniu panelu z botem.</p></div>}
       <BarrierBandPanel state={state} onRefresh={refresh}/>
+      <BarrierSpellPanel state={state} onRefresh={refresh}/>
       <SpeedUpPanel state={state} onRefresh={refresh}/>
       <HunterKnifePanel state={state} onRefresh={refresh}/>
       <ProfilePicker kind="bot" state={state} onRefresh={refresh}/>

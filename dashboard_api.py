@@ -1034,6 +1034,7 @@ def _build_state_json() -> str:
             "denied": getattr(gs, "knife_denials", 0),
         },
         "barrier_band": st.band_scheduler.snapshot(),
+        "barrier_spell": {"status": st.barrier_scheduler.status} if getattr(st, "barrier_scheduler", None) else None,
         "speed_up": st.speed_scheduler.snapshot() if getattr(st,"speed_scheduler",None) else None,
         "commands": st.game_proxy.command_snapshot() if st.game_proxy and hasattr(st.game_proxy,'command_snapshot') else None,
         "actions": actions,

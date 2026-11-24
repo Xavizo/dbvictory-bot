@@ -266,6 +266,7 @@ export interface BotState {
   alerts?:AlertState|null;
   pause_hotkey?:{registered:boolean;error:string|null;key:string}|null;
   profile_selection?:{combat:string|null;bot:string|null;routes:Record<string,string>};
+  barrier_spell?:{status:string}|null;
   speed_up?:{status:string;remaining:number|null;offset:number|null;effect_active:boolean|null;confirmed:boolean;attempts:number};
   combat_profile?: import("./cavebotModel").CombatConfig;
   adaptive_cavebot?: {navigation_wait?:{reason:string;observations:string[];review_in_ms:number}|null;map_preview?: LiveMovementPreview | null;domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};

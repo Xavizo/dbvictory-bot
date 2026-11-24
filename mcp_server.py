@@ -77,6 +77,7 @@ from protocol import (
 from constants import SERVER_HOST, LOGIN_PORT, GAME_PORT
 import cavebot
 from potions import PotionScheduler, PotionDiagnostics, ITEMS as HEALING_ITEMS, LEGACY_HEALING_ACTIONS, validate_config as validate_potion_config
+from barrier_spell import validate_config as validate_barrier_config
 from barrier_band import BandScheduler, validate_config as validate_band_config
 from route_safety import route_entry
 from dashboard_security import SESSION_TOKEN
@@ -126,6 +127,7 @@ class BotState:
         self._stopping_tasks = []
         self._emergency_stopping = False
         self.band_scheduler = BandScheduler()
+        self.barrier_scheduler = None
         from speed_up import SpeedScheduler
         self.speed_scheduler = SpeedScheduler()
         self.potion_scheduler = PotionScheduler()
@@ -303,8 +305,11 @@ class BotContext:
         pkt = build_use_item_packet(x, y, z, item_id, stack_pos, index)
         await self.inject_to_server(pkt)
 
-    async def say(self, text: str) -> None:
-        await self.inject_to_server(build_say_packet(text))
+    async def say(self, text: str, *, guard=None):
+        if guard is None:
+            await self.inject_to_server(build_say_packet(text))
+            return None
+        return await self.inject_to_server(build_say_packet(text), guard=guard)
 
     async def walk(self, direction: str, steps: int = 1, delay: float = 0.3) -> None:
         d = _resolve_direction(direction)
@@ -444,6 +449,9 @@ def _start_action(name: str) -> str | None:
             validate_potion_config(state.settings.get("actions", {}).get(name, {}), require_cooldowns=True)
         except ValueError as exc:
             return str(exc)
+    if name == "barrier_spell":
+        try: validate_barrier_config(state.settings.get("actions", {}).get(name, {}))
+        except ValueError as exc: return str(exc)
     if name == "auto_barrier_band":
         try: validate_band_config(state.settings.get("actions", {}).get(name, {}))
         except ValueError as exc: return str(exc)
@@ -561,6 +569,9 @@ async def _async_toggle_action(name: str, enabled: bool) -> str:
             validate_potion_config(state.settings.get("actions", {}).get(name, {}), require_cooldowns=True)
         except ValueError as exc:
             return f"Error: {exc}"
+    if enabled and name == "barrier_spell":
+        try: validate_barrier_config(state.settings.get("actions", {}).get(name, {}))
+        except ValueError as exc: return f"Error: {exc}"
     if enabled and name == "auto_barrier_band":
         try: validate_band_config(state.settings.get("actions", {}).get(name, {}))
         except ValueError as exc: return f"Error: {exc}"
@@ -600,6 +611,7 @@ async def _async_update_action_config(name: str, changes: dict) -> dict:
     if name == "auto_potions":
         cfg = validate_potion_config(cfg, require_cooldowns=cfg.get("enabled", False))
     if name == "auto_barrier_band": cfg = validate_band_config(cfg)
+    if name == "barrier_spell": cfg = validate_barrier_config(cfg)
     if name == "speed_up":
         from speed_up import validate_config
         cfg = validate_config(cfg)

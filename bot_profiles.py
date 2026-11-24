@@ -9,6 +9,7 @@ from pathlib import Path
 from cavebot_combat import validate_combat
 from game_alerts import validate_config as validate_alerts, default_config
 from speed_up import validate_config as validate_speed
+from barrier_spell import validate_config as validate_barrier
 from barrier_band import validate_config as validate_band
 from potions import validate_config as validate_potions
 
@@ -32,6 +33,7 @@ def validate_bot(value):
                 or not isinstance(cfg,dict) or 'enabled' in cfg):raise ValueError('Profil zawiera stan uruchomienia akcji.')
         if not (Path(__file__).parent/'actions'/f'{name}.py').is_file():raise ValueError('Nieznana akcja w profilu.')
         if name=='speed_up':cfg=validate_speed(cfg)
+        if name=='barrier_spell':cfg=validate_barrier(cfg)
         if name=='auto_barrier_band':cfg=validate_band(cfg)
         if name=='auto_potions':cfg=validate_potions(cfg,require_cooldowns=False)
         result['actions'][name]=copy.deepcopy(cfg)
