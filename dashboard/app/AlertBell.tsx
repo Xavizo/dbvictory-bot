@@ -88,7 +88,7 @@ export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertSta
   const through=legacy&&alerts?Math.max(localPause?.session===alerts.session?localPause.through:0,
     lastMuted.current?.session===alerts.session?lastMuted.current.through:0):alerts?.silenced_through??0;
   const unread=legacy&&alerts?Math.min(alerts.unread,alerts.events.filter(e=>e.id>through).length):alerts?.unread??0;
-  const paused=alerts?.paused??localPause?.paused??false;
+  const paused=alerts?.paused??localPause?.paused??true;
   const pauseLabel=paused?"Wznów alerty":"Wstrzymaj alerty";
   return <div className="alert-hub" ref={ref}>
     <button className={`alert-bell ${unread&&!paused?"has-alert":""}`} aria-label={`Alerty${paused?" wstrzymane":unread?`: ${unread} nieprzeczytanych`:""}`} title={paused?"Alerty wstrzymane":"Alerty i dźwięk"} aria-expanded={open} aria-controls="alert-panel" onClick={()=>setOpen(v=>!v)}>

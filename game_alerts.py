@@ -59,6 +59,8 @@ class AlertCenter:
             self.config = default_config()
         self.session = uuid.uuid4().hex
         self.events = deque(maxlen=100)
+        self.paused = True
+        self.silenced_through = 0
         self.latest_id = self.read_id = 0
         self.last_sound = float('-inf')
         self.seen_messages = {}
@@ -75,6 +77,14 @@ class AlertCenter:
         with self.lock:
             self.config = validate_config(config)
 
+    def set_paused(self, paused):
+        if type(paused) is not bool:
+            raise ValueError('Nieprawidłowy stan pauzy alertów.')
+        with self.lock:
+            if self.paused != paused:
+                self.silenced_through = self.latest_id
+                self.paused = paused
+
     def acknowledge(self, through):
         with self.lock:
             if type(through) is not int or not 0 <= through <= self.latest_id:
@@ -86,7 +96,8 @@ class AlertCenter:
             return {'session': self.session, 'config': copy.deepcopy(self.config),
                     'events': copy.deepcopy(list(self.events)), 'latest_id': self.latest_id,
                     'vitals_alarm_id': self.vitals_alarm_id,
-                    'unread': sum(e['id'] > self.read_id for e in self.events),
+                    'paused': self.paused, 'silenced_through': self.silenced_through,
+                    'unread': sum(e['id'] > max(self.read_id, self.silenced_through) for e in self.events),
                     'cavebot_active': self.active, 'map_fresh': self.map_fresh,
                     'chat_received': self.chat_received, 'last_chat_at': self.last_chat_at}
 
@@ -95,7 +106,7 @@ class AlertCenter:
         if not row['enabled'] or (row['scope'] == 'cavebot' and not active):
             return
         now = self.clock()
-        sound = row['sound'] and now - self.last_sound >= 3
+        sound = not self.paused and row['sound'] and now - self.last_sound >= 3
         if sound:
             self.last_sound = now
         self._append(kind, sender, text, sound, **details)
@@ -103,6 +114,9 @@ class AlertCenter:
     def _append(self, kind, sender, text, sound, **details):
         now = self.clock()
         self.latest_id += 1
+        if self.paused:
+            self.silenced_through = self.latest_id
+            sound = False
         self.events.append({'id': self.latest_id, 'kind': kind, 'at': now,
                             'sender': sender[:64], 'text': text[:512], 'sound': sound, **details})
 

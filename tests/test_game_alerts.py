@@ -6,13 +6,15 @@ from game_state import GameState, scan_packet
 from chat_messages import parse_talk
 
 
-def setup():
+def setup(*, resume=True):
     now=[100.0]
     gs=GameState(); gs.player_id=0x10000001;gs.player_name='Me';gs.stats_updated_at=100;gs.position=(100,100,7)
     state=NS(game_state=gs,connected=True,game_proxy=object(),automation_paused=False,
              adaptive_cavebot=NS(status='running'),_action_tasks={'adaptive_cavebot':NS(done=lambda:False)},
              passive_map_monitor=NS(_result={'status':'ready','captured_at':100,'center':[100,100,7],'cells':[]}))
     center=AlertCenter(clock=lambda:now[0],spells={'shunkan','shinretsuha'})
+    if resume:
+        center.set_paused(False)
     def advance(seconds):
         now[0]+=seconds;gs.stats_updated_at=now[0];state.passive_map_monitor._result['captured_at']=now[0]
     return center,state,advance
@@ -25,6 +27,39 @@ def player(state, cid=0x10000002, name='Visitor'):
 
 def message(kind='private',sender='Visitor',text='Hello',statement=1):
     return dict(kind=kind,sender=sender,text=text,statement=statement)
+
+
+def test_new_session_starts_paused_and_resumes_without_replaying_history(monkeypatch):
+    import asyncio
+    import mcp_server as server
+
+    config = default_config()
+    config['default']['enabled'] = False
+    c, s, _ = setup(resume=False)
+    c.configure(config)
+    monkeypatch.setattr(server, 'state', NS(alert_center=c))
+    def pause(value):
+        asyncio.run(server._async_alerts('set_paused', {'paused': value}))
+
+    assert c.snapshot()['paused']
+    c.observe_chat(message(), s, s.game_state)
+    snap = c.snapshot()
+    assert snap['latest_id'] == snap['silenced_through'] == 1 and snap['unread'] == 0
+    assert not snap['events'][0]['sound']
+    for invalid in (None, 0, 'false'):
+        with pytest.raises(ValueError):
+            pause(invalid)
+
+    pause(False)
+    assert c.snapshot()['unread'] == 0
+    c.observe_chat(message(statement=2), s, s.game_state)
+    pause(False)
+    snap = c.snapshot()
+    assert not snap['paused'] and snap['unread'] == 1 and snap['events'][-1]['sound']
+    assert snap['config'] == config
+    pause(True)
+    assert c.snapshot()['silenced_through'] == 2 and c.snapshot()['unread'] == 0
+    assert AlertCenter(config).snapshot()['paused']
 
 
 def test_scopes_are_independent_and_never_change_actions():

@@ -42,7 +42,7 @@ function loadMain(engineLabel) {
     __dirname, process, URL,
     fetch: async () => ({ ok: true }), setTimeout() {},
   });
-  return { testSound:handlers["dbv:test-alert-sound"],editor:handlers["dbv:open-route-editor"],windows,token: handlers["dbv:dashboard-token"], copy:handlers["dbv:copy-map-cell"], copyPlan:handlers["dbv:copy-map-plan"], copied, contents, preferences, navigation, windowHandler, process };
+  return { panelPause:handlers["dbv:panel-alert-pause"],testSound:handlers["dbv:test-alert-sound"],editor:handlers["dbv:open-route-editor"],windows,token: handlers["dbv:dashboard-token"], copy:handlers["dbv:copy-map-cell"], copyPlan:handlers["dbv:copy-map-plan"], copied, contents, preferences, navigation, windowHandler, process };
 }
 
 test("the window keeps the engine revision and its start time on page refresh", () => {
@@ -144,6 +144,9 @@ test("editor opens only a fixed local route, trusts its own main frame, and revo
 
 test('alert sound IPC rejects untrusted frames and only exposes a bounded test beep',()=>{
   const app=loadMain();const event={sender:app.contents,senderFrame:app.contents.mainFrame};
+  assert.equal(app.testSound(event),false);
+  assert.throws(()=>app.panelPause({...event,sender:{}},false));
+  assert.equal(app.panelPause(event,false).paused,false);
   assert.equal(app.testSound(event),true);assert.equal(app.testSound(event),false);
   assert.throws(()=>app.testSound({...event,sender:{}}));
   assert.throws(()=>app.testSound({...event,senderFrame:{url:event.senderFrame.url}}));

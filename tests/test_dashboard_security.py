@@ -295,6 +295,9 @@ def test_alert_read_and_config_routes_keep_authentication(http_api,monkeypatch):
     monkeypatch.setattr(api._Handler,'_run_control',lambda self,*args:(calls.append(args),self._json_response({'ok':True})))
     assert request('POST','/api/alerts',body='{"command":"acknowledge","through":0}',**headers)[0]==200
     assert calls==[('_async_alerts','acknowledge',{'command':'acknowledge','through':0})]
+    resume={'command':'set_paused','paused':False}
+    assert request('POST','/api/alerts',body=json.dumps(resume),**headers)[0]==200
+    assert calls[-1]==('_async_alerts','set_paused',resume)
     assert request('POST','/api/alerts',body='x'*4097,**headers)[0]==400
     assert request('POST','/api/alerts',body='{"command":"start"}',**headers)[0]==400
-    assert len(calls)==1
+    assert len(calls)==2

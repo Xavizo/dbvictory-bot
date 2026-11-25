@@ -253,6 +253,9 @@ async def _async_alerts(command, body):
         save_settings(candidate)
         state.settings["alerts"] = config
         state.alert_center.configure(config)
+    elif command == "set_paused":
+        state.alert_center.set_paused(body.get("paused"))
+        return "Alerty wstrzymane." if body["paused"] else "Alerty wznowione."
     elif command == "acknowledge":
         state.alert_center.acknowledge(body.get("through"))
     else:

@@ -67,15 +67,37 @@ test('panel mute on an older engine silences the tray and resumes on new chat',a
     await timers.splice(timers.findIndex(a=>a.ms===750),1)[0].fn();
   };
   await new Promise(r=>setImmediate(r));
-  assert.equal(p.panelPause(true).paused,true);
+  assert.equal(p.panelPause().paused,true);
   state=snapshot([event(1)]);await tick();
   assert.equal(p.panelPause().through,1);
   assert.equal(p.testSound(),false);
   p.panelPause(false);await tick();
   state=snapshot([event(1),event(2,{at:t/1000})]);await tick();
   assert.deepEqual(heard,['message']);
+  state=snapshot([],{session:'two'});await tick();
+  assert.equal(p.panelPause().paused,true);
   assert.throws(()=>p.panelPause('on'),TypeError);
   p.stop();
+});
+test('a restarted panel uses the engine pause and suppresses sound, flashes and backlog until resumed',async()=>{
+  let t=100000, state=snapshot([event(1)],{paused:true,silenced_through:1}),poll;
+  const heard=[];
+  const data={connected:true,player:{position:[1,1,7]},passive_map:{status:'ready',center:[1,1,7],
+    cells:[{z:7,alert_players:[{id:0x10000020}]}]}};
+  const panel=startAlertSounds({token:'test',now:()=>t,beep:k=>heard.push(k),
+    fetchImpl:async()=>({ok:true,json:async()=>({...data,alerts:state,passive_map:{...data.passive_map,captured_at:t/1000}})}),
+    setTimer:(fn,ms)=>{if(ms===750)poll=fn;return 0;},clearTimer:()=>{}});
+  assert.equal(panel.testSound(),false);
+  await new Promise(resolve=>setImmediate(resolve));
+  t+=1500;await poll();
+  assert.deepEqual(heard,[]);
+  state={...state,paused:false};await poll();
+  assert.deepEqual(heard,['player']);
+  t+=1500;state=snapshot([event(2,{at:t/1000})],{paused:false,silenced_through:1});await poll();
+  assert.deepEqual(heard,['player','message']);
+  state=snapshot([],{session:'new',paused:true});t+=1500;await poll();
+  assert.deepEqual(heard,['player','message']);assert.equal(panel.testSound(),false);
+  panel.stop();
 });
 test('fixed authenticated state polling cancels on quit without changing actions',async()=>{
  const calls=[],timers=[];
@@ -118,8 +140,10 @@ test('an unread preview stays dismissible even after four seconds; a read alert 
    target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  const mod={exports:{}};
  new Function('exports','require',js)(mod.exports,name=>name==='@/lib/api'?{}:require(name));
- const render=(age,unread=1)=>renderToStaticMarkup(React.createElement(mod.exports.default,{
-   connected:true,onRefresh(){},alerts:snapshot([event(1,{at:Date.now()/1000-age,sender:'Gracz',text:'Test'})],{unread})}));
+ const render=(age,unread=1,paused=false)=>renderToStaticMarkup(React.createElement(mod.exports.default,{
+   connected:true,onRefresh(){},alerts:snapshot([event(1,{at:Date.now()/1000-age,sender:'Gracz',text:'Test'})],{unread,paused})}));
+ assert.doesNotMatch(render(0,1,true),/class="alert-peek"|class="alert-count"/);
+ assert.match(render(0,1,true),/aria-label="Wznów alerty"/);
  assert.match(render(0),/class="alert-peek"/);
  const after=render(5);
  assert.match(after,/class="alert-peek"/);

@@ -210,7 +210,7 @@ class _Handler(BaseHTTPRequestHandler):
                 if not 0 < int(self.headers.get("Content-Length", 0)) <= 4096:
                     raise ValueError("Nieprawidłowy rozmiar ustawień alertów.")
                 body = self._read_body()
-                if not isinstance(body, dict) or body.get("command") not in {"configure", "acknowledge"}:
+                if not isinstance(body, dict) or body.get("command") not in {"configure", "acknowledge", "set_paused"}:
                     raise ValueError("Nieprawidłowe polecenie alertów.")
                 return self._run_control("_async_alerts", body["command"], body)
             except (ValueError, TypeError) as exc:

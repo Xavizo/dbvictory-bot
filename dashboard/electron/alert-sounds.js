@@ -51,7 +51,7 @@ function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,
   const consumer=createSoundConsumer(beep,now);let stopped=false,timer,request;
   let notifiedRecording=null;
   // Older engines have independent alert preferences but no session-wide mute.
-  let panelPaused=false, legacySession=null, silencedThrough=0, lastId=0, resumedAt=null;
+  let panelPaused=true, alertSession=null, silencedThrough=0, lastId=0, resumedAt=null;
   function panelPause(value) {
     if (value !== undefined) {
       if (typeof value !== 'boolean') throw new TypeError('Invalid alert pause');
@@ -61,7 +61,7 @@ function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,
         resumedAt=value?null:now()/1000;
       }
     }
-    return {paused:panelPaused, session:legacySession, through:silencedThrough};
+    return {paused:panelPaused, session:alertSession, through:silencedThrough};
   }
   async function poll(){
     if(stopped||!token)return;
@@ -72,16 +72,13 @@ function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,
           headers:{Authorization:`Bearer ${token}`,Origin:'http://127.0.0.1:4747'},cache:'no-store',redirect:'error',signal:request.signal});
         if(response.ok){
           const data=await response.json();
-          const recording=data.cavebot?.recording;
-          if(!recording?.active || recording.mode!=='adaptive')notifiedRecording=null;
-          else if(!stopped && recording.name && recording.hunt_progress?.stage===4 && notifiedRecording!==recording.name){
-            notifiedRecording=recording.name;
-            if(!panelPaused && !data.alerts?.paused)onHuntReady?.();
-          }
           if(!stopped && data.alerts){
             let alerts=data.alerts;
+            if(alertSession!==alerts.session){
+              if(alertSession!==null)panelPaused=true;
+              alertSession=alerts.session;silencedThrough=0;resumedAt=null;
+            }
             if(typeof alerts.paused!=='boolean'){
-              if(legacySession!==alerts.session){legacySession=alerts.session;silencedThrough=0;}
               lastId=alerts.latest_id;
               if(panelPaused)silencedThrough=lastId;
               else if(resumedAt!==null){
@@ -91,9 +88,15 @@ function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,
               }
               alerts={...alerts,paused:panelPaused,silenced_through:silencedThrough};
             } else {
-              panelPaused=false;
+              panelPaused=alerts.paused;
             }
             consumer.consume(alerts,alerts.paused?[]:visiblePlayers(data,now()));
+          }
+          const recording=data.cavebot?.recording;
+          if(!recording?.active || recording.mode!=='adaptive')notifiedRecording=null;
+          else if(!stopped && recording.name && recording.hunt_progress?.stage===4 && notifiedRecording!==recording.name){
+            notifiedRecording=recording.name;
+            if(data.alerts && !panelPaused)onHuntReady?.();
           }
         }
       }finally{clearTimer(timeout);request=null;}
