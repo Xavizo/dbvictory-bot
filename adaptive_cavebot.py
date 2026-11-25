@@ -847,8 +847,20 @@ class AdaptiveCavebot:
             log.info('V2 movement wait: %s',detail)
             history=getattr(self.state.game_state,'movement_history',None)
             if history:history.web_blocked(pos,target,cell,cause)
-        self.blockage=detail
+        self.blockage = {**detail, 'captured_at': sample.get('captured_at')}
         self.reason=f'Pole {tuple(target)}: {cause}. Czekam; '+('walka aktywna.' if self.combat.config['enabled'] else 'ruch będzie ponowiony.')
+
+    def is_stair_approach(self, index):
+        if index + 1 >= len(self.path) or self.path[index][2] == self.path[index+1][2]:
+            return False
+        edge = self.floor_edge_at(index)
+        return bool(edge and edge['action'] == 'step' and distance(edge['origin'], edge['entry']) == 1)
+
+    def repeated_unknown(self, sample, point):
+        previous = self.blockage or {}
+        return (previous.get('origin') == sample['center'] and previous.get('target') == point
+                and previous.get('tile_kind') == 'unknown' and previous.get('captured_at') is not None
+                and (sample.get('captured_at') or 0) > previous['captured_at'])
 
     def tolerate_waypoint(self,sample,*,recovering=False):
         """A blocked ordinary anchor within 2 SQM may be passed via fresh terrain.
@@ -891,11 +903,25 @@ class AdaptiveCavebot:
             if not next_row:return False
             candidates=range(k+1,min(next_row['index']+1,k+9))
         usable=[]
+        if displaced:
+            excluded.add(tuple(expected))
         for j in candidates:
-            if tuple(self.path[j]) in protected or self.path[j][2]!=pos[2]:break
-            usable.append(j)
-        for j in reversed(usable):
-            local=detour(sample['cells'],pos,self.path[j],excluded | ({tuple(expected)} if displaced else set()))
+            goal = tuple(self.path[j])
+            if goal[2] != pos[2]:
+                break
+            if goal in protected:
+                if (not wrap and cell['kind'] == 'unknown' and self.is_stair_approach(j)
+                        and self.repeated_unknown(sample, point)):
+                    # Permit reaching this one approach, without opening any other
+                    # interaction tile as a shortcut through the room.
+                    special = {(t['x'], t['y'], t['z']) for t in sample['cells']
+                               if t.get('navigation') or t.get('transitions') or t.get('stairs')}
+                    if goal not in special and goal not in self.blocked and goal != tuple(expected):
+                        usable.append((j, (excluded - {goal}) | special))
+                break
+            usable.append((j, excluded))
+        for j, avoid in reversed(usable):
+            local = detour(sample['cells'], pos, self.path[j], avoid, skip_first=self.delayed_departures(pos))
             if not local or (len(local)<2 and not displaced):continue
             replacement = bridge[1:] + local[1:]
             number=checkpoint['waypoint'];gap=distance(pos,point)
@@ -1852,7 +1878,8 @@ class AdaptiveCavebot:
                             await asyncio.sleep(.1)
                             continue
                         self.describe_blockage(sample,target)
-                        if (tuple(target) not in self.blocked and not self.combat.config['enabled']
+                        awaiting_approach = self.blockage['tile_kind'] == 'unknown' and self.is_stair_approach(self.index+2)
+                        if (not awaiting_approach and tuple(target) not in self.blocked and not self.combat.config['enabled']
                                 and not any(t.get('occupants',0) for t in sample['cells'])):
                             raise ValueError('Brak widocznego obejścia przeszkody; sprawdź trasę.')
                         await self.wait_for_navigation(self.reason, ("map", "position"), .1)

@@ -472,3 +472,53 @@ def test_gotrunks_unreadable_link_origin_keeps_exact_entry_and_landing(
     asyncio.run(asyncio.wait_for(ctrl.run(), 2))
     assert visited == [backup,entry]
     assert ctrl.status == 'complete' and ctrl.last_waypoint == 2
+
+
+@pytest.mark.parametrize("first_bypass", ["clear", "occupied", "action_tile", "missing_sample"])
+def test_shenlong_289_rejoins_stair_approach_after_two_map_samples(state, tmp_path, first_bypass):
+    start, marker, around = [1184,556,4], [1185,556,4], [1185,555,4]
+    approach, entry, landing = [1186,555,4], [1187,554,4], [1187,553,3]
+    stair = cell(*entry, kind="blocked", item=1977, navigation=[dict(kind="stairs")])
+    edge = dict(id="shenlong", origin=approach, entry=entry, exit=landing,
+                action="step", entry_items=[1977], evidence="observed")
+    cells = [cell(*p) for p in (start, marker, around, approach, landing)] + [stair]
+    ctrl, _, _ = setup(state, tmp_path, cells, [start, marker, approach, landing], [edge])
+    assert ctrl.path == [start, marker, approach, landing]
+    cells[1].update(kind="unknown", items=[], reason="Pole zmieniło położenie podczas odczytu.")
+    if first_bypass == "occupied":
+        cells[2].update(occupants=1, occupant_types={"player":1})
+    elif first_bypass == "action_tile":
+        cells[2]["navigation"] = [dict(kind="ladder")]
+
+    ctrl.status = "running"
+    snapshot = state.passive_map_monitor.snapshot
+    sample = dict(snapshot(), captured_at=time.time())
+    assert not ctrl.tolerate_waypoint(sample)
+    ctrl.describe_blockage(sample, marker)
+    assert not ctrl.tolerate_waypoint(sample)  # Re-reading the cached snapshot is insufficient.
+    if first_bypass == "missing_sample":
+        assert not ctrl.tolerate_waypoint(snapshot())
+    elif first_bypass != "clear":
+        assert not ctrl.tolerate_waypoint(dict(snapshot(), captured_at=time.time()+.01))
+        assert ctrl.path == [start, marker, approach, landing]
+        cells[2].update(occupants=0, occupant_types={}, navigation=[])
+    state.passive_map_monitor.snapshot = lambda: dict(snapshot(), captured_at=time.time())
+    moves = []
+
+    async def dispatch(payload, guard):
+        assert guard()
+        pos = state.game_state.position
+        dx, dy = next(delta for delta, direction in OFFSETS.items() if int(WALK_OPCODES[direction]) == payload[0])
+        dest = [pos[0]+dx, pos[1]+dy, pos[2]]
+        moves.append(dest)
+        if dest == entry:
+            assert list(pos) == approach and ctrl.last_waypoint == 2
+        state.game_state.position = tuple(landing if dest == entry else dest)
+        state.game_state.stats_updated_at = time.time()
+        ctrl.last_command = 0
+
+    state.game_proxy.inject_to_server = dispatch
+    asyncio.run(asyncio.wait_for(ctrl.run(), 3))
+    assert moves == [around, approach, entry]
+    assert ctrl.tolerated_waypoints == 1 and ctrl.status == "complete"
+    assert state.game_state.position == tuple(landing) and ctrl.last_waypoint == 3
