@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+.nearby-note, .nearby-list small { color: var(--muted, #b5adbf); font-size: .78rem; }
+.nearby-list { list-style: none; margin: .75rem 0 0; padding: 0; }
+.nearby-list li { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; padding: .6rem 0; border-top: 1px solid var(--line); }
+.nearby-list small { display: block; margin-top: .15rem; font-variant-numeric: tabular-nums; }
+.nearby-buttons { display: flex; gap: .4rem; }
+
+
 .lap-reports { margin-top: 10px; }
 .lap-reports summary { cursor: pointer; font-weight: 600; }
 .lap-reports p:empty { display: none; }

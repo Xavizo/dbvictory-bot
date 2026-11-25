@@ -232,6 +232,16 @@ async def _async_profiles(body):
     return {'config':candidate['combat_profile'] if kind=='combat' else validate_bot(row['config'])}
 
 
+async def _async_nearby_items(body=None):
+    from nearby_items import NearbyItemTest
+    panel = getattr(state, 'nearby_item_test', None)
+    if panel is None or not panel.lease.valid() or panel.lease.player != state.game_state.player_id:
+        panel = state.nearby_item_test = NearbyItemTest(state)
+    if body is None:
+        return panel.snapshot()
+    return await panel.move(body["token"], body["destination"])
+
+
 async def _async_alerts(command, body):
     from game_alerts import validate_config
     if command == "configure":

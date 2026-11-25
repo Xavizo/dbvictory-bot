@@ -8,10 +8,11 @@ import SessionStats from "./SessionStats";
 import dynamic from "next/dynamic";
 const GlobalAtlas=dynamic(()=>import("./GlobalAtlas"),{ssr:false});
 
-export type WorkspaceView = "automation" | "cavebot" | "diagnostics";
+export type WorkspaceView = "automation" | "cavebot" | "diagnostics" | "items";
 const workspaces: {id:WorkspaceView;nav:string;path:string}[] = [
   {id:"automation",nav:"Automatyka",path:"M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6"},
   {id:"cavebot",nav:"Cavebot",path:"M5 6a2 2 0 104 0 2 2 0 00-4 0zm10 12a2 2 0 104 0 2 2 0 00-4 0zM7 8v5a3 3 0 003 3h4a3 3 0 000-6h-2"},
+  {id:"items",nav:"Test przedmiotów",path:"M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4m-9 4v10"},
   {id:"diagnostics",nav:"Diagnostyka",path:"M3 12h4l3-8 4 16 3-8h4"},
 ];
 function Icon({path}:{path:string}) {

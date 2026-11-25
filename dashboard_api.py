@@ -121,6 +121,8 @@ class _Handler(BaseHTTPRequestHandler):
             if center is None:
                 return self._json_response({"error": "Alerty niedostępne."}, 503)
             return self._json_response(center.snapshot())
+        if self.path == "/api/nearby-items":
+            return self._run_control("_async_nearby_items")
         if self.path == "/api/state":
             return self._handle_get_state()
         if self.path == "/api/movement-history":
@@ -209,6 +211,18 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ValueError("Nieprawidłowe polecenie alertów.")
                 return self._run_control("_async_alerts", body["command"], body)
             except (ValueError, TypeError) as exc:
+                return self._json_response({"error": str(exc)}, 400)
+        if self.path == "/api/nearby-items":
+            try:
+                if not 0 < int(self.headers.get("Content-Length", 0)) <= 256:
+                    raise ValueError("Nieprawidłowy rozmiar żądania.")
+                body = self._read_body()
+                if (not isinstance(body, dict) or set(body) != {"token", "destination"}
+                        or not isinstance(body["token"], str) or len(body["token"]) != 32
+                        or body["destination"] not in ("backpack", "feet")):
+                    raise ValueError("Nieprawidłowy wybór przedmiotu lub celu.")
+                return self._run_control("_async_nearby_items", body)
+            except (TypeError, ValueError) as exc:
                 return self._json_response({"error": str(exc)}, 400)
         if self.path == "/api/emergency-stop":
             return self._run_control("_async_emergency_stop")

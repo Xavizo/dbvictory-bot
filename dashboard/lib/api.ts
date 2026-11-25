@@ -310,6 +310,25 @@ export const pauseAutomation = () => control("/api/automation/pause");
 export const resumeAutomation = () => control("/api/automation/resume");
 export const emergencyStop = () => control("/api/emergency-stop");
 export const unlockAutomation = () => control("/api/automation/unlock");
+export interface NearbyItemList {
+  center: [number,number,number];
+  rows: { token:string; position:[number,number,number]; item_id:number; stack:number; pickup:boolean; covered:boolean }[];
+}
+export async function fetchNearbyItems(signal:AbortSignal):Promise<NearbyItemList> {
+  const res = await authenticatedFetch(API_BASE+"/api/nearby-items", {signal});
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body.message;
+}
+export async function moveNearbyItem(token:string, destination:"feet"|"backpack"):Promise<string> {
+  const res = await authenticatedFetch(API_BASE+"/api/nearby-items", {
+    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token,destination})
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body.message;
+}
+
 export type MovementHistoryStatus = {active:boolean;capturing:boolean;available:boolean;latest:string|null;error:string|null;unwritten_reports:number};
 export async function movementHistory(save=false,signal?:AbortSignal):Promise<MovementHistoryStatus>{
   const response=await authenticatedFetch(API_BASE+"/api/movement-history",{method:save?"POST":"GET",signal});

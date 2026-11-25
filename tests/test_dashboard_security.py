@@ -62,7 +62,7 @@ def http_api(monkeypatch):
     ("GET", "/api/state"), ("POST", "/api/actions/power_up/toggle"),
     ("DELETE", "/api/actions/power_up"),
     ("POST", "/api/emergency-stop"), ("POST", "/api/automation/unlock"),
-    ("POST", "/api/potions/diagnostics"),
+    ("POST", "/api/potions/diagnostics"), ("GET", "/api/nearby-items"), ("POST", "/api/nearby-items"),
     ("POST", "/api/map/annotation"), ("POST", "/api/map/pet"),
     ("POST", "/api/map/drafts"), ("POST", "/api/adaptive/preview"),
     ("GET", "/api/map/grounds"), ("POST", "/api/map/grounds"),
@@ -240,6 +240,29 @@ def test_websocket_requires_origin_and_token_before_sending_state(monkeypatch):
             await server.wait_closed()
         assert not api._ws_clients
     asyncio.run(exercise())
+
+def test_nearby_item_http_routes_limit_clicks_to_offered_destinations(http_api, monkeypatch):
+    request, _ = http_api
+    headers = {'Origin': DASHBOARD_ORIGIN, 'Authorization': f'Bearer {SESSION_TOKEN}'}
+    calls = []
+
+    def control(handler, *args):
+        calls.append(args)
+        handler._json_response({'ok': True, 'message': []})
+
+    monkeypatch.setattr(api._Handler, '_run_control', control)
+    route = '/api/nearby-items'
+    assert request('GET', route, **headers)[0] == 200
+    click = {'token': 'a' * 32, 'destination': 'backpack'}
+    for destination in ('feet', 'backpack'):
+        click['destination'] = destination
+        assert request('POST', route, body=json.dumps(click), **headers)[0] == 200
+        assert calls[-1] == ('_async_nearby_items', dict(click))
+    for invalid in ({**click, 'destination': [10, 10, 7]}, {**click, 'count': 5}, {'token': 'a' * 32}):
+        assert request('POST', route, body=json.dumps(invalid), **headers)[0] == 400
+    assert len(calls) == 3
+    assert calls[0] == ('_async_nearby_items',)
+
 
 def test_alert_read_and_config_routes_keep_authentication(http_api,monkeypatch):
     from types import SimpleNamespace

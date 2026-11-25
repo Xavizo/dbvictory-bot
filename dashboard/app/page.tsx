@@ -43,6 +43,7 @@ import AutomationStrip, {actionTitles} from "./AutomationStrip";
 import PotionPanel from "./PotionPanel";
 import PassiveMapPanel from "./PassiveMapPanel";
 import TransitionLearningPanel from "./TransitionLearningPanel";
+import NearbyItemsPanel from "./NearbyItemsPanel";
 import DashboardChrome, { type WorkspaceView } from "./DashboardChrome";
 
 const SenzuChart = dynamic(() => import("./SenzuChart"), { ssr: false });
@@ -1143,6 +1144,7 @@ export default function Dashboard() {
       {!shownActions.length && <div className="empty-panel"><h2>{state ? "Brak pasujących akcji" : "Czekam na połączenie z botem"}</h2><p>{state ? "Zmień filtr lub wpisaną nazwę." : "Lista pojawi się po otrzymaniu danych."}</p></div>}
       </details>
     </section>
+    {view==="items" && <NearbyItemsPanel online={mcpConnected && !!state?.connected} paused={!!state?.automation_paused}/>}
     <section hidden={view!=="diagnostics"} aria-label="Widok diagnostyki" className="space-y-5">
       {state?.packet_observer && <details className="learned-drawer"><summary>Analiza pakietów · {state.packet_observer.status==="active"?"aktywna":state.packet_observer.status==="degraded"?"luki w odczycie":state.packet_observer.status==="closed"?"zakończona":"niedostępna"}</summary><div className="p-3 text-xs space-y-1">
         <p>Kolejka {state.packet_observer.pending}/{state.packet_observer.capacity} · opóźnienie {state.packet_observer.lag_ms} ms · maksimum {state.packet_observer.max_lag_ms} ms</p>
