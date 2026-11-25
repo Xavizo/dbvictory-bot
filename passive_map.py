@@ -30,7 +30,7 @@ TRUE_GETTER_RVA = 0x6C940
 CREATURE_VTABLES = {0x8B6974:"player", 0x8B6A50:"self", 0x8BCCB0:"monster", 0x8BCD70:"npc"}
 U16_ATTRIBUTE_VTABLE_RVA = 0x8B6900
 WIDTH, HEIGHT = 18, 14
-FLAG_NAMES = {0: "ground", 1: "ground_border", 2: "on_bottom", 3: "on_top", 4: "container", 6: "force_use", 7: "multi_use",
+FLAG_NAMES = {0: "ground", 1: "ground_border", 2: "on_bottom", 3: "on_top", 4: "container", 5: "stackable", 6: "force_use", 7: "multi_use",
               12: "not_walkable", 13: "not_moveable", 14: "blocks_projectiles",
               15: "not_pathable", 16: "pickupable", 252: "floor_change"}
 
@@ -275,6 +275,8 @@ class PassiveMapMonitor:
         self._visit = self._visit_writer = None
         self._visit_epoch = 0
         self._visit_key = None
+        self._knife_witness_lock = threading.Lock()
+        self._knife_witness = None
 
     def start(self):
         self._thread.start()
@@ -339,6 +341,16 @@ class PassiveMapMonitor:
         result = self._result
         origin = result.get("center") if 0 <= time.time()-result.get("captured_at",0)<0.8 else None
         command = decode_command(opcode,reader,origin)
+        if command and command.get("kind") == "use_with" and command.get("tool_id") == 5908:
+            from hunter_knife import manual_corpse_ids
+            witness = None
+            if origin and result.get("status") == "ready":
+                pos = tuple(command["entry"])
+                ids = manual_corpse_ids(result, pos)
+                if ids == [(command["stack"], command.get("item_id"))]:
+                    witness = (self.state.game_state, pos, ids[0], time.time())
+            with self._knife_witness_lock:
+                self._knife_witness = witness
         if command and not movement:
             history = getattr(self.state.game_state, "movement_history", None)
             if history:
@@ -368,7 +380,29 @@ class PassiveMapMonitor:
         self._result = {"status":"waiting","message":"Czekam na połączenie z grą.","cells":[]}
         self.invalidate_packet_evidence()
 
+    def _check_manual_knife(self, game_state, frame):
+        from hunter_knife import manual_corpse_ids
+        with self._knife_witness_lock:
+            if self._knife_witness is None:
+                return
+            owner, pos, (stack, original), started = self._knife_witness
+            if owner is not game_state or time.time() - started > 2:
+                self._knife_witness = None
+                return
+            if frame.get("status") != "ready" or frame.get("captured_at", 0) <= started:
+                return
+            ids = manual_corpse_ids(frame, pos)
+            if ids is None or ids == [(stack, original)]:
+                return
+            self._knife_witness = None
+            if len(ids) == 1 and ids[0][0] == stack and ids[0][1] != original:
+                logging.getLogger(__name__).info(
+                    "Hunter Knife 5908 manual: tile=%s corpse_before=%d corpse_after=%d",
+                    pos, original, ids[0][1])
+
     def invalidate_packet_evidence(self):
+        with self._knife_witness_lock:
+            self._knife_witness = None
         """A packet-analysis gap invalidates correlations, not native map reads."""
         history = getattr(getattr(self.state, "game_state", None), "movement_history", None)
         if history is not None:
@@ -426,6 +460,8 @@ class PassiveMapMonitor:
         # Navigation needs the annotated live cells as soon as they are ready.
         # Atlas persistence uses the same immutable frame, on the reader thread.
         self._result = {**result, "asset": asset}
+        if self._knife_witness is not None:
+            self._check_manual_knife(game_state, result)
         journal = getattr(game_state, "observations", None)
         if journal is not None and result.get("status") == "ready":
             # The frame may have waited during learning. Keep its capture age.

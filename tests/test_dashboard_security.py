@@ -63,6 +63,7 @@ def http_api(monkeypatch):
     ("DELETE", "/api/actions/power_up"),
     ("POST", "/api/emergency-stop"), ("POST", "/api/automation/unlock"),
     ("POST", "/api/potions/diagnostics"), ("GET", "/api/nearby-items"), ("POST", "/api/nearby-items"),
+    ("GET", "/api/nearby-items/containers"),
     ("POST", "/api/map/annotation"), ("POST", "/api/map/pet"),
     ("POST", "/api/map/drafts"), ("POST", "/api/adaptive/preview"),
     ("GET", "/api/map/grounds"), ("POST", "/api/map/grounds"),
@@ -258,9 +259,13 @@ def test_nearby_item_http_routes_limit_clicks_to_offered_destinations(http_api, 
         click['destination'] = destination
         assert request('POST', route, body=json.dumps(click), **headers)[0] == 200
         assert calls[-1] == ('_async_nearby_items', dict(click))
-    for invalid in ({**click, 'destination': [10, 10, 7]}, {**click, 'count': 5}, {'token': 'a' * 32}):
+    assert request('GET', route + '/containers', **headers)[0] == 200
+    assert calls[-1] == ('_async_nearby_items', 'containers')
+    assert request('POST', route, body=json.dumps({**click, 'container': 'b' * 32}), **headers)[0] == 200
+    for invalid in ({**click, 'container': 2}, {**click, 'destination': 'feet', 'container': 'b' * 32},
+                    {**click, 'destination': [10, 10, 7]}, {**click, 'count': 5}, {'token': 'a' * 32}):
         assert request('POST', route, body=json.dumps(invalid), **headers)[0] == 400
-    assert len(calls) == 3
+    assert len(calls) == 5
     assert calls[0] == ('_async_nearby_items',)
 
 

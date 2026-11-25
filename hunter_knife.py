@@ -69,6 +69,15 @@ def publish_feedback(game, parsed, kills, received_at):
             runtime.queue.death(death, received_at)
 
 
+def manual_corpse_ids(frame, position):
+    """Return visible container layers only on a readable tile of the manual action."""
+    from transition_learning import cell_at
+    tile = cell_at(frame, position)
+    if tile is None or tile.get("kind") == "no_ground":
+        return None
+    return [(item["stack"], item["id"]) for item in tile["items"] if "container" in item.get("flags", ())]
+
+
 def body_counts(items):
     return Counter(item["id"] for item in items if item["id"] in (FRESH, SPENT))
 

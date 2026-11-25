@@ -347,7 +347,16 @@ def build_use_item_packet(x: int, y: int, z: int, item_id: int, stack_pos: int, 
     return pw.data
 
 
-def build_move_item_packet(from_pos: tuple, item_id: int, from_stack: int, to_pos: tuple, count: int) -> bytes:
+def manual_move_count_bytes(reader):
+    """Identify the normal OTC move layout; an extra opcode is not a count byte."""
+    if reader.remaining == 14:
+        return 1
+    if reader.remaining == 15 and reader.peek_remaining()[-1] == 0:
+        return 2
+    return None
+
+
+def build_move_item_packet(from_pos: tuple, item_id: int, from_stack: int, to_pos: tuple, count: int, *, count_bytes=1) -> bytes:
     """Build a move item packet."""
     pw = PacketWriter()
     pw.write_u8(ClientOpcode.MOVE_THING)
@@ -355,7 +364,12 @@ def build_move_item_packet(from_pos: tuple, item_id: int, from_stack: int, to_po
     pw.write_u16(item_id)
     pw.write_u8(from_stack)
     pw.write_position(*to_pos)
-    pw.write_u8(count)
+    if count_bytes == 1:
+        pw.write_u8(count)
+    elif count_bytes == 2:
+        pw.write_u16(count)
+    else:
+        raise ValueError("Nieobsługiwany format liczby sztuk.")
     return pw.data
 
 

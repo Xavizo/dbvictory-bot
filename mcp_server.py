@@ -239,7 +239,9 @@ async def _async_nearby_items(body=None):
         panel = state.nearby_item_test = NearbyItemTest(state)
     if body is None:
         return panel.snapshot()
-    return await panel.move(body["token"], body["destination"])
+    if body == "containers":
+        return await panel.containers()
+    return await panel.move(body["token"], body["destination"], body.get("container"))
 
 
 async def _async_alerts(command, body):
@@ -1459,6 +1461,15 @@ async def start_bot() -> str:
         except ValueError:
             name = "?"
         log.debug(f"[C->S] 0x{opcode:02X} ({name})")
+        if opcode in (ClientOpcode.USE_ITEM, ClientOpcode.CLOSE_CONTAINER, ClientOpcode.UP_CONTAINER):
+            # Opening, closing or navigating a container invalidates a pending drop.
+            game = state.game_state
+            game.container_view_epoch = getattr(game, "container_view_epoch", 0) + 1
+        if opcode == ClientOpcode.MOVE_THING:
+            from protocol import manual_move_count_bytes
+            width = manual_move_count_bytes(reader)
+            if width is not None:
+                state.game_state.manual_move_count_bytes = width
         if opcode in (ClientOpcode.MOVE_THING, ClientOpcode.REQUEST_TRADE, ClientOpcode.ACCEPT_TRADE,
                       ClientOpcode.BUY_ITEM, ClientOpcode.SELL_ITEM):
             session_observations(state.game_state).publish("client_action", ("inventory",))

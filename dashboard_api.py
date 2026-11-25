@@ -121,6 +121,8 @@ class _Handler(BaseHTTPRequestHandler):
             if center is None:
                 return self._json_response({"error": "Alerty niedostępne."}, 503)
             return self._json_response(center.snapshot())
+        if self.path == "/api/nearby-items/containers":
+            return self._run_control("_async_nearby_items", "containers")
         if self.path == "/api/nearby-items":
             return self._run_control("_async_nearby_items")
         if self.path == "/api/state":
@@ -217,9 +219,11 @@ class _Handler(BaseHTTPRequestHandler):
                 if not 0 < int(self.headers.get("Content-Length", 0)) <= 256:
                     raise ValueError("Nieprawidłowy rozmiar żądania.")
                 body = self._read_body()
-                if (not isinstance(body, dict) or set(body) != {"token", "destination"}
+                if (not isinstance(body, dict) or set(body) not in ({"token", "destination"}, {"token", "destination", "container"})
                         or not isinstance(body["token"], str) or len(body["token"]) != 32
-                        or body["destination"] not in ("backpack", "feet")):
+                        or body["destination"] not in ("backpack", "feet")
+                        or ("container" in body and (body["destination"] != "backpack"
+                            or not isinstance(body["container"], str) or len(body["container"]) != 32))):
                     raise ValueError("Nieprawidłowy wybór przedmiotu lub celu.")
                 return self._run_control("_async_nearby_items", body)
             except (TypeError, ValueError) as exc:

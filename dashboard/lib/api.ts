@@ -312,7 +312,7 @@ export const emergencyStop = () => control("/api/emergency-stop");
 export const unlockAutomation = () => control("/api/automation/unlock");
 export interface NearbyItemList {
   center: [number,number,number];
-  rows: { token:string; position:[number,number,number]; item_id:number; stack:number; pickup:boolean; covered:boolean }[];
+  rows: { token:string; position:[number,number,number]; item_id:number; stack:number; pickup:boolean; covered:boolean; stackable:boolean }[];
 }
 export async function fetchNearbyItems(signal:AbortSignal):Promise<NearbyItemList> {
   const res = await authenticatedFetch(API_BASE+"/api/nearby-items", {signal});
@@ -320,9 +320,16 @@ export async function fetchNearbyItems(signal:AbortSignal):Promise<NearbyItemLis
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   return body.message;
 }
-export async function moveNearbyItem(token:string, destination:"feet"|"backpack"):Promise<string> {
+export type NearbyContainer = { token:string; number:number; size:number };
+export async function fetchNearbyContainers(signal:AbortSignal):Promise<NearbyContainer[]> {
+  const res = await authenticatedFetch(API_BASE+"/api/nearby-items/containers", {signal});
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body.message;
+}
+export async function moveNearbyItem(token:string, destination:"feet"|"backpack", container?:string):Promise<string> {
   const res = await authenticatedFetch(API_BASE+"/api/nearby-items", {
-    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token,destination})
+    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token,destination,container})
   });
   const body = await res.json();
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);

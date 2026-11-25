@@ -1,5 +1,34 @@
 from hunter_knife import FRESH, SPENT, SkinningQueue, body_counts, skinned
 
+
+def test_manual_unknown_corpse_requires_single_replacement_on_same_tile(caplog):
+    import logging
+    import time
+    from types import SimpleNamespace
+    from passive_map import PassiveMapMonitor
+    from protocol import ClientOpcode, PacketReader, build_use_item_ex_packet
+
+    game = SimpleNamespace()
+    monitor = PassiveMapMonitor(SimpleNamespace(connected=True, game_state=game))
+    pos = [22,44,7]
+    def frame(*ids):
+        cell = dict(x=22,y=44,z=7,kind="clear",items=[
+            dict(id=item,stack=i+1,flags=["container"]) for i,item in enumerate(ids)])
+        return dict(center=pos, status="ready", captured_at=time.time(), cells=[cell])
+    def click(*ids):
+        monitor._result = frame(*ids)
+        payload = build_use_item_ex_packet(65535,4,0,5908,0,*pos,1,target_item_id=7100)
+        monitor.record_client_packet(ClientOpcode.USE_ITEM_EX, PacketReader(payload[1:]))
+    with caplog.at_level(logging.INFO):
+        click(7100,7101)
+        assert monitor._knife_witness is None
+        click(7100)
+        monitor._check_manual_knife(game, frame(7100))
+        assert not caplog.records
+        monitor._check_manual_knife(game, {**frame(7101), 'captured_at': time.time() + .01})
+        assert "corpse_before=7100 corpse_after=7101" in caplog.text
+        assert monitor._knife_witness is None
+
 A = (1925, 1288, 4)
 B = (1927, 1289, 4)
 NAME = "Mutant Fire Elemental"

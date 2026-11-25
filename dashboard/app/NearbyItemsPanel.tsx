@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { fetchNearbyItems, moveNearbyItem, type NearbyItemList } from "@/lib/api";
+import { fetchNearbyContainers, fetchNearbyItems, moveNearbyItem, type NearbyContainer, type NearbyItemList } from "@/lib/api";
 
 type Props = { online: boolean; paused: boolean };
 
@@ -13,6 +13,22 @@ export default function NearbyItemsPanel({ online, paused }: Props) {
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const pending = useRef(false);
+  const [windows, setWindows] = useState<NearbyContainer[]>([]);
+  const [container, setContainer] = useState("");
+  const [windowError, setWindowError] = useState("");
+  const [windowRefresh, setWindowRefresh] = useState(0);
+
+  useEffect(() => {
+    if (!online) { setWindows([]); setContainer(""); setWindowError(""); return; }
+    const controller = new AbortController();
+    fetchNearbyContainers(controller.signal).then(choices => {
+      if (controller.signal.aborted) return;
+      setWindows(choices); setWindowError("");
+    }).catch((err: Error) => {
+      if (!controller.signal.aborted) setWindowError(err.message);
+    });
+    return () => controller.abort();
+  }, [online, windowRefresh]);
 
   useEffect(() => {
     if (!online) { setList(null); setReadError(""); setResult(""); setMoveError(""); return; }
@@ -37,7 +53,7 @@ export default function NearbyItemsPanel({ online, paused }: Props) {
     pending.current = true;
     setBusy(true); setResult(""); setMoveError("");
     try {
-      setResult(await moveNearbyItem(token, destination));
+      setResult(await moveNearbyItem(token, destination, destination === "backpack" ? container || undefined : undefined));
     } catch (err) {
       setMoveError((err as Error).message);
     } finally {
@@ -48,7 +64,14 @@ export default function NearbyItemsPanel({ online, paused }: Props) {
   return <section className="diagnostic-section nearby-items">
     <div className="section-caption"><h2>Przedmioty w zasięgu</h2>
       {list && <span>Pozycja {list.center.join(", ")}</span>}</div>
-    <p className="nearby-note">Twoje pole i osiem pól obok. Jedno kliknięcie przenosi jedną sztukę.</p>
+    <p className="nearby-note">Twoje pole i osiem pól obok. Przenosisz po jednej sztuce, zaczynając od wierzchu.</p>
+    {online && <label>Cel podnoszenia <select value={container} onFocus={() => setWindowRefresh(i => i + 1)}
+      onChange={e => setContainer(e.target.value)} disabled={busy}>
+      <option value="">Założony plecak</option>
+      {container && !windows.some(w => w.token === container) && <option value={container} disabled>Poprzedni kontener zamknięty</option>}
+      {windows.map(w => <option key={w.token} value={w.token}>Otwarty kontener {w.number} · pozycji {w.size}</option>)}
+    </select></label>}
+    {windowError && <p role="status">{windowError}</p>}
     {readError && <p role="status">{readError}</p>}
     {moveError && <p className="text-red-300" role="alert">{moveError}</p>}
     {result && <p role="status">{result}</p>}
@@ -60,10 +83,10 @@ export default function NearbyItemsPanel({ online, paused }: Props) {
         const underfoot = row.position.every((v, i) => v === list.center[i]);
         return <li key={row.token}>
           <div><strong>ID {row.item_id}</strong>
-            <small>{underfoot ? "Pod postacią" : row.position.join(", ")} · warstwa {row.stack}
-              {row.covered ? " · przykryty" : !row.pickup ? " · tylko przesuwanie" : ""}</small></div>
+            <small>{underfoot ? "Pod postacią" : row.position.join(", ")} · warstwa {row.stack}{row.stackable ? " · łączy się w stos" : ""}
+              {row.covered ? " · najpierw przesuń przedmiot z wierzchu" : !row.pickup ? " · tylko przesuwanie" : ""}</small></div>
           <div className="nearby-buttons">
-            <button className="secondary-button" disabled={!online || paused || busy || row.covered || !row.pickup}
+            <button className="secondary-button" disabled={!online || paused || busy || row.covered || !row.pickup || (!!container && !windows.some(w => w.token === container))}
               onClick={() => move(row.token, "backpack")}>Do plecaka</button>
             <button className="secondary-button" disabled={!online || paused || busy || row.covered || underfoot}
               onClick={() => move(row.token, "feet")}>Pod postać</button>

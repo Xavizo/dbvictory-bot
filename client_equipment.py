@@ -15,7 +15,7 @@ class EquipmentReader:
         if player.source.profile != UPDATED:raise MapReadError('Nieobsługiwany odczyt wyposażenia.')
         self.player=player;self.source=player.source;self.item_ids=frozenset(item_ids)
 
-    def snapshot(self):
+    def snapshot(self, *, open_windows=None):
         stats=self.player.snapshot()  # Revalidate local-player identity, health and session.
         if stats['hp']<=0:raise MapReadError('Postać nie jest żywa.')
         s=self.source;ptr=self.player.ptr;checks=[]
@@ -33,6 +33,7 @@ class EquipmentReader:
         head,count=struct.unpack('<II',read(s.base+0xb73880+0x2c,8))
         if count>32:raise MapReadError('Za dużo otwartych kontenerów.')
         todo=[_u32(read(head,28),4)];seen=set();sources=[];total=0
+        windows = {}
         while todo:
             node=todo.pop();raw=read(node,28)
             if raw[13]:continue
@@ -46,6 +47,8 @@ class EquipmentReader:
             total+=size
             if size>255 or total>1024 or (size and (not 8<=capacity<=256 or capacity&(capacity-1))):
                 raise MapReadError('Kontener przekracza sprawdzony zakres.')
+            if open_windows is not None:
+                windows[cid] = (cptr, size)
             for index in range(size):
                 logical=offset+index
                 block=_u32(read(blocks+((logical//2)&(capacity-1))*4,4))
@@ -59,4 +62,7 @@ class EquipmentReader:
         identity=s.read(ptr,0x3c)
         if _u32(identity)!=s.base+0x8ba9b0 or _u32(identity,0x38)!=self.player.player_id:
             raise MapReadError('Zmieniła się postać.')
+        if open_windows is not None:
+            # Private same-window identity for revalidation. Never serialized in panel responses.
+            open_windows.update(windows)
         return {'slots':slots,'sources':sources,'monotonic':time.monotonic(),'player_id':self.player.player_id}
