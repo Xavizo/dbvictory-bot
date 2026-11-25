@@ -1,5 +1,7 @@
 import asyncio
 from types import SimpleNamespace
+
+import pytest
 from test_adaptive_cavebot import cell, setup, connect_fake_walk
 from test_automation_safety import state
 
@@ -43,6 +45,67 @@ def test_late_observed_exit_resumes_held_transition_without_another_use(state,tm
     async def scenario():
         await asyncio.wait_for(asyncio.gather(c._navigation_loop(),observe()),2)
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('combat', [False, True])
+def test_monars_ladder_landing_proceeds_to_next_waypoint_without_reusing_ladder(state, tmp_path, combat):
+    origin, landing, onward = [1652,1105,5], [1652,1106,4], [1651,1106,4]
+    ladder = cell(*origin, item=1948, navigation=[dict(kind='ladder')])
+    edge = dict(id='castle-ladder', origin=origin, entry=origin, exit=landing,
+                action='use', item_id=1948, entry_items=[1948], evidence='observed')
+    c, _, _ = setup(state, tmp_path, [ladder,cell(*landing),cell(*onward)],
+                    [origin,landing,onward], [edge])
+    sent = connect_fake_walk(state,c)
+    fresh_map = c.fresh_map
+    async def landed_before_cursor_advanced():
+        # Replay a landing observed while the route cursor is still at the ladder.
+        c.fresh_map = fresh_map
+        state.game_state.position = tuple(landing)
+        return await fresh_map()
+    c.fresh_map = landed_before_cursor_advanced
+    c.combat.config['enabled'] = combat
+
+    async def scenario():
+        run = asyncio.create_task(c.run())
+        try:
+            async with asyncio.timeout(3):
+                while not run.done() and not c.laps:
+                    assert not c.navigation_hold, c.navigation_hold
+                    await asyncio.sleep(.01)
+                assert c.laps == 1, c.reason
+                if combat:
+                    assert c.status == 'running' and c.domains.movement_state == 'complete'
+                else:
+                    assert c.status == 'complete'
+        finally:
+            if not run.done() and c.status == 'running':
+                c.pause('koniec testu')
+            await run
+    asyncio.run(scenario())
+    assert list(state.game_state.position) == onward
+    assert c.last_waypoint == 2 and len(sent) == 1
+
+
+def test_ladder_recovery_waits_for_fresh_exit_and_rejects_wrong_tile(state,tmp_path):
+    from adaptive_cavebot import InputsUnavailable
+    origin, landing = [1652,1105,5], [1652,1106,4]
+    edge = dict(id='ladder', origin=origin, entry=origin, exit=landing, action='use',
+                item_id=1948, entry_items=[1948], evidence='observed')
+    c,_,_ = setup(state,tmp_path,[cell(*origin,item=1948),cell(*landing)],[origin,landing],[edge])
+    c.status='running'
+    state.game_state.position = tuple(landing)
+    sample = c.map_now()
+    for change in (dict(center=origin), dict(stale=True), dict(age_seconds=1), dict(status='waiting')):
+        with pytest.raises(InputsUnavailable):
+            asyncio.run(c.recover_position({**sample, **change}))
+        assert c.index == 0
+    state.game_state.position = (landing[0]+1,landing[1],landing[2])
+    with pytest.raises(ValueError,match='Recovery'):
+        asyncio.run(c.recover_position(c.map_now()))
+    assert c.index == 0
+    state.game_state.position = tuple(landing)
+    assert asyncio.run(c.recover_position(c.map_now()))
+    assert c.index == 1 and c.last_waypoint == 1 and state.game_proxy._inject_queue.empty()
 
 
 def test_replace_offscreen_step_keeps_waypoint_and_validates_live_hops(state,tmp_path):

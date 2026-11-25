@@ -926,17 +926,20 @@ class AdaptiveCavebot:
     async def recover_position(self, sample):
         pos=list(self.state.game_state.position)
         origin=self.path[self.index]
-        if (self.status=='running' and origin[2]!=pos[2] and sample.get('center')==pos and sample.get('status')=='ready'
-                and not sample.get('stale') and sample.get('age_seconds',99)<=.6):
-            # Manual crossing or late arrival. Only credit the exact planned exit.
-            if self.path[self.index+1:self.index+2]==[pos] and any(
-                    e.get('action')=='step' and e['origin']==origin and e['exit']==pos for e in self.edges):
-                landing_index=self.index+1
+        if self.status == 'running' and origin[2] != pos[2]:
+            # A position update can arrive before the cursor advances, for both
+            # a step and an interaction such as using a ladder. Do not repeat it.
+            if self.path[self.index+1:self.index+2] == [pos]:
+                edge = self.floor_edge_at(self.index)
+                landing_index = self.index+1 if edge and supported_transition(edge) else None
             else:
                 crossing = self.upcoming_floor_crossing()
                 landing_index = (crossing[0]+1 if crossing and crossing[1]['exit'] == pos
                                  and distance(origin, crossing[1]['entry']) <= 2 else None)
             if landing_index is not None:
+                if (sample.get('center') != pos or sample.get('status') != 'ready'
+                        or sample.get('stale') or sample.get('age_seconds',99) > .6):
+                    raise InputsUnavailable('Recovery: czekam na świeżą mapę pola wyjścia.')
                 self.guard()
                 self.index=landing_index
                 self.mark_waypoint()
