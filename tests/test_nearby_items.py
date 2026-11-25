@@ -124,6 +124,7 @@ def test_direct_open_container_uses_its_next_slot_and_rejects_reused_window(pane
 def test_browse_picks_covered_erath_from_its_visible_slot(panel, monkeypatch, dest):
     from game_state import GameState, scan_packet
     from packet_observer import apply_scan, detach_state
+    monkeypatch.setattr("browse_fields.NEARBY_ITEM_TEST_ENABLED", True)
 
     p, sample = panel
     pos = (11, 10, 7)

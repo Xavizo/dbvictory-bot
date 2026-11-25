@@ -6,7 +6,7 @@ import time
 
 from cavebot_walking import distance, walkable
 from item_observations import observed_inputs, wait_for_inputs
-from hunter_knife import FRESH, KNIFE, SkinningQueue, body_counts, exposed_body_action, skinned
+from hunter_knife import FRESH_BODIES, KNIFE, ROCO, SkinningQueue, body_counts, exposed_body_action, fresh_count, skinned
 from command_delivery import CommandReceipt, attempted, confirm
 from adaptive_cavebot import tool_location
 from protocol import build_move_item_packet, build_use_item_ex_packet
@@ -15,7 +15,7 @@ NAME = "auto_hunter_knife"
 INPUTS = ("map", "position", "target", "death", "loot", "inventory", "health")
 ATTEMPT_VALID_FOR = .55
 MAP_FRESH_FOR = .6
-WAITING_FOR_BODY = "Czekam na świeże ciało elementala w zasięgu"
+WAITING_FOR_BODY = "Czekam na świeże ciało elementala lub Roco w zasięgu"
 
 
 def point(cell):
@@ -48,7 +48,9 @@ class Attempt:
 
     @property
     def layer(self):
-        return self.before[FRESH], self.item["id"]
+        body_id = self.item["id"]
+        rank = fresh_count(self.before) if self.drop else self.before[body_id]
+        return rank, body_id
 
 
 @dataclass
@@ -141,21 +143,24 @@ class KnifeAutomation:
         # An off-screen or unreadable tile cannot establish that a corpse disappeared.
         for p in self.attempted_layers.keys() & cells.keys():
             items = cells[p]["items"]
-            count = body_counts(items)[FRESH]
+            counts = body_counts(items)
+            total = fresh_count(counts)
             present = {item["id"] for item in items}
             kept = {layer: check for layer, check in self.attempted_layers[p].items()
-                    if layer[0] <= count and layer[1] in present}
+                    if layer[1] in present and layer[0] <= (counts[layer[1]] if layer[1] in FRESH_BODIES else total)}
             if kept:
                 self.attempted_layers[p] = kept
             else:
                 del self.attempted_layers[p]
-            check = kept.get((count, FRESH))
+            choice = exposed_body_action(items)
+            if not choice or choice[0] != "skin":
+                continue
+            body_id = choice[1]["id"]
+            check = kept.get((counts[body_id], body_id))
             if check is None or stamp <= check.timeout_frame or distance(origin, p) > 1:
                 continue
             cell = cells[p]
-            choice = exposed_body_action(items)
-            if (choice and choice[0] == "skin"
-                    and cell.get("occupants", 0) <= cell.get("occupant_types", {}).get("self", 0)):
+            if cell.get("occupants", 0) <= cell.get("occupant_types", {}).get("self", 0):
                 check.ready = (check.seen_frame is not None and check.seen_frame == self.previous_retry_frame
                                and 0 < stamp - check.seen_frame <= MAP_FRESH_FOR)
                 check.seen_frame = stamp
@@ -164,15 +169,19 @@ class KnifeAutomation:
     def available_body(self, p, items):
         choice = exposed_body_action(items)
         if choice and p in self.attempted_layers:
-            rank = body_counts(items)[FRESH]
+            counts = body_counts(items)
+            body_id = choice[1]["id"]
+            if choice[0] == "uncover":
+                body_id = max((i for i in items if i["id"] in FRESH_BODIES), key=lambda i: i["stack"])["id"]
             blocked = self.attempted_layers[p]
-            if (rank, FRESH) in blocked:
-                check = blocked[(rank, FRESH)]
+            layer = counts[body_id], body_id
+            if layer in blocked:
+                check = blocked[layer]
                 if (choice[0] == "skin" and check and check.ready
                         and check.seen_frame == self.frame == self.previous_retry_frame):
                     return choice
                 return None
-            if (rank, choice[1]["id"]) in blocked:
+            if choice[0] == "uncover" and (fresh_count(counts), choice[1]["id"]) in blocked:
                 return None
         return choice
 
@@ -196,7 +205,7 @@ class KnifeAutomation:
         src = cells.get(a.source)
         if src and stamp > a.stamp:
             counts = body_counts(src["items"])
-            if not a.drop and skinned(a.before, counts):
+            if not a.drop and skinned(a.before, counts, a.item["id"]):
                 stack = self.queue.stacks.get(a.source)
                 manual = getattr(self.game, "knife_manual_use_at", None)
                 if manual is not None and a.sent <= manual <= now:
@@ -227,10 +236,15 @@ class KnifeAutomation:
                 self.pending = None
                 self.status = "Obrobiono ciało"
                 return
+            if (not a.drop and a.item["id"] == ROCO and src.get("kind") != "no_ground"
+                    and counts[ROCO] < a.before[ROCO]):
+                self.pending = None
+                self.status = "Ciało Roco zniknęło bez potwierdzenia skórowania"
+                return
             if a.drop:
                 dest = cells.get(a.drop)
                 kind = a.item["id"]
-                if (dest and counts[FRESH] == a.before[FRESH]
+                if (dest and all(counts[i] == a.before[i] for i in FRESH_BODIES)
                         and sum(i["id"] == kind for i in src["items"]) == a.before_on_source - 1
                         and any(i["id"] == kind for i in dest["items"])):
                     self.pending = None
@@ -271,22 +285,24 @@ class KnifeAutomation:
         if not self.cavebot_running or not fighting or (not first and not self.deferred_tiles and not self.queue.stacks):
             self.group_progress_at = None
         elif first and self.group_progress_at is None:
-            if first.before[FRESH] > 1 or next(candidates, None) is not None:
+            if fresh_count(first.before) > 1 or next(candidates, None) is not None:
                 self.group_progress_at = now
         return first
 
     def candidates(self, cells, origin, fighting, stamp, now):
-        nearby = (p for p in cells if distance(origin, p) <= 1)
-        for p in sorted(nearby, key=lambda p: (p not in self.queue.stacks, distance(origin, p))):
-            if p in self.deferred_tiles:
+        choices = []
+        for p, cell in cells.items():
+            if distance(origin, p) > 1 or p in self.deferred_tiles:
                 continue
-            cell = cells.get(p)
-            if not cell or cell.get("occupants", 0) > cell.get("occupant_types", {}).get("self", 0):
+            if cell.get("occupants", 0) > cell.get("occupant_types", {}).get("self", 0):
                 continue
             choice = self.available_body(p, cell["items"])
-            if not choice:
-                continue
-            action, item = choice
+            if choice:
+                choices.append((p, cell, *choice))
+        # A visible Roco can decay before a group of longer-lived corpses is done.
+        choices.sort(key=lambda entry: (entry[3]["id"] != ROCO, entry[0] not in self.queue.stacks,
+                                        distance(origin, entry[0])))
+        for p, cell, action, item in choices:
             drop = None
             if action == "uncover":
                 if fighting:
@@ -402,7 +418,7 @@ async def run_knife(bot):
                 else:
                     where, _, index = location
                     payload = build_use_item_ex_packet(*where, KNIFE, index, *a.source, a.item["stack"],
-                                                       target_item_id=FRESH)
+                                                       target_item_id=a.item["id"])
                 runtime.pending = a
                 runtime.status = ("Odsuwam ciało" if a.drop else
                                   "Ponawiam użycie Hunter Knife" if a.retry else "Używam Hunter Knife")

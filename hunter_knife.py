@@ -9,9 +9,12 @@ from hunt_sightings import fresh_monster_name
 
 KNIFE = 5908
 FRESH = 9068
+ROCO = 8548
+FRESH_BODIES = frozenset((FRESH, ROCO))
 SPENT = 8141
-ELEMENTALS = frozenset({"fire elemental", "fire elementalis", "mutant fire elemental",
-                        "fury mutant fire", "fury mutant fire elemental"})
+SKINNABLE_SPECIES = frozenset({"fire elemental", "fire elementalis", "mutant fire elemental",
+                        "fury mutant fire", "fury mutant fire elemental",
+                        "roco", "chibi roco", "fury roco"})
 LOOT_LINE = re.compile(
     r"(?:(?:[01][0-9]|2[0-3]):[0-5][0-9][ \t]+)?"
     r"\[([^\[\]\r\n]{1,64})\]: [^\r\n]+"
@@ -26,7 +29,7 @@ REWARD_VALID_FOR = 300.0
 
 def loot_species(text):
     match = LOOT_LINE.fullmatch(text.strip())
-    if match and match[1].casefold() in ELEMENTALS:
+    if match and match[1].casefold() in SKINNABLE_SPECIES:
         return match[1].casefold()
     return None
 
@@ -79,22 +82,26 @@ def manual_corpse_ids(frame, position):
 
 
 def body_counts(items):
-    return Counter(item["id"] for item in items if item["id"] in (FRESH, SPENT))
+    return Counter(item["id"] for item in items if item["id"] in FRESH_BODIES or item["id"] == SPENT)
 
 
-def skinned(before, after):
-    return (before - after == Counter({FRESH: 1})
+def fresh_count(counts):
+    return sum(counts[body_id] for body_id in FRESH_BODIES)
+
+
+def skinned(before, after, body_id=FRESH):
+    return (body_id in FRESH_BODIES and before - after == Counter({body_id: 1})
             and after - before == Counter({SPENT: 1}))
 
 
 def exposed_body_action(items):
     """What can be done to this stack from the current tile observation?"""
-    if not any(item["id"] == FRESH and "container" in item.get("flags", ()) for item in items):
+    if not any(item["id"] in FRESH_BODIES and "container" in item.get("flags", ()) for item in items):
         return None
     top = max(items, key=lambda item: item["stack"])
     flags = top.get("flags", ())
     if "container" in flags:
-        if top["id"] == FRESH:
+        if top["id"] in FRESH_BODIES:
             return "skin", top
         if top["id"] in (SPENT, 8506) and "not_moveable" not in flags:
             return "uncover", top
@@ -158,7 +165,7 @@ class CorpseWitnesses:
             cid = occupants[0]
             if type(cid) is int and game.creatures.get(cid, {}).get("health", 0) > 0:
                 name = (fresh_monster_name(game, cid, stamp, p) or "").casefold()
-                if name in ELEMENTALS:
+                if name in SKINNABLE_SPECIES:
                     self.previous[p] = cid, name
 
     def resolve(self, death):
@@ -231,7 +238,7 @@ class SkinningQueue:
         if name == "?":
             name = ""
         if (row.get("creature_kind") == "pet" or (self.witnesses.tracker and self.witnesses.tracker.is_pet(cid))
-                or (name and name not in ELEMENTALS)):
+                or (name and name not in SKINNABLE_SPECIES)):
             self.other_death_at = now
             return
         point = (row.get("x"), row.get("y"), row.get("z"))
@@ -281,14 +288,14 @@ class SkinningQueue:
             on_screen = {cid for cid, creature in game.creatures.items()
                          if creature.get("health", 0) > 0 and abs(sampled_at - creature.get("t", 0)) <= .6}
             pet = getattr(game, "pets", None)
-            if (target_id in on_screen and (target.get("name") or "").casefold() in ELEMENTALS
+            if (target_id in on_screen and (target.get("name") or "").casefold() in SKINNABLE_SPECIES
                     and not (pet and pet.is_pet(target_id))):
                 target_pos = (target.get("x"), target.get("y"), target.get("z"))
         for c in cells:
             if c.get("kind") == "unknown" or "items" not in c:
                 continue
             p = (c["x"], c["y"], c["z"])
-            count = sum(i["id"] == FRESH for i in c["items"])
+            count = sum(i["id"] in FRESH_BODIES for i in c["items"])
             current[p] = count
             occupants = c.get("occupant_types", {})
             if occupants.get("monster"):
@@ -468,14 +475,14 @@ class SkinningQueue:
             used_targets.add(cid)
             stack = self.stacks[p] = OwnedStack(owned + 1, now + MAX_WAIT, at, now)
             names = {name for t, name, pos, victim in self.deaths
-                     if victim == cid and pos == p and abs(t-at) <= 1 and name in ELEMENTALS}
+                     if victim == cid and pos == p and abs(t-at) <= 1 and name in SKINNABLE_SPECIES}
             if len(gains) == 1 and len(names) == 1 and not owned:
                 stack.reward_sample = (names.pop(), gain[1])
             self.from_combat += 1
 
     def next_body(self, point, items):
         stack = self.stacks.get(point)
-        if not stack or body_counts(items)[FRESH] != stack.fresh:
+        if not stack or fresh_count(body_counts(items)) != stack.fresh:
             return None
         return exposed_body_action(items)
 

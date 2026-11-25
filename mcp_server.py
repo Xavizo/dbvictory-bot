@@ -32,6 +32,7 @@ log = logging.getLogger("mcp_server")
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from browse_fields import NEARBY_ITEM_TEST_ENABLED
 from dbv_revision import checkout_revision, revision_label, version_for
 from session_startup import LoginStartup
 from session_observations import session_observations, note_observation_gap, publish_semantic_result
@@ -1461,8 +1462,9 @@ async def start_bot() -> str:
         except ValueError:
             name = "?"
         log.debug(f"[C->S] 0x{opcode:02X} ({name})")
-        if opcode in (ClientOpcode.USE_ITEM, ClientOpcode.CLOSE_CONTAINER, ClientOpcode.UP_CONTAINER,
-                      ClientOpcode.BROWSE_FIELD, ClientOpcode.SEEK_IN_CONTAINER):
+        if NEARBY_ITEM_TEST_ENABLED and opcode in (
+                ClientOpcode.USE_ITEM, ClientOpcode.CLOSE_CONTAINER, ClientOpcode.UP_CONTAINER,
+                ClientOpcode.BROWSE_FIELD, ClientOpcode.SEEK_IN_CONTAINER):
             # Opening, closing or navigating a container invalidates a pending drop.
             game = state.game_state
             game.container_view_epoch = getattr(game, "container_view_epoch", 0) + 1
@@ -1478,7 +1480,7 @@ async def start_bot() -> str:
                                 ClientOpcode.SEEK_IN_CONTAINER) and payload:
                     number = payload[0]
                 game.browse_fields.navigating(number)
-        if opcode == ClientOpcode.MOVE_THING:
+        if NEARBY_ITEM_TEST_ENABLED and opcode == ClientOpcode.MOVE_THING:
             from protocol import manual_move_count_bytes
             width = manual_move_count_bytes(reader)
             if width is not None:

@@ -242,7 +242,18 @@ def test_websocket_requires_origin_and_token_before_sending_state(monkeypatch):
         assert not api._ws_clients
     asyncio.run(exercise())
 
+def test_nearby_item_module_is_disabled(http_api, monkeypatch):
+    request, _ = http_api
+    headers = {'Origin': DASHBOARD_ORIGIN, 'Authorization': f'Bearer {SESSION_TOKEN}'}
+    monkeypatch.setattr(api._Handler, '_run_control', lambda *_: pytest.fail("disabled module dispatched"))
+    route = '/api/nearby-items'
+    assert request('GET', route, **headers)[0] == 404
+    assert request('GET', route + '/containers', **headers)[0] == 404
+    assert request('POST', route, body=json.dumps({'token': 'a'*32, 'destination': 'feet'}), **headers)[0] == 404
+
+
 def test_nearby_item_http_routes_limit_clicks_to_offered_destinations(http_api, monkeypatch):
+    monkeypatch.setattr(api.browse_fields, 'NEARBY_ITEM_TEST_ENABLED', True)
     request, _ = http_api
     headers = {'Origin': DASHBOARD_ORIGIN, 'Authorization': f'Bearer {SESSION_TOKEN}'}
     calls = []

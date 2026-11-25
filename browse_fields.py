@@ -2,6 +2,9 @@
 from dataclasses import dataclass
 
 
+NEARBY_ITEM_TEST_ENABLED = False
+
+
 @dataclass(frozen=True)
 class OpenField:
     position: tuple

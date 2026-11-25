@@ -12,6 +12,7 @@ import time
 from collections import deque
 from client_player_state import client_field
 from pet_tracking import PetTracker
+import browse_fields
 from browse_fields import BrowseFields, field_window_header
 
 from constants import PACKET_FORMATS as PF
@@ -798,7 +799,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
         _trt_size = PF.get("tile_remove_thing", {}).get("size", 6)
         return pos + _trt_size if pos + _trt_size <= len(data) else -1
 
-    if opcode == ServerOpcode.OPEN_CONTAINER:
+    if opcode == ServerOpcode.OPEN_CONTAINER and browse_fields.NEARBY_ITEM_TEST_ENABLED:
         if pos < len(data) and data[pos] <= 15:
             gs.server_events.append((time.time(), "container_window", {
                 "number": data[pos], "is_field": field_window_header(data, pos)}))
@@ -806,7 +807,7 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
 
     # CLOSE_CONTAINER — 1 byte: u8 container_id
     if opcode == ServerOpcode.CLOSE_CONTAINER:
-        if pos < len(data) and data[pos] <= 15:
+        if browse_fields.NEARBY_ITEM_TEST_ENABLED and pos < len(data) and data[pos] <= 15:
             gs.server_events.append((time.time(), "container_window", {"number": data[pos], "is_field": False}))
         _cc_size = PF.get("close_container", {}).get("size", 1)
         return pos + _cc_size if pos + _cc_size <= len(data) else -1

@@ -19,6 +19,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, parse_qs
 from uuid import uuid4
+import browse_fields
 from dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
 from cavebot_combat import validate_combat
 from map_atlas import database_busy
@@ -121,9 +122,9 @@ class _Handler(BaseHTTPRequestHandler):
             if center is None:
                 return self._json_response({"error": "Alerty niedostępne."}, 503)
             return self._json_response(center.snapshot())
-        if self.path == "/api/nearby-items/containers":
+        if browse_fields.NEARBY_ITEM_TEST_ENABLED and self.path == "/api/nearby-items/containers":
             return self._run_control("_async_nearby_items", "containers")
-        if self.path == "/api/nearby-items":
+        if browse_fields.NEARBY_ITEM_TEST_ENABLED and self.path == "/api/nearby-items":
             return self._run_control("_async_nearby_items")
         if self.path == "/api/state":
             return self._handle_get_state()
@@ -214,7 +215,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._run_control("_async_alerts", body["command"], body)
             except (ValueError, TypeError) as exc:
                 return self._json_response({"error": str(exc)}, 400)
-        if self.path == "/api/nearby-items":
+        if browse_fields.NEARBY_ITEM_TEST_ENABLED and self.path == "/api/nearby-items":
             try:
                 if not 0 < int(self.headers.get("Content-Length", 0)) <= 256:
                     raise ValueError("Nieprawidłowy rozmiar żądania.")
