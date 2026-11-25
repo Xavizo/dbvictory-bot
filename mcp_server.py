@@ -1461,10 +1461,23 @@ async def start_bot() -> str:
         except ValueError:
             name = "?"
         log.debug(f"[C->S] 0x{opcode:02X} ({name})")
-        if opcode in (ClientOpcode.USE_ITEM, ClientOpcode.CLOSE_CONTAINER, ClientOpcode.UP_CONTAINER):
+        if opcode in (ClientOpcode.USE_ITEM, ClientOpcode.CLOSE_CONTAINER, ClientOpcode.UP_CONTAINER,
+                      ClientOpcode.BROWSE_FIELD, ClientOpcode.SEEK_IN_CONTAINER):
             # Opening, closing or navigating a container invalidates a pending drop.
             game = state.game_state
             game.container_view_epoch = getattr(game, "container_view_epoch", 0) + 1
+            if opcode == ClientOpcode.BROWSE_FIELD and reader.remaining == 5:
+                game.browse_fields.requested(reader.read_position(), _time.perf_counter())
+            else:
+                # Opening a backpack in another window leaves the browsed tile available.
+                payload = reader.peek_remaining()
+                number = None
+                if opcode == ClientOpcode.USE_ITEM and len(payload) == 9:
+                    number = payload[-1]
+                elif opcode in (ClientOpcode.CLOSE_CONTAINER, ClientOpcode.UP_CONTAINER,
+                                ClientOpcode.SEEK_IN_CONTAINER) and payload:
+                    number = payload[0]
+                game.browse_fields.navigating(number)
         if opcode == ClientOpcode.MOVE_THING:
             from protocol import manual_move_count_bytes
             width = manual_move_count_bytes(reader)
@@ -1556,6 +1569,7 @@ async def start_bot() -> str:
         gs.client_walk_requests.clear()
         gs.packet_position_trusted = False
         gs.pets.invalidate_pending_look()
+        gs.browse_fields.clear()
         usage = getattr(gs, "senzu_usage", None)
         if usage is not None:
             usage.invalidate_inventory()

@@ -64,7 +64,7 @@ export default function NearbyItemsPanel({ online, paused }: Props) {
   return <section className="diagnostic-section nearby-items">
     <div className="section-caption"><h2>Przedmioty w zasięgu</h2>
       {list && <span>Pozycja {list.center.join(", ")}</span>}</div>
-    <p className="nearby-note">Twoje pole i osiem pól obok. Przenosisz po jednej sztuce, zaczynając od wierzchu.</p>
+    <p className="nearby-note">Twoje pole i osiem pól obok. Przenosisz po jednej sztuce. Dla przykrytych rzeczy otwórz Browse Fields na ich polu w grze.</p>
     {online && <label>Cel podnoszenia <select value={container} onFocus={() => setWindowRefresh(i => i + 1)}
       onChange={e => setContainer(e.target.value)} disabled={busy}>
       <option value="">Założony plecak</option>
@@ -84,11 +84,11 @@ export default function NearbyItemsPanel({ online, paused }: Props) {
         return <li key={row.token}>
           <div><strong>ID {row.item_id}</strong>
             <small>{underfoot ? "Pod postacią" : row.position.join(", ")} · warstwa {row.stack}{row.stackable ? " · łączy się w stos" : ""}
-              {row.covered ? " · najpierw przesuń przedmiot z wierzchu" : !row.pickup ? " · tylko przesuwanie" : ""}</small></div>
+              {row.covered ? (row.browsed ? " · w Browse Fields" : " · otwórz Browse Fields") : !row.pickup ? " · tylko przesuwanie" : ""}</small></div>
           <div className="nearby-buttons">
-            <button className="secondary-button" disabled={!online || paused || busy || row.covered || !row.pickup || (!!container && !windows.some(w => w.token === container))}
+            <button className="secondary-button" disabled={!online || paused || busy || (row.covered && !row.browsed) || !row.pickup || (!!container && !windows.some(w => w.token === container))}
               onClick={() => move(row.token, "backpack")}>Do plecaka</button>
-            <button className="secondary-button" disabled={!online || paused || busy || row.covered || underfoot}
+            <button className="secondary-button" disabled={!online || paused || busy || (row.covered && !row.browsed) || underfoot}
               onClick={() => move(row.token, "feet")}>Pod postać</button>
           </div>
         </li>;

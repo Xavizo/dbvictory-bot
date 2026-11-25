@@ -169,6 +169,9 @@ def apply_scan(live, scan):
     publish_feedback(live, parsed, new_kills, scan.received_at)
     live.messages.extend(parsed.messages)
     live.tile_updates.extend(parsed.tile_updates)
+    for _, kind, event in parsed.server_events:
+        if kind == "container_window" and scan.received_perf is not None:
+            live.browse_fields.window_changed(event["number"], event["is_field"], scan.received_perf)
     live.server_events.extend(parsed.server_events)
     return new_kills
 

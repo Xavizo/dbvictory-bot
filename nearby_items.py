@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from uuid import uuid4
 
+from browse_fields import field_slot
 from command_delivery import delivery
 from protocol import build_move_item_packet
 from session_lifetime import SessionLease, task_alive
@@ -53,7 +54,7 @@ def recent_refusal(messages, previous):
     return None
 
 
-def read_bags(player_id):
+def read_bags(player_id, *, field_items=None):
     from client_equipment import EquipmentReader
     from client_player_state import ClientPlayerReader
     from passive_map_win32 import ReadOnlyClient
@@ -61,8 +62,12 @@ def read_bags(player_id):
     client = ReadOnlyClient()
     try:
         windows = {}
-        inventory = EquipmentReader(ClientPlayerReader(client, player_id), ()).snapshot(open_windows=windows)
-        return inventory["slots"].get(EQUIPPED_BACKPACK[1], 0), windows
+        reader = EquipmentReader(ClientPlayerReader(client, player_id), field_items or ())
+        inventory = reader.snapshot(open_windows=windows)
+        bag = inventory["slots"].get(EQUIPPED_BACKPACK[1], 0)
+        if field_items is not None:
+            return bag, windows, inventory["sources"]
+        return bag, windows
     finally:
         client.close()
 
@@ -93,6 +98,20 @@ def nearby_items(sample):
                                  "pickupable" in item["flags"], item["stack"] != top, "stackable" in item["flags"])
 
 
+def tile_layers(items, position):
+    return tuple(sorted((item.stack, item.item_id) for item in items if item.position == position))
+
+
+def window_slots(windows, entries, number):
+    if number not in windows:
+        return ()
+    slots = [None] * windows[number][1]
+    for entry in entries:
+        if entry["container"] == number:
+            slots[entry["index"]] = entry["item_id"]
+    return tuple(slots)
+
+
 class NearbyItemTest:
     def __init__(self, state):
         self.state = state
@@ -112,6 +131,13 @@ class NearbyItemTest:
             raise ValueError("Czekam na świeżą mapę zgodną z pozycją postaci.")
         return sample
 
+    def field_window_numbers(self):
+        fields = getattr(self.lease.game, "browse_fields", None)
+        return fields.field_windows if fields else ()
+
+    def open_field(self):
+        return getattr(getattr(self.lease.game, "browse_fields", None), "opened", None)
+
     def snapshot(self):
         try:
             sample = self.live_map()
@@ -120,11 +146,13 @@ class NearbyItemTest:
             raise
         tokens = {}
         rows = []
+        opened = self.open_field()
         for item in nearby_items(sample):
             token = self.tokens.get(item) or uuid4().hex
             tokens[item] = token
             rows.append(dict(token=token, position=item.position, item_id=item.item_id, stack=item.stack,
-                             pickup=item.pickup, covered=item.covered, stackable=item.stackable))
+                             pickup=item.pickup, covered=item.covered, stackable=item.stackable,
+                             browsed=bool(opened and opened.position == item.position)))
         self.tokens = tokens
         return dict(center=sample["center"], rows=rows)
 
@@ -135,6 +163,8 @@ class NearbyItemTest:
         choices = {}
         visible = []
         for number, (identity, size) in sorted(windows.items()):
+            if number in self.field_window_numbers():
+                continue
             key = (number, identity)
             choices[key] = self.windows.get(key) or uuid4().hex
             visible.append(dict(token=choices[key], number=number, size=size))
@@ -174,19 +204,28 @@ class NearbyItemTest:
         if self.busy:
             raise ValueError("Poczekaj na wynik poprzedniego ruchu.")
         item = next((i for i, t in self.tokens.items() if t == token), None)
-        if item is None or item.covered or destination not in ("backpack", "feet"):
-            raise ValueError("Wybierz ponownie odsłonięty przedmiot.")
+        if item is None or destination not in ("backpack", "feet"):
+            raise ValueError("Wybierz ponownie przedmiot.")
+        opened = self.open_field() if item.covered else None
+        if item.covered and (opened is None or opened.position != item.position):
+            raise ValueError(f"Otwórz Browse Fields na polu {item.position} w kliencie.")
         self.tokens.pop(item)
         self.busy = True
         owner = asyncio.current_task()
         try:
             bag_revision = None
             window_epoch = getattr(self.lease.game, "container_view_epoch", 0)
+            layers = None
+
             def valid():
                 if not task_alive(owner) or self.state.automation_paused or self.lease.game.hp <= 0:
                     return False
                 try:
-                    if item not in nearby_items(self.live_map()):
+                    current = list(nearby_items(self.live_map()))
+                    if item not in current:
+                        return False
+                    if opened and (self.open_field() is not opened or
+                                   (layers is not None and tile_layers(current, item.position) != layers)):
                         return False
                 except ValueError:
                     return False
@@ -196,11 +235,27 @@ class NearbyItemTest:
 
             if not valid():
                 raise ValueError("Pozycja, przedmiot lub stan sesji uległy zmianie.")
+            source, stack = item.position, item.stack
+            if opened or destination == "backpack":
+                bag_revision = session_observations(self.lease.game).revision_for(("inventory",))
+            if opened:
+                layers = tile_layers(nearby_items(self.live_map()), item.position)
+                field_ids = {iid for _, iid in layers}
+                bag, windows, entries = await asyncio.to_thread(
+                    read_bags, self.lease.player, field_items=field_ids)
+                window = windows.get(opened.window)
+                if not window or not valid():
+                    raise ValueError("Widok Browse Fields zmienił się. Otwórz ponownie wybrane pole.")
+                slots = window_slots(windows, entries, opened.window)
+                stack = field_slot(layers, slots, (item.stack, item.item_id))
+                if stack is None:
+                    raise ValueError("Browse Fields nie pokazuje jednoznacznej pozycji tego przedmiotu.")
+                source = (65535, 0x40 | opened.window, stack)
             if destination == "backpack":
                 if not item.pickup:
                     raise ValueError("Tego przedmiotu nie można podnieść do plecaka.")
-                bag_revision = session_observations(self.lease.game).revision_for(("inventory",))
-                bag, windows = await asyncio.to_thread(read_bags, self.lease.player)
+                if not opened:
+                    bag, windows = await asyncio.to_thread(read_bags, self.lease.player)
                 if container is None:
                     if not bag:
                         raise ValueError("Slot plecaka jest pusty.")
@@ -208,20 +263,28 @@ class NearbyItemTest:
                 else:
                     key = next((key for key, value in self.windows.items() if value == container), None)
                     window = windows.get(key[0]) if key else None
-                    if not window or window[0] != key[1]:
+                    if not window or window[0] != key[1] or key[0] in self.field_window_numbers():
                         raise ValueError("Wybrany kontener został zamknięty lub zmieniony. Wybierz go ponownie.")
                     target = (65535, 0x40 | key[0], window[1])
             else:
                 target = item.center
                 if item.position == target:
                     raise ValueError("Przedmiot już leży pod postacią.")
+            if opened:
+                fresh_bag, fresh_windows, fresh_entries = await asyncio.to_thread(
+                    read_bags, self.lease.player, field_items=field_ids)
+                changed_destination = destination == "backpack" and (
+                    fresh_bag != bag or (container and fresh_windows.get(key[0]) != windows[key[0]]))
+                if (changed_destination or fresh_windows.get(opened.window) != windows[opened.window]
+                        or window_slots(fresh_windows, fresh_entries, opened.window) != slots):
+                    raise ValueError("Zawartość lub okno zmieniło się. Wybierz przedmiot ponownie.")
             if not valid():
                 raise ValueError("Dane przedmiotu lub wyposażenia uległy zmianie.")
             before = self.live_map()
             messages = getattr(self.lease.game, "messages", ())
             previous_message = messages[-1] if messages else None
             width = getattr(self.lease.game, "manual_move_count_bytes", 1)
-            drag = build_move_item_packet(item.position, item.item_id, item.stack, target, 1, count_bytes=width)
+            drag = build_move_item_packet(source, item.item_id, stack, target, 1, count_bytes=width)
             receipt = await delivery(await self.lease.proxy.inject_to_server(drag, guard=valid))
             logging.getLogger(__name__).info(
                 "Manual item move id=%s source=%s layer=%s target=%s count_bytes=%s delivery=%s",
@@ -232,6 +295,17 @@ class NearbyItemTest:
                 raise ValueError("Ruch nie został wysłany. Sprawdź aktualną listę.")
             try:
                 result = await self.outcome(item, destination, before, previous_message)
+                if opened and container and destination == "backpack" and self.lease.valid():
+                    try:
+                        _, after_windows, after_entries = await asyncio.to_thread(
+                            read_bags, self.lease.player, field_items={item.item_id})
+                    except (OSError, RuntimeError, ValueError):
+                        after_windows, after_entries = {}, []
+                    number, identity = key
+                    if after_windows.get(number, (None,))[0] == identity and self.lease.valid():
+                        after_count = window_slots(after_windows, after_entries, number).count(item.item_id)
+                        if after_count > window_slots(windows, entries, number).count(item.item_id):
+                            result = "Wybrany kontener potwierdza pojawienie się przedmiotu."
             except ValueError as exc:
                 logging.getLogger(__name__).info("Manual item move id=%s: %s", item.item_id, exc)
                 raise

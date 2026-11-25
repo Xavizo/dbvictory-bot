@@ -312,7 +312,7 @@ export const emergencyStop = () => control("/api/emergency-stop");
 export const unlockAutomation = () => control("/api/automation/unlock");
 export interface NearbyItemList {
   center: [number,number,number];
-  rows: { token:string; position:[number,number,number]; item_id:number; stack:number; pickup:boolean; covered:boolean; stackable:boolean }[];
+  rows: { token:string; position:[number,number,number]; item_id:number; stack:number; pickup:boolean; covered:boolean; browsed:boolean; stackable:boolean }[];
 }
 export async function fetchNearbyItems(signal:AbortSignal):Promise<NearbyItemList> {
   const res = await authenticatedFetch(API_BASE+"/api/nearby-items", {signal});

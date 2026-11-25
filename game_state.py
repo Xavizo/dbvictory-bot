@@ -12,6 +12,7 @@ import time
 from collections import deque
 from client_player_state import client_field
 from pet_tracking import PetTracker
+from browse_fields import BrowseFields, field_window_header
 
 from constants import PACKET_FORMATS as PF
 from protocol import Direction, ServerOpcode
@@ -62,6 +63,7 @@ class GameState:
 
         self.player_name = ""
         self.pets = PetTracker()
+        self.browse_fields = BrowseFields()
 
         # Player stats
         self.hp: int = 0
@@ -796,8 +798,16 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
         _trt_size = PF.get("tile_remove_thing", {}).get("size", 6)
         return pos + _trt_size if pos + _trt_size <= len(data) else -1
 
+    if opcode == ServerOpcode.OPEN_CONTAINER:
+        if pos < len(data) and data[pos] <= 15:
+            gs.server_events.append((time.time(), "container_window", {
+                "number": data[pos], "is_field": field_window_header(data, pos)}))
+        return -1  # Variable item list. Its contents come from the client window.
+
     # CLOSE_CONTAINER — 1 byte: u8 container_id
     if opcode == ServerOpcode.CLOSE_CONTAINER:
+        if pos < len(data) and data[pos] <= 15:
+            gs.server_events.append((time.time(), "container_window", {"number": data[pos], "is_field": False}))
         _cc_size = PF.get("close_container", {}).get("size", 1)
         return pos + _cc_size if pos + _cc_size <= len(data) else -1
 

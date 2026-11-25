@@ -59,6 +59,8 @@ class ClientOpcode(IntEnum):
     # Container
     CLOSE_CONTAINER = 0x87
     UP_CONTAINER = 0x88
+    BROWSE_FIELD = 0xCB
+    SEEK_IN_CONTAINER = 0xCC
 
     # Trade
     REQUEST_TRADE = 0x7D

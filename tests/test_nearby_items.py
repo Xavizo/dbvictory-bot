@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 import nearby_items
+from browse_fields import BrowseFields, field_slot
 from command_delivery import CommandReceipt
 from nearby_items import NearbyItemTest
 from protocol import PacketReader, build_move_item_packet, manual_move_count_bytes
@@ -117,6 +118,118 @@ def test_direct_open_container_uses_its_next_slot_and_rejects_reused_window(pane
     windows[2] = (301,4)
     with pytest.raises(ValueError, match="kontener"):
         asyncio.run(p.move(p.snapshot()["rows"][-1]["token"], "backpack", choices[1]["token"]))
+
+
+@pytest.mark.parametrize("dest", ["backpack", "feet"])
+def test_browse_picks_covered_erath_from_its_visible_slot(panel, monkeypatch, dest):
+    from game_state import GameState, scan_packet
+    from packet_observer import apply_scan, detach_state
+
+    p, sample = panel
+    pos = (11, 10, 7)
+    sample["cells"] = [tile(*pos[:2], (101, ["ground"]), (102, ["on_bottom", "not_moveable"]),
+                            (890, ["pickupable"]), (450, ["pickupable"]), (8192, ["pickupable", "stackable"])),
+                       tile(10, 10, (101, ["ground"]))]
+    # The live monitor publishes a new sample for every frame.
+    p.state.passive_map_monitor.snapshot = lambda: dict(sample)
+    sample["captured_at"] = time.time() - .1
+    live = GameState()
+    live.browse_fields.requested(pos, 10)
+    parsed = detach_state(live, 0)
+    parsed.received_perf = 10.1
+    title = b"Browse Fields"
+    header = bytes([0x6e, 6, 100, 0, len(title), 0]) + title + bytes([30, 0])
+    scan_packet(header, parsed.state, received_at=10.1)
+    apply_scan(live, parsed)
+    p.lease.game.browse_fields = live.browse_fields
+    row = next(r for r in p.snapshot()["rows"] if r["item_id"] == 8192)
+    assert row["stack"] == 4 and row["covered"] and row["browsed"]
+    windows = {1: (555, 3), 6: (123, 3)}
+    inventory = [dict(container=6, index=i, item_id=value) for i, value in enumerate([8192, 450, 890])]
+    inventory.append(dict(container=1, index=1, item_id=8192))
+    def bags(player, *, field_items=None):
+        return (2880, windows) if field_items is None else (2880, dict(windows), list(inventory))
+    monkeypatch.setattr(nearby_items, "read_bags", bags)
+    choices = asyncio.run(p.containers())
+    assert [c["number"] for c in choices] == [1]
+    selected_bag = choices[0]["token"] if dest == "backpack" else None
+    expected = (65535, 65, 3) if dest == "backpack" else (10, 10, 7)
+    sent = []
+    async def dispatch(data, guard):
+        assert guard()
+        sent.append(data)
+        remaining = tile(*pos[:2], (101, ["ground"]), (102, ["on_bottom", "not_moveable"]),
+                         (890, ["pickupable"]), (450, ["pickupable"]))
+        feet_items = [(8192, ["pickupable"])] if dest == "feet" else []
+        sample["cells"] = [remaining, tile(10, 10, (101, ["ground"]), *feet_items)]
+        if dest == "backpack":
+            inventory.append(dict(container=1, index=3, item_id=8192))
+            windows[1] = (555, 4)
+        sample["captured_at"] = time.time()
+        receipt = CommandReceipt(1, 5, "server", 0)
+        receipt.finish("dispatched")
+        return receipt
+    p.lease.proxy.inject_to_server = dispatch
+    assert "potwierdza" in asyncio.run(p.move(row["token"], dest, selected_bag)).lower()
+    assert sent == [build_move_item_packet((65535, 70, 0), 8192, 0, expected, 1)]
+    assert [i["id"] for i in sample["cells"][0]["items"]] == [101, 102, 890, 450]
+
+
+def test_field_slots_and_duplicate_ids():
+    layers = ((2, 8192), (3, 8192), (4, 777))
+    assert field_slot(layers, (777, 8192, 8192), (3, 8192)) == 1
+    assert field_slot(layers, (777, 8192, 8192), (2, 8192)) == 2
+    assert field_slot(layers, (777, 8192), (2, 8192)) is None
+    assert field_slot(((2, 8192), (3, 8192)), (8192, 8192), (2, 8192)) is None
+
+
+def test_requires_unambiguous_native_open_and_invalidates_reused_window():
+    fields = BrowseFields()
+    a, b = (10, 10, 7), (11, 10, 7)
+    fields.requested(a, 10)
+    fields.window_changed(6, True, 9.9)
+    assert fields.opened is None
+    fields.requested(b, 10.2)
+    fields.window_changed(6, True, 10.3)
+    assert fields.opened is None
+    fields.requested(a, 13)
+    fields.window_changed(6, True, 13.1)
+    assert fields.opened.position == a
+    fields.navigating(1)
+    assert fields.opened.position == a and fields.field_windows == {6}
+    fields.window_changed(2, True, 13.15)
+    assert fields.field_windows == {2, 6}
+    fields.window_changed(6, False, 13.2)
+    assert fields.field_windows == {2}
+    assert fields.opened is None
+    fields.requested(b, 14)
+    fields.window_changed(6, True, 18)
+    assert fields.opened is None
+
+
+@pytest.mark.parametrize("case", ["different_tile", "wrong_title", "item_missing", "closed_during_read", "slot_changed"])
+def test_browse_does_not_move_from_wrong_or_changed_view(panel, monkeypatch, case):
+    p, sample = panel
+    game = p.lease.game
+    game.browse_fields = BrowseFields()
+    pos = (10, 10, 7) if case == "different_tile" else (11, 10, 7)
+    game.browse_fields.requested(pos, 5)
+    game.browse_fields.window_changed(3, case != "wrong_title", 5.1)
+    rows = p.snapshot()["rows"]
+    covered = next(r for r in rows if r["covered"])
+    calls = 0
+    def read(player, *, field_items):
+        nonlocal calls
+        calls += 1
+        if case == "closed_during_read":
+            game.browse_fields.clear()
+        ids = [990] if case == "item_missing" else [990, 805]
+        if case == "slot_changed" and calls > 1:
+            ids.reverse()
+        return 101, {3: (777, len(ids))}, [dict(index=i, item_id=v, container=3) for i, v in enumerate(ids)]
+    monkeypatch.setattr(nearby_items, "read_bags", read)
+    with pytest.raises(ValueError):
+        asyncio.run(p.move(covered["token"], "feet"))
 
 
 def test_game_refusal_does_not_count_an_earlier_message(panel):
