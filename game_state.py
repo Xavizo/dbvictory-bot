@@ -113,8 +113,8 @@ class GameState:
         self.knife_candidate_count = 0
         self.knife_manual_use_at = None
         self.knife_denials = 0
-        # Chat messages ring buffer
-        self.messages: deque = deque(maxlen=50)
+        # Recognized server text messages, retained for the current session.
+        self.messages: deque = deque(maxlen=100_000)
 
         # Timestamp of last map data packet (for creature pruning)
         self.last_map_time: float = 0

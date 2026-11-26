@@ -113,6 +113,21 @@ def test_packet_potion_messages_are_delivered_only_after_worker_returns():
     assert list(gs.messages)==[{'type':25,'text':text.decode()}]
 
 
+def test_message_history_keeps_the_latest_100000_entries_across_batches():
+    live = GameState()
+    capacity = 100_000
+    live.messages.extend({"type": 25, "text": str(i)} for i in range(capacity))
+    assert len(live.messages) == capacity
+
+    scan = detach_state(live, 0)
+    assert not scan.state.messages
+    scan.state.messages.extend({"type": 25, "text": str(i)} for i in range(capacity, capacity + 60))
+    apply_scan(live, scan)
+
+    assert len(live.messages) == capacity
+    assert all(row["text"] == str(i) for i, row in enumerate(live.messages, start=60))
+
+
 def test_walk_cancel_retains_its_ingress_time_after_worker_publication():
     gs = GameState()
     gs.position = (697, 394, 9)
