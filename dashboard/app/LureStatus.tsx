@@ -15,7 +15,7 @@ export function LureSettings({value,onChange}:{value:CombatConfig;onChange:(next
 export default function LureStatus({progress,paused=false}:{progress:LureProgress;paused?:boolean}) {
   const {following,goal,waiting,stop_reason:reason}=progress;
   const count=progress.engaged??following;
-  const captions = {origin_limit:'Limit SQM od wykrycia · walczę',clear_pack:'Brak kolejnych mobów przed grupą · walczę',group:'Grupa zebrana · walczę',timeout:'Limit czasu · walczę',transition:'Przed przejściem · walczę',corridor:'Przed wąskim korytarzem · walczę'};
+  const captions = {no_approach:'Mob nie podchodzi · walczę',origin_limit:'Limit SQM od wykrycia · walczę',clear_pack:'Brak kolejnych mobów przed grupą · walczę',group:'Grupa zebrana · walczę',timeout:'Limit czasu · walczę',transition:'Przed przejściem · walczę',corridor:'Przed wąskim korytarzem · walczę'};
   const caption=paused?'Lurowanie wstrzymane':reason?captions[reason]:waiting?'Czekam na moby · atakuję':'Zbieram grupę · atakuję';
   return <div className={`lure-progress ${reason?'is-fighting':''}`} role="status" aria-label="Postęp lurowania" title={`W grupie ${count}/${goal} · ${caption}`}>
     <div><strong>W grupie <b>{count} <span>/ {goal}</span></b></strong><small>{caption}</small></div>

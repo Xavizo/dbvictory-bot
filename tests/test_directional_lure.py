@@ -142,3 +142,149 @@ def test_room_exit_still_finishes_small_group(state,tmp_path):
     c,cells,_=scene(state,tmp_path);monster(state,cells,x=16,y=11)
     assert asyncio.run(c.combat.tick(c.map_now(),at_transition=True))
     assert c.combat.lure_stop_reason=='transition'
+
+
+@pytest.fixture
+def combat_clock(monkeypatch):
+    import time
+    from types import SimpleNamespace
+    import cavebot_combat
+    clock = Mock(return_value=100.)
+    monkeypatch.setattr(cavebot_combat, 'time', SimpleNamespace(monotonic=clock, time=time.time))
+    return clock
+
+
+@pytest.mark.parametrize('boundary', [False, True], ids=['gathering', 'already-fighting'])
+def test_lure_closes_on_mob_beside_player_and_rejoins_route(state, tmp_path, combat_clock, boundary):
+    from test_adaptive_cavebot import connect_fake_walk
+    from cavebot_walking import distance
+    from protocol import WALK_OPCODES
+
+    c, cells, sent = scene(state, tmp_path)
+    cid, mob, tile = monster(state, cells, x=6, y=10)
+    player = (7, 10, 7)
+    next(t for t in cells if (t['x'], t['y'], t['z']) == player).update(occupants=1, occupant_types={'player': 1})
+    anchor = state.game_state.position
+    attack = state.game_proxy.inject_to_server
+    walked = connect_fake_walk(state, c)
+    walk = state.game_proxy.inject_to_server
+
+    async def dispatch(payload, guard=None):
+        if payload[0] in WALK_OPCODES.values():
+            await walk(payload, guard)
+            assert state.game_state.position != player
+        else:
+            await attack(payload, guard)
+
+    state.game_proxy.inject_to_server = dispatch
+    async def exercise():
+        for second in range(3):
+            combat_clock.return_value = 100. + second
+            mob['health'] -= 1  # Ranged damage is not evidence that the monster is following.
+            await c.combat.tick(c.map_now(), at_transition=boundary)
+            assert state.game_state.position == anchor
+        for second in range(3, 6):
+            combat_clock.return_value = 100. + second
+            assert await c.combat.tick(c.map_now(), at_transition=boundary)
+            assert c.combat.phase == 'chase' and c.combat.anchor == list(anchor)
+            assert c.index == 0 and c.combat.sent_target == cid
+        assert len(walked) == 3 and distance(state.game_state.position, (6, 10, 7)) == 1
+        assert await c.combat.tick(c.map_now(), at_transition=boundary)
+        assert c.combat.phase == 'fight' and len(walked) == 3
+        assert c.combat.lure_stop_reason == ('transition' if boundary else 'no_approach')
+        mob['health'] = 0
+        tile.update(occupants=0, occupant_types={})
+        for _ in range(8):
+            combat_clock.return_value += .5
+            if not await c.combat.tick(c.map_now()):
+                break
+        assert c.combat.phase == 'route' and c.combat.anchor is None
+        assert state.game_state.position == anchor
+
+    asyncio.run(exercise())
+    assert sent[0][0] == ClientOpcode.ATTACK
+
+
+def test_slowly_approaching_mob_keeps_its_grace_at_lure_stop(state, tmp_path, combat_clock):
+    c, cells, _ = scene(state, tmp_path)
+    cid, row, tile = monster(state, cells, x=16, y=11)
+    c.combat.defer_movement = True
+    for second in range(7):
+        combat_clock.return_value = 100. + second
+        if second in (2, 4):
+            tile.update(occupants=0, occupant_types={})
+            cid, row, tile = monster(state, cells, x=row['x']-1, y=11, cid=cid)
+        assert asyncio.run(c.combat.tick(c.map_now(), at_transition=True))
+        assert c.combat.phase == 'fight' and c.combat.movement_intent is None
+
+
+@pytest.mark.parametrize('change', ['target-moved', 'player-in-way', 'target-gone', 'manual-control'])
+def test_queued_lure_approach_rechecks_the_world(state, tmp_path, combat_clock, change):
+    c, cells, _ = scene(state, tmp_path)
+    cid, row, tile = monster(state, cells, x=6, y=10)
+    c.combat.defer_movement = True
+    for second in range(4):
+        combat_clock.return_value = 100. + second
+        asyncio.run(c.combat.tick(c.map_now(), at_transition=True))
+    intent = c.combat.movement_intent
+    assert intent and intent['validate']()
+    if change == 'target-moved':
+        tile.update(occupants=0, occupant_types={})
+        monster(state, cells, x=7, y=10, cid=cid)
+    elif change == 'player-in-way':
+        step = next(t for t in cells if [t['x'], t['y'], t['z']] == intent['target'])
+        step.update(occupants=1, occupant_types={'player': 1})
+    elif change == 'target-gone':
+        row['health'] = 0
+    else:
+        c.combat.accept_manual_target(cid)
+    assert not intent['validate']()
+
+
+def test_unresponsive_mob_across_occupied_or_protected_passage_has_no_melee_step():
+    from cavebot_lure import lure_melee_step
+    cells = [cell(x, 10) for x in range(5, 11)]
+    origin, target = (10, 10, 7), (5, 10, 7)
+    gate = cells[3]
+    def step(edges=(), blocked=(), radius=5):
+        return lure_melee_step(cells, origin, target, edges, blocked, origin, radius)
+    assert step() == (9, 10, 7)
+    assert step(radius=2) is None
+    assert step(blocked={(8, 10, 7)}) is None
+    assert step(edges=[dict(origin=(8,10,7), entry=(7,10,7), exit=(6,10,7))]) is None
+    gate.update(occupants=1, occupant_types={'player': 1})
+    assert step() is None
+    gate.update(occupants=0, occupant_types={}, navigation=[dict(kind='door', door_state_hint='open')])
+    assert step() is None
+
+
+def test_route_closing_on_a_stationary_recruit_keeps_gathering(state, tmp_path, combat_clock):
+    c, cells, _ = scene(state, tmp_path)
+    monster(state, cells, x=17, y=12)
+    c.combat.defer_movement = True
+    for second in range(6):
+        combat_clock.return_value = 100. + second
+        c.index = second // 2
+        state.game_state.position = tuple(c.path[c.index])
+        assert not asyncio.run(c.combat.tick(c.map_now()))
+        assert c.combat.phase == 'lure' and c.combat.movement_intent is None
+
+
+def test_lure_approach_waits_for_movement_permission_and_fresh_identity(state, tmp_path, combat_clock):
+    c, cells, _ = scene(state, tmp_path)
+    cid, row, _ = monster(state, cells, x=6, y=10)
+    c.combat.defer_movement = True
+    for second in range(5):
+        combat_clock.return_value = 100. + second
+        assert asyncio.run(c.combat.tick(c.map_now(), at_transition=True, allow_movement=False))
+        assert c.combat.movement_intent is None
+    state.game_state.creatures.pop(cid)
+    asyncio.run(c.combat.tick(c.map_now(), at_transition=True))
+    state.game_state.creatures[cid] = row
+    for second in range(5, 8):
+        combat_clock.return_value = 100. + second
+        assert asyncio.run(c.combat.tick(c.map_now(), at_transition=True))
+        assert c.combat.movement_intent is None
+    combat_clock.return_value = 108.
+    assert asyncio.run(c.combat.tick(c.map_now(), at_transition=True))
+    assert c.combat.movement_intent['validate']()

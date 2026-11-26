@@ -244,6 +244,22 @@ def placement_terrain(cells, origin, edges, group):
     return terrain, vacant
 
 
+def lure_melee_step(cells, origin, target, edges, blocked, anchor, radius):
+    """One ordinary step on a shortest vacant path to a square beside the mob."""
+    origin, target = tuple(origin), tuple(target)
+    if not origin[2] == target[2] == anchor[2] or gap(origin, target) <= 1:
+        return None
+    _, vacant = placement_terrain(cells, origin, edges, set())
+    vacant.difference_update(blocked)
+    vacant = {p for p in vacant if gap(p, anchor) <= radius}
+    # Search backwards from the occupied target. Only vacant squares can be steps.
+    costs = walking_distances(vacant - {origin}, target)
+    x, y, z = origin
+    neighbors = ((x+dx, y+dy, z) for dx, dy in NEIGHBORS)
+    return min((p for p in neighbors if p in vacant and p in costs),
+               key=lambda p: (costs[p], squared(p, target)), default=None)
+
+
 def gap(a, b):
     return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
@@ -456,8 +472,12 @@ class PursuitTracker:
                     position[2] != row['position'][2] or gap(position, row['position']) > 2):
                 self.tracks[cid] = dict(name=candidate['name'], position=position,
                                        pending=deque(maxlen=12), evidence=deque(maxlen=2), confirmed=False, last_follow=now,
-                                       seen=now, missing=False, approached=None, contact=now if gap(position, player)<=1 else None)
+                                       seen=now, missing=False, player_approached=now, approached=None, contact=now if gap(position, player)<=1 else None)
                 continue
+            if row['missing']:
+                row['last_follow'] = now
+            if moved and squared(player, position) < squared(previous_player, position):
+                row['player_approached'] = now
             row['seen'] = now
             row['missing'] = False
             if gap(position, player) <= 1:
@@ -498,6 +518,17 @@ class PursuitTracker:
         self.player = player
         self.updated = now
         return [c for c in candidates if c['id'] in self.following]
+
+    def not_closing(self, target, now, *, gathering):
+        row = self.tracks.get(target['id'])
+        if (target['distance'] <= 1 or not row or row['missing'] or row['name'] != target['name']
+                or row['position'] != tuple(target['position']) or not 0 <= now-row['seen'] <= self.SIGHT_GRACE):
+            return False
+        since = max(row['last_follow'], row['contact'] or row['last_follow'])
+        if gathering:
+            # Following the route may already be taking us to a stationary recruit.
+            since = max(since, row['player_approached'])
+        return now - since >= self.RESPONSE_WINDOW
 
     def recent_contacts(self, now):
         return {cid for cid, row in self.tracks.items() if row['contact'] is not None

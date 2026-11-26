@@ -10,7 +10,7 @@ type Report = {id:string;route:string;revision:string|null;profile:string|null;s
 type Index = {active:{route:string;lap:number;events:Decision[]}|null;reports:Report[];more:boolean};
 const labels:Record<string,string> = {travel:"Marsz",waypoint:"Następny waypoint",blocked:"Blokada ruchu",
   manual:"Ręczny ruch",group:"Osiągnięty limit grupy",corridor:"Walka przed przewężeniem",transition:"Walka przed przejściem",
-  timeout:"Koniec czasu lurowania",lure:"Lurowanie",fight:"Walka",positioning:"Wybór pola walki",return:"Powrót na trasę",
+  no_approach:"Mob nie podchodzi",timeout:"Koniec czasu lurowania",lure:"Lurowanie",fight:"Walka",positioning:"Wybór pola walki",return:"Powrót na trasę",
   chase:"Pościg",distance:"Dystans",stationary:"Postój ≥ 4 s",moved:"Ruch po postoju",complete:"Trasa zakończona",
   end:"Koniec zapisu",pause:"Pauza",stop:"Zatrzymanie trasy",death:"Zaobserwowana śmierć celu",contact_lost:"Utrata kontaktu",unreachable:"Cel poza dostępnym obszarem",
   first_contact:"Dołączenie do walki lub grupy",left_group:"Cel opuścił grupę",position_cancelled:"Serwer anulował krok",position_interrupted:"Przerwano oczekiwanie na pozycję",

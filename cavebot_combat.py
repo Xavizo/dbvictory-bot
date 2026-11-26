@@ -4,7 +4,7 @@ import math
 import re
 import time
 from cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker, better_pack_tile, gap, group_needs_time, melee_capacity, open_sides,
-                          lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches,
+                          lure_melee_step, lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches,
                           pack_access_before_choke, walking_distances)
 from combat_reachability import reachable_tiles, ordinary_terrain
 from combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
@@ -610,6 +610,21 @@ class CombatRuntime:
                                   validate=validate,expires=time.monotonic()+.5)
         return True
 
+    def step_to_lure_target(self, cid):
+        o = self.owner
+        if not self.config['enabled'] or o.combat_only or self.manual_target or self.policy_mode != 'lure':
+            return None
+        sample = o.map_now()
+        candidates = self.candidates(sample)
+        target = self.select_target(candidates)
+        if (not target or target['id'] != cid or self.blocking_target(candidates, sample)
+                or target_policy(self.config, target)['mode'] != 'lure'
+                or not self.pursuit.not_closing(target, time.monotonic(), gathering=self.lure_stop_reason is None)):
+            return None
+        pos = o.state.game_state.position
+        radius = self.config['radius'] if self.config['engage'] == 'near' else 8
+        return lure_melee_step(sample['cells'], pos, target['position'], o.edges, o.blocked, self.anchor or pos, radius)
+
     async def tick(self,sample,at_transition=False,allow_movement=True):
         """True consumes this iteration; False allows one normal route step."""
         import asyncio
@@ -627,6 +642,8 @@ class CombatRuntime:
         if not blocker and self.blocker_since is not None:
             if self.lure_started is not None:self.lure_started+=now-self.blocker_since
             self.blocker_since=None;self.blocker_id=0;self.last_health=None
+        if current is None and self.policy_mode == 'lure':
+            self.pursuit.update(pos, [], now)
         if current is not None or not at_transition:self.transition_clear_since=None
         if current is None and at_transition and not o.combat_only:
             # Allow the observer to publish creature identities at a floor edge.
@@ -751,7 +768,8 @@ class CombatRuntime:
         self.phase='fight';o.reason=f'Walka: {current["name"]} · {current["health"]}% HP.'
         if self.lure_stop_reason:
             label={'group':'Grupa zebrana','transition':'Przejście lub koniec odcinka','corridor':'Przed wąskim korytarzem','timeout':'Limit czasu zbierania',
-                   'origin_limit':'Limit SQM od wykrycia moba','clear_pack':'Brak kolejnych mobów na trasie'}[self.lure_stop_reason]
+                   'origin_limit':'Limit SQM od wykrycia moba','clear_pack':'Brak kolejnych mobów na trasie',
+                   'no_approach':'Mob nie podchodzi'}[self.lure_stop_reason]
             if self.lure_access:
                 here,ahead = self.lure_access
                 label=f'Przed przewężeniem · miejsca dla grupy tutaj: {here}, dalej: {ahead}'
@@ -829,6 +847,16 @@ class CombatRuntime:
             if luring and self.engaged_count>=cfg['lure_count']:
                 o.reason='Sprawdzam odczyt grupy przed dalszym lurowaniem.'
                 await asyncio.sleep(.05);return True
+        if (mode == 'lure' and allow_movement and not o.combat_only and
+                self.pursuit.not_closing(current, time.monotonic(), gathering=luring)):
+            step = self.step_to_lure_target(cid)
+            if step is not None:
+                self.latch_lure('no_approach')
+                self.placement = None
+                self.phase = 'chase'
+                o.reason = f'{current["name"]} nie podchodzi. Podchodzę do walki wręcz.'
+                await self.request_step(list(step), validate=lambda: self.step_to_lure_target(cid) == step)
+                return True
         if luring:
             self.phase='lure'
             # ATTACK/SAY may have awaited a queue: classify fresh positions and
