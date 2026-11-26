@@ -10,13 +10,16 @@ A man-in-the-middle proxy bot for the DBVictory game, controlled through Codex o
 
 ## Codex setup (this fork)
 
-The 2026-11-26 client (`af433830…7486e4`) has a separate memory profile and
-`dbvobserver_marker_20261126.dll`. The new layout and native build have offline
-checks; Windows attachment, login and gameplay acceptance remain pending.
-See [client update and verification](docs/CLIENT_UPDATE.md). Unknown builds
-still stop before memory patches or connection teardown.
+The 2026-11-26 client (`af433830…7486e4`) uses a separate memory profile,
+`dbvobserver_marker_20261126.dll` and verified native session-key reading.
+After the v1.38.3 fresh-login test, the operator confirmed the bot was working.
+See the [client-update maintenance guide](docs/CLIENT_UPDATE_GUIDE.md) for the
+file map, next-update procedure, tests, installation and troubleshooting, and
+the [November 26 evidence record](docs/CLIENT_UPDATE.md) for exact hashes and
+validation limits. Unknown builds still stop before memory patches or
+connection teardown.
 
-See [Codex on Windows](docs/CODEX.md) for installation, safe MCP checks, dashboard authentication, and the Windows acceptance test. The Windows game/DLL integration still needs testing against your client version.
+See [Codex on Windows](docs/CODEX.md) for installation, safe MCP checks, dashboard authentication, and Windows acceptance. Every new client build needs its own compatibility checks.
 
 ```powershell
 .\scripts\setup-codex.ps1
@@ -36,6 +39,10 @@ See [Codex on Windows](docs/CODEX.md) for installation, safe MCP checks, dashboa
 - **Dead Creature Filtering** — automatically filters out 0% HP creatures from game state
 
 ## How It Works
+
+The overview below describes the original proxy/legacy DLL architecture.
+For the current profile-selected observer, visual-only marker and native key
+reader, use the [current connection path and file map](docs/CLIENT_UPDATE_GUIDE.md#1-understand-the-connection-path).
 
 1. The game client (`dbvStart.exe`) normally connects to `87.98.220.215`
 2. The bot patches the client's memory to redirect traffic through `127.0.0.1`

@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.38.4",
+    "changes":[
+      {"title":"Instrukcja aktualizacji klienta","detail":"Dokumentacja plików, weryfikacji zgodności, kompilacji DLL, instalacji i diagnostyki kolejnych wersji klienta. Zapisano potwierdzenie działania v1.38.3."}
+    ]
+  },
+  {
     "version":"v1.38.3",
     "changes":[
       {"title":"Odczyty po aktualizacji klienta","detail":"Nowa obsługa rozpoznawania sesji gry. Po aktualizacji uruchom bota ponownie z listy postaci. Poprawka ma testy offline; połączenie z grą wymaga jeszcze sprawdzenia."}

@@ -1,11 +1,17 @@
 # Client compatibility: 2026-11-26
 
-This compatibility candidate was derived from the local executable on
+This compatibility update was derived from the local executable on
 2026-11-26. Static evidence and synthetic tests are available. A later Windows
 read-only check confirmed HP/Ki and the protocol object. The operator opened
 the dashboard and logged in, exposing the handshake failure described below.
-**Successful decoded-session startup, native highlighting and automation remain
-unaccepted.** No game actions or reconnects were performed by the agent.
+After installing v1.38.3 and the requested fresh-login test, the operator
+reported on 2026-11-26: **“Its working perfectly.”** This records user acceptance
+of the reported connection/HP/Ki observation repair. Native highlighting,
+individual automation features and recovery were not separately measured.
+No game actions or reconnects were performed by the agent.
+
+For future builds, follow the [client-update maintenance guide](CLIENT_UPDATE_GUIDE.md).
+This file retains the exact November 26 evidence and historical test results.
 
 Executable SHA-256:
 `af43383076c0abc7192b407210efc54da6b6cbaf4ff8a2aa18f22a7f7d7486e4`.
@@ -27,8 +33,8 @@ recording or learned observation is changed. The existing executable/DAT/server
 scope rules remain in effect. Network framing and relay destinations are unchanged;
 the November 26 game proxy now uses the verified client's protocol key as
 described below. Older clients retain their existing RSA path.
-The launcher's existing game port remains 7475; actual handshake compatibility
-must be checked on Windows.
+The launcher's existing game port remains 7475. The fresh-login outcome was
+confirmed by the operator after the protocol correction below.
 
 ## Static evidence
 
@@ -164,8 +170,8 @@ pending confirmations. Older profiles keep their previous RSA behavior, with
 the unconditional packet-hex warning removed.
 
 This correction needs a fresh launcher/game connection. It is not injected
-into an existing authenticated session, and actual decoded-session acceptance
-is still pending. `python -m pytest -q tests/test_client_protocol.py` exercises
+into an existing authenticated session. The operator subsequently confirmed
+the fresh-login result as described above. `python -m pytest -q tests/test_client_protocol.py` exercises
 synthetic keys, mismatches, torn reads, rejected logins, relay order, initial
 frame delivery, and redaction. The current offline build checker has 35 checks.
 

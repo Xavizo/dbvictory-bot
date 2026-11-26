@@ -5,9 +5,11 @@
 The new x86 executable uses its own profile, player field offsets and
 `dbvobserver_marker_20261126.dll` / `dbvbot_marker_20261126` pipe. Startup and
 injection now select the same DLL from that profile. The previous profiles
-remain available. See [static evidence, build and acceptance](CLIENT_UPDATE.md).
-This is an offline-validated compatibility candidate; Windows attachment,
-login, native marker behavior and gameplay are not yet accepted.
+remain available. v1.38.3 also reads and validates the native protocol key.
+On 2026-11-26 the operator confirmed the bot was working after a fresh login.
+See [static evidence and validation limits](CLIENT_UPDATE.md) and the
+[next-client-update maintenance guide](CLIENT_UPDATE_GUIDE.md). Individual
+marker/action/recovery scenarios still need their own test evidence.
 
 ## Aktualizacja z launchera na Windows
 
@@ -841,11 +843,13 @@ compatible with a new client version automatically.
 
 ### Start without Codex (installed Windows setup)
 
-Double-click `Uruchom bota.cmd` in the repository. Leave DBVictory at the
-character list or login screen, then press Enter in the launcher. It uses the
-same MCP engine and authenticated Electron panel, without starting Codex.
-The local launcher defaults to world port 7475; `run_bot.py --game-port PORT`
-overrides it. It reuses the installed Node runtime and Python environment.
+Double-click `Uruchom bota.cmd` for the graphical launcher and follow
+[the manual character-list flow](#aktualizacja-z-launchera-na-windows).
+The console alternative is `python run_bot.py`: leave DBVictory at the
+character list and press Enter there. Both use the same MCP engine and
+authenticated Electron panel without starting Codex. The local launcher
+defaults to world port 7475; `run_bot.py --game-port PORT` overrides it for the
+console entry point. The installed Node runtime and Python environment are reused.
 
 Keep the launcher console open (minimizing is fine). Type `panel` and Enter to
 reopen a closed dashboard during play: this does not reset the proxy, interrupt
@@ -937,11 +941,13 @@ The suite includes a real MCP stdio handshake from a different working directory
 read-only status calls, HTTP authorization checks, and WebSocket authentication.
 It does not inject the DLL or log into the game.
 
-## Windows acceptance test — still required
+## Windows acceptance test — repeat for each new build
 
-1. Build `dll/dbvbot.dll` from source with a 32-bit MinGW toolchain (`cd dll; make`),
-   as described in the main README. Review the existing build scripts before use;
-   the Codex setup script does not install a compiler or download a prebuilt DLL.
+1. Build the DLL selected by the exact client profile with a 32-bit MinGW toolchain.
+   For November 26 use `build_dll.ps1 -ClientVersion 20261126`; the current
+   observer does not use the legacy default `dbvbot.dll`. Follow the
+   [build and installation procedure](CLIENT_UPDATE_GUIDE.md). The Codex setup
+   script does not install a compiler or download a prebuilt DLL.
 2. Open `dbvStart.exe` at its login screen. Review `list_actions` and disable any
    previously saved actions you don't want to run. Fresh installs enable no user
    actions; the internal DLL bridge starts when the game connects.
