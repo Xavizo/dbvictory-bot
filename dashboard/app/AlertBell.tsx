@@ -3,8 +3,8 @@
 import {useEffect, useRef, useState} from "react";
 import {acknowledgeAlerts, configureAlerts, setAlertsPaused, type AlertConfig, type AlertKind, type AlertState} from "@/lib/api";
 
-const labels:Record<AlertKind|"vitals",string>={vitals:"Utrata odczytu HP",private:"Wiadomość prywatna",default:"Czat Default",player:"Pojawienie się gracza"};
-const kinds:AlertKind[]=["private","default","player"];
+const labels:Record<AlertKind|"vitals",string>={vitals:"Utrata odczytu HP",ki_loss:"Nagła utrata Ki",private:"Wiadomość prywatna",default:"Czat Default",player:"Pojawienie się gracza"};
+const kinds:AlertKind[]=["private","default","player","ki_loss"];
 type AlertEvent = AlertState["events"][number];
 
 const DISMISSED_PREVIEW_KEY = "dbv.alerts.dismissedPreview";
@@ -108,12 +108,13 @@ export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertSta
       <header><strong>Alerty</strong><span>{paused?"Wstrzymane":alerts?.cavebot_active?"Cavebot działa":"Cavebot zatrzymany"}</span><button aria-label="Zamknij alerty" className="alert-close" onClick={()=>setOpen(false)}>×</button></header>
       {!alerts||!config?<p>Alerty wymagają nowej sesji silnika.</p>:<>
         <div className="alert-setting-head"><span>Zdarzenie</span><span>Sygnał</span><span>Kiedy</span></div>
-        {kinds.map(kind=><div key={kind} className="alert-setting">
+        {kinds.filter(kind=>config[kind]).map(kind=><div key={kind} className="alert-setting">
           <label><input type="checkbox" checked={config[kind].enabled} disabled={busy||!connected} onChange={e=>void change(kind,{enabled:e.target.checked})}/>{labels[kind]}</label>
           <label className="alert-sound-toggle"><input type="checkbox" aria-label={`Dźwięk i miganie ikony: ${labels[kind]}`} checked={config[kind].sound} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{sound:e.target.checked})}/></label>
           <select aria-label={`Kiedy: ${labels[kind]}`} value={config[kind].scope} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{scope:e.target.value as "always"|"cavebot"})}><option value="always">Zawsze</option><option value="cavebot">Przy V2</option></select>
         </div>)}
         <p className="alert-hint">Dźwięk i ikona gry sygnalizują każdą wiadomość. Przy widocznym graczu sygnał powtarza się co 1,5 s.</p>
+        {config.ki_loss&&<p className="alert-hint">Alarm Ki trwa 10 s po spadku z co najmniej 90% do najwyżej 5% w ciągu 1,5 s, gdy na całej widocznej mapie nie ma potworów i brak komunikatu o otrzymanym ataku.</p>}
         <div className="alert-tools"><button disabled={paused} onClick={async()=>{setError("");try{if(!window.dbvAlerts)throw new Error("Uruchom ponownie panel, aby wczytać obsługę dźwięku.");await window.dbvAlerts.testSound();}catch(e){setError(String(e));}}}>♪ Test sygnału</button><button disabled={busy||!connected||!unread} onClick={()=>void read()}>Oznacz jako przeczytane</button></div>
         {error&&<p role="alert" className="alert-error">{error}</p>}
         <div className="alert-history" aria-label="Historia alertów">{[...alerts.events].reverse().map(e=><article key={`${alerts.session}-${e.id}`}><div><b>{labels[e.kind]}</b><time>{new Date(e.at*1000).toLocaleTimeString("pl-PL")}</time></div><strong>{e.sender}</strong>{e.position&&<span className="alert-coordinates"> ({e.position.join(", ")})</span>}<p>{e.text}</p></article>)}{!alerts.events.length&&<p className="alert-empty">Brak zdarzeń w tej sesji.</p>}</div>

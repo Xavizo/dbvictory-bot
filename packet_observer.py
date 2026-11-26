@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
 import logging
+import re
 import struct
 import time
 
@@ -16,6 +17,11 @@ from crypto import adler32_checksum, xtea_decrypt
 from game_state import GameState, scan_packet
 
 log = logging.getLogger(__name__)
+
+INCOMING_HIT = re.compile(
+    r"You lose [0-9]+ (?:ki points? blocking an attack by|hitpoints? due to an attack by) [^\r\n]+",
+    re.IGNORECASE,
+)
 
 SCALARS = (
     "player_id", "client_player_id", "hp", "max_hp", "mana", "max_mana",
@@ -97,6 +103,10 @@ def parse_detached(raw, keys, scan):
 def publish_server_feedback(live, scan, diagnostics):
     # Use the time of receipt for correlations with local actions. Parsing can
     # finish after a different Look, inventory change, or Cavebot restart.
+    if scan.received_at is not None and any(
+        INCOMING_HIT.fullmatch(message["text"]) for message in scan.state.messages
+    ):
+        live.last_incoming_hit = scan.received_at
     usage = getattr(live, "senzu_usage", None)
     for kind, text, kwargs in scan.potion_messages:
         if kind == 25:

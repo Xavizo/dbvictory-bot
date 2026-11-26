@@ -282,3 +282,120 @@ def test_vitals_alarm_only_after_valid_data_with_active_automation():
     state.automation_paused = True
     center.observe_players(state)
     assert center.snapshot()['vitals_alarm_id'] is None
+
+
+def ki_scene():
+    center, state, advance = setup()
+    gs = state.game_state
+    gs.hp = gs.max_hp = gs.max_mana = 100
+    center.monotonic = center.clock
+    frame = state.passive_map_monitor._result
+    frame.update(width=18,height=14,origin=[92,94])
+    frame['cells'] = [
+        dict(x=x, y=y, z=7, kind='clear', occupant_types={}, occupants=0)
+        for x in range(92, 110) for y in range(94, 108)
+    ]
+    def sample(ki, elapsed=0):
+        advance(elapsed)
+        gs.mana = ki
+        center.observe_ki(state)
+    return center, state, frame, sample
+
+
+def test_ki_drop_uses_the_recent_high_and_sounds_for_ten_seconds_once():
+    c, state, frame, sample = ki_scene()
+    state.adaptive_cavebot.status = 'stopped'
+    # A classified pet in range or monsters on another floor / outside the radius are fine.
+    for x,y,kind in [(105,105,'pet'), (110,100,'monster')]:
+        cell = dict(x=x,y=y,z=7,kind='clear')
+        if x == 110: frame['cells'].append(cell)
+        else: cell = next(v for v in frame['cells'] if (v['x'],v['y'])==(x,y))
+        cell.update(occupants=1,occupant_types={kind:1})
+    frame['cells'].append(dict(x=100,y=100,z=6,occupants=1,occupant_types={'monster':1}))
+    sample(90)
+    sample(45,.5)
+    sample(5,1)
+    assert not c.events
+    sample(5,1)
+    event, = c.events
+    assert event['kind'] == 'ki_loss' and event['position'] == [100,100,7]
+    assert c.snapshot()['ki_alarm_id'] == event['id']
+    sample(0,9.9)
+    assert c.snapshot()['ki_alarm_id'] == event['id'] and len(c.events) == 1
+    sample(0,.11)
+    assert c.snapshot()['ki_alarm_id'] is None and len(c.events) == 1
+    sample(100)
+    sample(0,.1)
+    sample(0,1)
+    assert c.snapshot()['ki_alarm_id'] == 2
+
+
+@pytest.mark.parametrize('problem', ['monster','unknown_type','missing_tile','unreadable_tile',
+                                      'stale_map','future_map','wrong_center','waiting','empty_map'])
+def test_ki_alarm_requires_confirmed_empty_nearby_map(problem):
+    c, state, frame, sample = ki_scene()
+    sample(100)
+    corner = next(v for v in frame['cells'] if (v['x'],v['y'])==(109,107))
+    if problem == 'monster': corner.update(occupants=1,occupant_types={'monster':1})
+    if problem == 'unknown_type': corner.update(occupants=1,occupant_types={'unknown':1})
+    if problem == 'missing_tile': frame['cells'].remove(corner)
+    if problem == 'unreadable_tile': corner['kind']='unknown'
+    if problem == 'stale_map': frame['captured_at']-=2
+    if problem == 'future_map': frame['captured_at']+=1
+    if problem == 'wrong_center': frame['center']=[100,101,7]
+    if problem == 'waiting': frame['status']='refreshing'
+    if problem == 'empty_map': frame['cells']=[]
+    state.game_state.mana=0
+    c.observe_ki(state)
+    sample(0,1.1)
+    assert not c.events
+
+
+@pytest.mark.parametrize('problem', ['slow','small','max_change','new_session','teleport','dead','disabled','scope'])
+def test_unrelated_ki_samples_do_not_create_alarm(problem):
+    c,state,frame,sample=ki_scene()
+    cfg = default_config()
+    if problem == 'disabled': cfg['ki_loss']['enabled']=False
+    if problem == 'scope': cfg['ki_loss']['scope']='cavebot'
+    c.configure(cfg)
+    state.adaptive_cavebot.status='stopped'
+    sample(100)
+    if problem == 'max_change': state.game_state.max_mana=200
+    if problem == 'new_session': state.game_proxy=object()
+    if problem == 'teleport':
+        state.game_state.position = (120,100,7)
+        frame['center']=[120,100,7]
+        frame['origin']=[112,94]
+        for tile in frame['cells']: tile['x']+=20
+    if problem == 'dead': state.game_state.hp=0
+    sample(20 if problem=='small' else 0,1.51 if problem=='slow' else .1)
+    sample(20 if problem=='small' else 0,1.1)
+    assert not c.events
+
+
+def test_previous_alert_preferences_survive_adding_ki_alarm():
+    old=default_config()
+    del old['ki_loss']
+    old['private']['sound']=False
+    assert AlertCenter(old).config == {**old, 'ki_loss':default_config()['ki_loss']}
+    assert 'ki_loss' not in old
+
+
+@pytest.mark.parametrize('hit_offset, expected', [(-2, True), (-.5, False), (.7, False)])
+def test_offscreen_attack_text_suppresses_alarm_even_after_ki_sample(hit_offset, expected):
+    import struct
+    from unittest.mock import Mock
+    from packet_observer import apply_scan, detach_state, publish_server_feedback
+    c,state,_,sample=ki_scene()
+    gs=state.game_state
+    sample(100)
+    sample(0,.5)
+    scan=detach_state(gs,0)
+    scan.received_at=100.5+hit_offset
+    text=b'You lose 17095 ki points blocking an attack by a garlic.'
+    scan_packet(b'\xb4\x19'+struct.pack('<H',len(text))+text,scan.state)
+    apply_scan(gs,scan)
+    publish_server_feedback(gs,scan,Mock())
+    assert gs.last_incoming_hit == scan.received_at
+    sample(100,1)
+    assert bool(c.events) == expected

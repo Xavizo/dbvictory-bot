@@ -22,13 +22,14 @@ function createSoundConsumer(playSound, now=Date.now) {
         cursor=state.latest_id;queue=[];lastPlayer=-Infinity;
         return;
       }
-      const activeAlarm=state.vitals_alarm_id??null;
+      const silencedThrough=state.silenced_through??0;
+      const kiAlarm=state.ki_alarm_id>silencedThrough&&allowed(state,'ki_loss')?state.ki_alarm_id:null;
+      const activeAlarm=state.vitals_alarm_id??kiAlarm;
       if(activeAlarm!==alarmId){alarmId=activeAlarm;lastAlarm=-Infinity;}
       if(alarmId!==null && now()-lastAlarm>=2000 && playSound('vitals')!==false){
         lastAlarm=now();
         return;
       }
-      const silencedThrough=state.silenced_through??0;
       cursor=Math.max(cursor,silencedThrough);
       if(state.latest_id>cursor){
         for(const e of state.events){

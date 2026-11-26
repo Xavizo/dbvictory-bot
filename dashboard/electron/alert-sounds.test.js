@@ -165,3 +165,23 @@ test('vitals loss sounds on first poll, repeats while active and stops on recove
   consumer.consume({...alarm,vitals_alarm_id:6});
   assert.deepEqual(sounds,['vitals','vitals','vitals']);
 });
+
+test('Ki alarm repeats while active, respecting mute, scope and the expiry from the engine',()=>{
+  let time=100000;
+  const sounds=[], c=createSoundConsumer(k=>sounds.push(k),()=>time);
+  const row={enabled:true,sound:true,scope:'always'};
+  const state=snapshot([event(1,{kind:'ki_loss'})],{ki_alarm_id:1,config:{...config,ki_loss:row}});
+  c.consume(state);
+  for(let i=1;i<=5;i++){
+    time+=2000;
+    c.consume(i===5?{...state,ki_alarm_id:null}:state);
+  }
+  assert.deepEqual(sounds,Array(5).fill('vitals'));
+  c.consume({...state,paused:true});
+  c.consume({...state,silenced_through:1});
+  c.consume({...state,config:{...config,ki_loss:{...row,sound:false}}});
+  c.consume({...state,cavebot_active:false,config:{...config,ki_loss:{...row,scope:'cavebot'}}});
+  assert.equal(sounds.length,5);
+  c.consume({...state,ki_alarm_id:2,latest_id:2});
+  assert.equal(sounds.length,6);
+});

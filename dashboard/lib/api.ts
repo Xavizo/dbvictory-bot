@@ -232,13 +232,14 @@ export interface ProxySequence {
   timestamps?: Record<string, number | null>;
 }
 
-export type AlertKind = "private" | "default" | "player";
+export type AlertKind = "private" | "default" | "player" | "ki_loss";
 export type AlertConfig = Record<AlertKind, {enabled:boolean;sound:boolean;scope:"always"|"cavebot"}>;
 export interface AlertState {
   paused?:boolean;silenced_through?:number;
   session:string;config:AlertConfig;latest_id:number;unread:number;cavebot_active:boolean;map_fresh:boolean;
   chat_received:number;last_chat_at:number|null;
   vitals_alarm_id?:number|null;
+  ki_alarm_id?:number|null;
   events:{id:number;kind:AlertKind|"vitals";at:number;sender:string;text:string;sound:boolean;position?:number[]}[];
 }
 export const configureAlerts=(config:AlertConfig)=>control("/api/alerts",{command:"configure",config});

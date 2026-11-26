@@ -69,6 +69,7 @@ class GameState:
         # Player stats
         self.hp: int = 0
         self.max_hp: int = 0
+        self.last_incoming_hit = None
         self.mana: int = 0
         self.max_mana: int = 0
         self.level: int = 0

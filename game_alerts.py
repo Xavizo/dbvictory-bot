@@ -6,11 +6,15 @@ import threading
 import time
 import uuid
 from client_player_state import FRESH_SECONDS
+from passive_map import WIDTH, HEIGHT
 import json
 from pathlib import Path
 from collections import deque
 
-KINDS = ('private', 'default', 'player')
+KINDS = ('private', 'default', 'player', 'ki_loss')
+KI_DROP_WINDOW = 1.5
+KI_ALARM_DURATION = 10
+KI_HIT_GRACE = 1.
 
 
 def default_config():
@@ -27,6 +31,8 @@ def spell_words():
 
 
 def validate_config(value):
+    if isinstance(value, dict) and set(value) == {'private', 'default', 'player'}:
+        value = {**value, 'ki_loss': default_config()['ki_loss']}
     if not isinstance(value, dict) or set(value) != set(KINDS):
         raise ValueError('Nieprawidłowa konfiguracja alertów.')
     for row in value.values():
@@ -46,9 +52,37 @@ def cavebot_running(state):
     return bool(controller and controller.status == 'running' and task and not task.done())
 
 
+def visible_map_clear(frame, position, previous, stamp, now):
+    captured = frame.get('captured_at', 0)
+    if (frame.get('status') != 'ready' or tuple(frame.get('center', ())) != position
+            or not 0 <= now - captured <= 1 or abs(stamp - captured) > 1
+            or (frame.get('width'), frame.get('height')) != (WIDTH, HEIGHT)):
+        return False
+    left, top = frame['origin']
+    if not (left <= previous[0] < left + WIDTH and top <= previous[1] < top + HEIGHT):
+        return False
+    seen = set()
+    for cell in frame.get('cells', ()):
+        if cell['z'] != position[2]:
+            continue
+        x, y = cell['x'], cell['y']
+        if not (left <= x < left + WIDTH and top <= y < top + HEIGHT):
+            continue
+        types = cell.get('occupant_types')
+        if (cell.get('kind') == 'unknown' or types is None or types.get('monster')
+                or types.get('unknown') or sum(types.values()) != cell.get('occupants')):
+            return False
+        seen.add((x, y))
+    return len(seen) == WIDTH * HEIGHT
+
+
 class AlertCenter:
     def __init__(self, config=None, clock=time.time, spells=None, monotonic=time.monotonic):
         self.monotonic = monotonic
+        self.last_high_ki = None
+        self.ki_alarm_id = None
+        self.ki_alarm_until = 0.
+        self.pending_ki = None
         self.last_vitals = None
         self.vitals_alarm_id = None
         self.clock = clock
@@ -75,7 +109,10 @@ class AlertCenter:
 
     def configure(self, config):
         with self.lock:
-            self.config = validate_config(config)
+            config = validate_config(config)
+            if config['ki_loss'] != self.config['ki_loss']:
+                self.last_high_ki = self.pending_ki = self.ki_alarm_id = None
+            self.config = config
 
     def set_paused(self, paused):
         if type(paused) is not bool:
@@ -83,6 +120,7 @@ class AlertCenter:
         with self.lock:
             if self.paused != paused:
                 self.silenced_through = self.latest_id
+                self.pending_ki = None
                 self.paused = paused
 
     def acknowledge(self, through):
@@ -96,6 +134,7 @@ class AlertCenter:
             return {'session': self.session, 'config': copy.deepcopy(self.config),
                     'events': copy.deepcopy(list(self.events)), 'latest_id': self.latest_id,
                     'vitals_alarm_id': self.vitals_alarm_id,
+                    'ki_alarm_id': self.ki_alarm_id if self.monotonic() < self.ki_alarm_until else None,
                     'paused': self.paused, 'silenced_through': self.silenced_through,
                     'unread': sum(e['id'] > max(self.read_id, self.silenced_through) for e in self.events),
                     'cavebot_active': self.active, 'map_fresh': self.map_fresh,
@@ -127,6 +166,7 @@ class AlertCenter:
         connected = bool(online and gs.stats_updated_at and self.clock() - gs.stats_updated_at < 2)
         identity = (id(gs), gs.player_id, id(getattr(state, 'game_proxy', None))) if online else None
         if identity != self.identity:
+            self.last_high_ki = self.pending_ki = self.ki_alarm_id = None
             self.last_vitals = self.vitals_alarm_id = None
             self.players.clear()
             self.known_players.clear()
@@ -188,6 +228,55 @@ class AlertCenter:
                                                 round((now-stamp)*1000), hp, maximum,
                                                 getattr(gs, 'client_state_error', None))
 
+    def observe_ki(self, state):
+        with self.lock:
+            connected = self._context(state)
+            gs = state.game_state
+            cfg = self.config['ki_loss']
+            now = self.clock()
+            stamp, mana, maximum = gs.stats_updated_at, gs.mana, gs.max_mana
+            position = tuple(gs.position)
+            if (not connected or not cfg['enabled'] or (cfg['scope'] == 'cavebot' and not self.active)
+                    or not 0 <= now - stamp <= KI_DROP_WINDOW or gs.hp <= 0
+                    or maximum <= 0 or not 0 <= mana <= maximum or len(position) != 3):
+                self.last_high_ki = self.pending_ki = None
+                return
+            current = self.monotonic()
+            last_hit = gs.last_incoming_hit
+            if self.pending_ki:
+                drop, text, location = self.pending_ki
+                if last_hit is not None and last_hit >= drop - KI_DROP_WINDOW:
+                    self.pending_ki = None
+                elif current - drop >= KI_HIT_GRACE:
+                    self._append('ki_loss', 'Nagła utrata Ki', text, cfg['sound'], position=list(location))
+                    self.ki_alarm_id = self.latest_id
+                    self.ki_alarm_until = current + KI_ALARM_DURATION
+                    self.pending_ki = None
+
+            previous = self.last_high_ki
+            if mana * 100 >= maximum * 90:
+                self.last_high_ki = (stamp, mana, maximum, position)
+                return
+            if previous is None:
+                return
+            before, high, old_max, origin = previous
+            if not 0 <= stamp - before <= KI_DROP_WINDOW or old_max != maximum or origin[2] != position[2]:
+                self.last_high_ki = None
+                return
+            if mana * 100 > maximum * 5:
+                return
+            self.last_high_ki = None
+            monitor = getattr(state, 'passive_map_monitor', None)
+            drop = current - (now - stamp)
+            if last_hit is not None and last_hit >= drop - KI_DROP_WINDOW:
+                return
+            if not visible_map_clear(getattr(monitor, '_result', {}), position, origin, stamp, now):
+                return
+            text = (f'Ki spadło z {high / maximum:.0%} do {mana / maximum:.0%} '
+                    f'w {stamp - before:.2f} s. Brak widocznego potwora i komunikatu o ataku.')
+            if self.pending_ki is None:
+                self.pending_ki = (drop, text, position)
+
     def observe_players(self, state):
         with self.lock:
             connected = self._context(state)
@@ -231,10 +320,21 @@ class AlertCenter:
 
 
 async def monitor_alerts(state):
+    next_players = 0.
     while True:
+        journal = getattr(state.game_state, 'observations', None)
+        cursor = journal.revision_for(('health',)) if journal else 0
         try:
-            state.alert_center.observe_players(state)
+            now = time.monotonic()
+            if now >= next_players:
+                next_players = now + .25
+                state.alert_center.observe_players(state)
+            state.alert_center.observe_ki(state)
         except Exception:
             # Optional notification failure must never terminate healing/combat.
             state.alert_center.map_fresh = False
-        await asyncio.sleep(.25)
+        timeout = max(0., next_players - time.monotonic())
+        if journal:
+            await journal.wait(('health',), cursor, timeout)
+        else:
+            await asyncio.sleep(timeout)
