@@ -33,6 +33,7 @@ class ReadOnlyClient:
                      if bytes(p.szExeFile).split(b"\0", 1)[0].lower() == b"dbvstart.exe"]
         if len(processes) != 1:
             raise MapReadError("Podgląd wymaga jednego otwartego klienta DBVictory.")
+        self.pid = processes[0]
         self._handle = k.OpenProcess(0x0400 | 0x0010, False, processes[0])
         if not self._handle:
             raise MapReadError("Brak uprawnień do odczytu pamięci klienta.")

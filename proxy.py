@@ -33,7 +33,7 @@ class OTProxy:
     """
 
     def __init__(self, server_host: str, server_port: int, listen_port: int,
-                 is_login_proxy: bool = False, shared_rsa_key=None):
+                 is_login_proxy: bool = False, shared_rsa_key=None, *, client_key_reader=None):
         self.server_host = server_host
         self.server_port = server_port
         self.listen_port = listen_port
@@ -52,6 +52,8 @@ class OTProxy:
         # Session state
         self.xtea_keys = None
         self.logged_in = False
+        self.client_key_reader = client_key_reader
+        self._reset_client_key()
 
         # Connection handles
         self.client_reader = None
@@ -162,6 +164,7 @@ class OTProxy:
                 self.client_reader=reader;self.client_writer=writer
                 self.server_reader=None;self.server_writer=None
                 self.logged_in=False;self.xtea_keys=None
+                self._reset_client_key()
                 self.last_server_read = self.last_client_forward = None
                 self._ts_client_connected=time.time()
             self.server_reader,self.server_writer=await asyncio.open_connection(self.server_host,self.server_port)
@@ -176,6 +179,7 @@ class OTProxy:
             writer.close()
             if generation is not None and self.session_generation==generation:
                 self.discard_commands('disconnected');self.logged_in=False;self.xtea_keys=None
+                self._reset_client_key()
                 server_writer=self.server_writer
                 self.client_writer=None;self.server_writer=None
                 if server_writer:server_writer.close()
@@ -424,12 +428,7 @@ class OTProxy:
             self.packets_from_server += 1
 
             if not self.logged_in and self.xtea_keys is not None:
-                self.logged_in = True
-                self._ts_logged_in = time.time()
-                log.info("=== GAME SESSION ESTABLISHED ===")
-                log.info("XTEA session keys captured (redacted)")
-                if self.on_login_success:
-                    self.on_login_success(self.xtea_keys)
+                self._establish_session()
 
             # Forward to game client FIRST — minimize client-side latency.
             # Decrypt + scan callbacks run AFTER the client already has the data.
@@ -440,18 +439,26 @@ class OTProxy:
             await self.client_writer.drain()
             self.last_client_forward = time.monotonic()
 
+            frames = [raw]
+            if not self.logged_in and getattr(self, 'client_key_reader', None) is not None:
+                frames = self._confirm_client_key(raw)
+                if not frames:
+                    continue
+                self._establish_session()
+
             # The MCP observer owns bounded asynchronous analysis. Never decrypt
             # a large server frame on the socket-forwarding path in this mode.
             tap = getattr(self, "on_encrypted_server_data", None)
             if self.logged_in and tap:
                 try:
-                    tap(raw, self.xtea_keys, self.session_generation)
+                    for frame in frames:
+                        tap(frame, self.xtea_keys, self.session_generation)
                 except Exception:
                     log.warning("Passive observer unavailable; relay continues")
                 continue
 
             # Legacy bot.py/start.py callbacks retain their existing interface.
-            if self.logged_in and (self.on_server_packet or self.on_raw_server_data):
+            for raw in frames if self.logged_in and (self.on_server_packet or self.on_raw_server_data) else []:
                 try:
                     decrypted = self._decrypt_game_packet(raw)
                     if decrypted:
@@ -471,6 +478,59 @@ class OTProxy:
                 except Exception:
                     pass
 
+    def _establish_session(self):
+        self.logged_in = True
+        self._ts_logged_in = time.time()
+        log.info("=== GAME SESSION ESTABLISHED ===")
+        log.info("XTEA session keys captured (redacted)")
+        if self.on_login_success:
+            self.on_login_success(self.xtea_keys)
+
+    def _reset_client_key(self):
+        self._client_login_seen = False
+        self._key_attempts = 0
+        self._candidate_keys = None
+        self._key_frames = []
+
+    def _confirm_client_key(self, raw):
+        """Confirm two frames before publishing a pinned native key. Forwarding is already complete."""
+        if not self._client_login_seen or self._key_attempts >= 8:
+            return []
+        self._key_attempts += 1
+        try:
+            keys = self.client_key_reader()
+            if (not isinstance(keys, tuple) or len(keys) != 4 or not any(keys)
+                    or any(type(k) is not int or not 0 <= k <= 0xffffffff for k in keys)):
+                raise ValueError('invalid key shape')
+            if (not 12 <= len(raw) <= 65535 or (len(raw)-4) % 8
+                    or struct.unpack_from('<I', raw)[0] != adler32_checksum(raw[4:])):
+                raise ValueError('invalid frame')
+            # The first block supplies length/opcode. Do not decrypt a large
+            # payload on the relay loop; normal analysis remains in its worker.
+            prefix = xtea_decrypt(raw[4:12], keys)
+            length = struct.unpack_from('<H', prefix)[0]
+            opcode = ServerOpcode(prefix[2])
+            if not 0 < length <= len(raw)-6 or len(raw)-6-length >= 8:
+                raise ValueError('invalid inner length')
+            if opcode in (ServerOpcode.LOGIN_ERROR, ServerOpcode.LOGIN_WAIT, ServerOpcode.UPDATE_NEEDED):
+                raise ValueError('login not accepted')
+            if keys != self._candidate_keys:
+                self._candidate_keys, self._key_frames = keys, []
+            self._key_frames.append(raw)
+            if len(self._key_frames) < 2:
+                return []
+            self.xtea_keys = keys
+            self._ts_xtea_captured = time.time()
+            frames, self._key_frames = self._key_frames, []
+            self._candidate_keys = None
+            log.info('Client protocol key confirmed against two server frames (redacted)')
+            return frames
+        except Exception:
+            self._candidate_keys, self._key_frames = None, []
+            if self._key_attempts == 8:
+                log.warning('Client protocol key could not be confirmed; relay continues without automation')
+            return []
+
     def _process_login_packet(self, data: bytes) -> bytes | None:
         """
         Process a login packet from the client.
@@ -481,6 +541,8 @@ class OTProxy:
         No re-encryption needed - the server has the same key.
         """
         try:
+            if not data:
+                return data
             has_checksum = False
             if len(data) > 4:
                 checksum = struct.unpack_from('<I', data, 0)[0]
@@ -489,6 +551,13 @@ class OTProxy:
                     has_checksum = True
 
             offset = 4 if has_checksum else 0
+
+            if self.client_key_reader is not None:
+                # Exact November 26 game-login envelope; never mistake later
+                # encrypted actions for another login or retry RSA on them.
+                if has_checksum and len(data) == 137 and data[4:9] == struct.pack('<BHH',10,10,372):
+                    self._client_login_seen = True
+                return data
 
             proto_byte = data[offset]
             log.info(f"Login packet: proto=0x{proto_byte:02X}, size={len(data)}, checksum={'yes' if has_checksum else 'no'}")
@@ -541,11 +610,10 @@ class OTProxy:
                         continue
 
             log.warning("Could not find RSA block in login packet!")
-            log.warning(f"Packet hex (first 32 bytes): {data[:32].hex()}")
             return data  # Forward as-is anyway
 
         except Exception as e:
-            log.error(f"Error processing login packet: {e}")
+            log.error('Error processing login packet: %s', type(e).__name__)
             return data
 
     def _decrypt_game_packet(self, data: bytes) -> bytes | None:

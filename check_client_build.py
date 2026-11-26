@@ -60,6 +60,7 @@ def verify(path, dll=None):
         checks += 1
 
     if profile == NOVEMBER_26:
+        from client_protocol import SIGNATURES, PROTOCOL_VTABLE
         signatures = {
             0xBAEC0: '66 8b 81 d4 00 00 00 c3',  # speed: U16 +D4
             0xBB310: '8b 81 48 05 00 00 c3',     # conditions: U32 +548
@@ -87,9 +88,11 @@ def verify(path, dll=None):
         }
         for rva, expected in signatures.items():
             expect(rva,bytes.fromhex(expected))
+        for rva, expected in SIGNATURES.items():
+            expect(rva, expected)
         # Follow PE RTTI from vtable[-1] -> COL -> TypeDescriptor, not guessed shifts.
         types = [(profile.tile_vtable,'Tile'),(profile.item_vtable,'Item'),
-                 (profile.type_vtable,'ThingType')]
+                 (profile.type_vtable,'ThingType'),(PROTOCOL_VTABLE,'ProtocolGame')]
         names = {'self':'LocalPlayer','player':'Player','monster':'Monster','npc':'Npc'}
         types += [(rva,names[kind]) for rva,kind in profile.creature_vtables]
         for vtable, name in types:

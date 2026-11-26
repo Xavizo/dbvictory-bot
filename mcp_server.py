@@ -1459,6 +1459,10 @@ async def start_bot() -> str:
     # ── Create proxies ──────────────────────────────────────────────
     state.login_proxy = OTProxy(SERVER_HOST, LOGIN_PORT, LOGIN_PORT, is_login_proxy=True)
     state.game_proxy = OTProxy(SERVER_HOST, GAME_PORT, GAME_PORT, is_login_proxy=False)
+    from client_profiles import NOVEMBER_26
+    if client_profile == NOVEMBER_26:
+        from client_protocol import read_live_protocol_key
+        state.game_proxy.client_key_reader = lambda: read_live_protocol_key(game_pid)
     state.game_proxy.injections_paused = state.automation_paused
 
     # Callbacks

@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.38.3",
+    "changes":[
+      {"title":"Odczyty po aktualizacji klienta","detail":"Nowa obsługa rozpoznawania sesji gry. Po aktualizacji uruchom bota ponownie z listy postaci. Poprawka ma testy offline; połączenie z grą wymaga jeszcze sprawdzenia."}
+    ]
+  },
+  {
     "version":"v1.38.2",
     "changes":[
       {"title":"Połącz z grą na własne potwierdzenie","detail":"Przycisk jest dostępny po przygotowaniu silnika. Launcher nie wykonuje zrzutów okna ani nie rozpoznaje listy postaci. Pozostaw klienta na liście postaci i kliknij Połącz z grą."}

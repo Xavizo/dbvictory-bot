@@ -1,9 +1,11 @@
 # Client compatibility: 2026-11-26
 
 This compatibility candidate was derived from the local executable on
-2026-11-26. Static evidence and synthetic tests are available; **Windows
-attachment, login, dashboard launch, native highlighting and gameplay remain
-untested**. The game was not started or attached to during this work.
+2026-11-26. Static evidence and synthetic tests are available. A later Windows
+read-only check confirmed HP/Ki and the protocol object. The operator opened
+the dashboard and logged in, exposing the handshake failure described below.
+**Successful decoded-session startup, native highlighting and automation remain
+unaccepted.** No game actions or reconnects were performed by the agent.
 
 Executable SHA-256:
 `af43383076c0abc7192b407210efc54da6b6cbaf4ff8a2aa18f22a7f7d7486e4`.
@@ -22,7 +24,9 @@ socket closure, memory patches or injection.
 
 No production dependency, saved configuration, action enable flag, route,
 recording or learned observation is changed. The existing executable/DAT/server
-scope rules remain in effect. Network framing and proxy behavior are unchanged.
+scope rules remain in effect. Network framing and relay destinations are unchanged;
+the November 26 game proxy now uses the verified client's protocol key as
+described below. Older clients retain their existing RSA path.
 The launcher's existing game port remains 7475; actual handshake compatibility
 must be checked on Windows.
 
@@ -69,7 +73,7 @@ From the bot directory, without starting the launcher or game:
 ```
 
 `check_client_build.py` uses only Python built-ins. It checks the exact digest,
-PE architecture, DAT digest, 31 code/type signatures for this build and the
+PE architecture, DAT digest, 35 code/type signatures for this build and the
 selected DLL's PE architecture and pipe name. It does not attach, write process
 memory, connect to a server, approve unknown hashes or discover replacement
 offsets automatically. A successful result is static evidence, not gameplay
@@ -104,7 +108,7 @@ Its SHA-256 is
 `82e6ce9431171506fd0bc5f41680b55abb77452927454f504ecd1a1b6dc22103`.
 Rebuilding may change the binary digest due to compiler and linker metadata.
 
-## Recorded offline results
+## Initial v1.38.1 offline results
 
 Validation used Python 3.12.3 in an isolated Linux environment; no packages were
 changed in the installed Windows environment.
@@ -125,6 +129,74 @@ changed in the installed Windows environment.
   with 32-bit MinGW. Execution of those native tests is still pending on Windows.
 - Targeted Python compilation, release-note JSON parsing and `git diff --check`
   passed.
+
+## Protocol startup correction in v1.38.3
+
+The operator's November 26 session forwarded packets but never activated the
+decoded session: the 137-byte, checksummed game-login envelope (opcode 10,
+OS 10, version 372) failed the default-RSA decoder. Forwarded packet counters
+alone therefore did not establish working observation. A separate bounded
+Windows read returned valid HP/Ki while the dashboard had no decoded session.
+
+For this exact executable only, `client_protocol.py` reads the existing native
+session key. Static Lua bindings identify Game::getProtocolGame at RVA `BBD20`
+and its shared pointer at Game `+24`; ProtocolGame RTTI gives vtable `8BE5FC`.
+Protocol::setXteaKey at `3ECC40` and getXteaKey at `3ECC60` agree on four U32
+fields at `+18..+24`. enableXteaEncryption at `1C9A10` sets byte `+3E`.
+Read-only Windows inspection confirmed the type, enabled flag and stable key
+availability. No key bytes, credentials or packet payloads were recorded.
+
+The reader verifies the executable profile, selected PID, accessor signatures,
+vtable and encryption flag, then rereads the key, identity and shared pointer
+to reject changes during the read. Its process handle has QUERY/VM_READ rights
+only and is closed after each attempt. Keys are not included in status or logs.
+
+The proxy begins confirmation only after the exact known client login envelope.
+It requires two consecutive server frames with the same freshly read key,
+valid checksums, bounded decrypted lengths and recognized opcodes. Login error,
+wait and update responses cannot establish the session. Only the first cipher
+block is inspected on the relay loop, after forwarding. Both initial frames
+are retained in memory for the ordinary observer (at most two 65535-byte
+frames), so confirming the key does not discard the initial player/map data.
+Eight failed attempts stop confirmation for that connection while forwarding
+continues without activating automation. Disconnect/replacement clears all
+pending confirmations. Older profiles keep their previous RSA behavior, with
+the unconditional packet-hex warning removed.
+
+This correction needs a fresh launcher/game connection. It is not injected
+into an existing authenticated session, and actual decoded-session acceptance
+is still pending. `python -m pytest -q tests/test_client_protocol.py` exercises
+synthetic keys, mismatches, torn reads, rejected logins, relay order, initial
+frame delivery, and redaction. The current offline build checker has 35 checks.
+
+Validation on Windows used the repaired Python 3.12.14 environment from an
+isolated candidate directory, without starting another bot or game connection:
+
+- `python -m pytest -q tests/test_client_protocol.py tests/test_packet_observer.py tests/test_relogin_identity.py tests/test_automation_safety.py tests/test_client_november_26.py`:
+  **122 passed**.
+- `python check_client_build.py <client> --dll <installed DLL>`: **35 checks
+  passed**, with matching executable/DAT identity and DLL architecture/pipe.
+- The actual `read_live_protocol_key` adapter successfully read a stable key
+  from the operator's running client using read-only access. Only success flags
+  were output; the key was neither displayed nor saved.
+- `node --test tests/desktop_launcher.test.cjs`: **10 passed** on Node.js 22.
+- Linux `python -m pytest -q`: **1767 passed, 23 skipped, 2 failed** in the
+  final complete run (106.96 seconds). The previously reproduced baseline
+  failure in `test_data_keeps_flowing_after_controller_error_and_before_replacement`
+  remains. `test_occupied_final_waypoint_waits_instead_of_claiming_completion`
+  timed out in that run and passed separately. An earlier complete run had
+  the same totals with `test_route_completion_keeps_enabled_combat_worker_alive`
+  as the timing failure; all 13 automation-domain tests subsequently passed.
+  These cavebot/domain files are unchanged from `aca1dcf`. The full suite is
+  **not fully passing**; timing-test reliability remains unresolved.
+
+The Python-only v1.38.3 correction can use the normal release queue. To try it,
+log out and close the game, then choose **Zakończ bota** from the bot's Windows
+tray menu. Closing the dashboard with X only hides it. Reopen
+`DBVictory Launcher.exe`, install the queued update and check for v1.38.3.
+Use Start, log in to the character list, click **Połącz z grą**, and enter the
+game after the bot panel opens. Check session/observation status and HP/Ki
+before enabling automation. A queued update does not change the running process.
 
 ## Windows acceptance and installation
 
