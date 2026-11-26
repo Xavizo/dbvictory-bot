@@ -231,22 +231,21 @@ class AlertCenter:
 
             previous = self.last_high_ki
             if mana * 100 >= maximum * 90:
-                self.last_high_ki = (stamp, mana, maximum, position)
-                return
-            if previous is None:
-                return
-            before, high, old_max, origin = previous
-            if (not 0 <= stamp - before <= KI_DROP_WINDOW or old_max != maximum or origin[2] != position[2]
-                    or abs(origin[0] - position[0]) > WIDTH // 2 or abs(origin[1] - position[1]) > HEIGHT // 2):
-                self.last_high_ki = None
-                return
-            if mana * 100 > maximum * 5:
+                self.last_high_ki = (stamp, mana, maximum, position, gs.ki_revision)
                 return
             self.last_high_ki = None
+            if previous is None or mana * 100 > maximum * 5:
+                return
+            before, high, old_max, origin, revision = previous
+            max_gap = FRESH_SECONDS if gs.client_state_required else KI_DROP_WINDOW
+            if (gs.ki_revision != revision + 1 or not 0 <= stamp - before <= max_gap
+                    or old_max != maximum or origin[2] != position[2]
+                    or abs(origin[0] - position[0]) > WIDTH // 2 or abs(origin[1] - position[1]) > HEIGHT // 2):
+                return
             drop = current - (now - stamp)
             if last_hit is not None and last_hit >= drop - KI_DROP_WINDOW:
                 return
-            text = (f'Ki spadło z {high / maximum:.0%} do {mana / maximum:.0%} '
+            text = (f'W jednym odczytanym spadku Ki zmalało z {high / maximum:.0%} do {mana / maximum:.0%} '
                     f'w {stamp - before:.2f} s. Brak komunikatu o ataku na postać.')
             if self.pending_ki is None:
                 self.pending_ki = (drop, text, position)

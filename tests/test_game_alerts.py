@@ -302,7 +302,7 @@ def ki_scene():
     return center, state, frame, sample
 
 
-def test_ki_drop_uses_the_recent_high_and_sounds_for_ten_seconds_once():
+def test_single_ki_drop_sounds_for_ten_seconds_once():
     c, state, frame, sample = ki_scene()
     state.adaptive_cavebot.status = 'stopped'
     # A classified pet in range or monsters on another floor / outside the radius are fine.
@@ -313,7 +313,7 @@ def test_ki_drop_uses_the_recent_high_and_sounds_for_ten_seconds_once():
         cell.update(occupants=1,occupant_types={kind:1})
     frame['cells'].append(dict(x=100,y=100,z=6,occupants=1,occupant_types={'monster':1}))
     sample(90)
-    sample(45,.5)
+    sample(90,.5)
     sample(5,1)
     assert not c.events
     sample(5,1)
@@ -328,6 +328,53 @@ def test_ki_drop_uses_the_recent_high_and_sounds_for_ten_seconds_once():
     sample(0,.1)
     sample(0,1)
     assert c.snapshot()['ki_alarm_id'] == 2
+
+
+def test_ki_losses_over_several_turns_are_ignored_and_recovery_rearms_alarm():
+    c, _, _, sample = ki_scene()
+    for ki in (95, 48, 1, 91, 65, 2, 90, 40, 0):
+        sample(ki, .2)
+    sample(0, 1)
+    assert not c.events
+    sample(95, .1)
+    sample(1, .1)
+    sample(1, 1)
+    assert len(c.events) == 1
+
+
+@pytest.mark.parametrize("levels, alarms", [([0], 1), ([48, 0], 0), ([48, 95, 0], 0)])
+@pytest.mark.parametrize("source", ["client", "packet"])
+def test_one_ki_change_at_source_even_when_monitor_wakes_late(source, levels, alarms, monkeypatch):
+    from packet_observer import detach_state, apply_scan
+    from test_player_updates import stats
+
+    c, state, advance = setup()
+    c.monotonic = c.clock
+    gs = state.game_state
+    gs.hp = gs.max_hp = gs.max_mana = 100
+    monkeypatch.setattr("time.monotonic", c.clock)
+    monkeypatch.setattr("time.time", c.clock)
+    if source == "client":
+        gs.client_state_required = True
+        def publish(values):
+            for value in values:
+                gs.client_snapshot = dict(mana=value, max_mana=100, hp=100, max_hp=100,
+                                          position=(100, 100, 7), monotonic=c.clock(), stats_updated_at=c.clock())
+    else:
+        def publish(values):
+            scan = detach_state(gs, 0)
+            scan_packet(b"".join(stats(mana=value) for value in values), scan.state)
+            apply_scan(gs, scan)
+
+    publish([95])
+    c.observe_ki(state)
+    advance(.1)
+    publish(levels)
+    c.observe_ki(state)
+    advance(1)
+    publish([0])
+    c.observe_ki(state)
+    assert len(c.events) == alarms
 
 
 @pytest.mark.parametrize("layout", ["next_to_player", "behind_wall", "unknown_map"])

@@ -43,12 +43,21 @@ class GameState:
     magic_level = client_field("magic_level")
     position = client_field("position", (0,0,0))
 
+    @mana.setter
+    def mana(self, value):
+        if not self.client_state_required and value != self.__dict__.get("mana", 0):
+            self.ki_revision += 1
+        self.__dict__["mana"] = value
+
     @property
     def client_snapshot(self):
         return self._client_snapshot
 
     @client_snapshot.setter
     def client_snapshot(self, sample):
+        previous = self._client_snapshot
+        if self.client_state_required and (previous or {}).get("mana") != (sample or {}).get("mana"):
+            self.ki_revision += 1
         self._client_snapshot = sample
         journal = getattr(self, "observations", None)
         if journal is not None and sample is not None:
@@ -57,7 +66,9 @@ class GameState:
 
     def __init__(self):
         self.client_state_required = False
-        self.client_snapshot = None
+        # Count distinct Ki changes at the active source, even between alert checks.
+        self.ki_revision = 0
+        self._client_snapshot = None
         self.client_player_id = 0
         self.session_id = 0
         # Player identity

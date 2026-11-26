@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 SCALARS = (
     "player_id", "client_player_id", "hp", "max_hp", "mana", "max_mana",
     "level", "experience", "capacity", "magic_level", "soul", "speed",
-    "stats_updated_at", "position", "packet_position", "packet_position_trusted",
+    "ki_revision", "stats_updated_at", "position", "packet_position", "packet_position_trusted",
     "last_map_time", "player_icons", "world_light_level", "world_light_color",
     "attack_target_id", "last_cant_throw", "in_protection_zone", "cancel_walk_time", "last_walk_cancel",
     "_last_walk_delta", "_last_prune_time", "_recent_kills_cleanup",
@@ -64,12 +64,12 @@ class DetachedScan:
 def detach_state(live, target_id):
     """Called on the owner loop. No live collections or callbacks reach worker."""
     gs = GameState()
+    gs.client_state_required = live.client_state_required
+    gs.client_snapshot = deepcopy(live.client_snapshot)
     for key in SCALARS:
         if key in live.__dict__:
             gs.__dict__[key] = deepcopy(live.__dict__[key])
     gs.attack_target_id = target_id
-    gs.client_state_required = live.client_state_required
-    gs.client_snapshot = deepcopy(live.client_snapshot)
     gs._packet_snapshot_time = time.monotonic()
     gs._packet_snapshot_detached = True
     gs.creatures = deepcopy(live.creatures)
