@@ -208,6 +208,20 @@ cd dll && make
 - **send_ping** — Ping the game server
 - **logout** — Disconnect from the server
 
+### Observing the launcher's session (read-only)
+The process that ran `start_bot` (normally the launcher's) publishes a read-only
+bridge on a local named pipe with an HMAC key, recorded in
+`.codex/runtime/observer.json` and removed on exit. Another MCP instance (Claude,
+Codex) uses it when it owns no game connection itself. The bridge serves only
+status, activity and journal control; it cannot send packets or change actions.
+- **attach_status** — Find the running session and return its status
+- **session_activity** — Player, running actions, cavebot, recent commands, events and kills
+- **packet_journal** — `status | start | stop | dump`. Off for every new game
+  session. Records time, direction, opcode name and size, plus parsed events, in
+  memory and in `.codex/journal/journal-*.jsonl` (5 MB × 5). Never payload bytes,
+  keys or the login connection. Other players' chat keeps sender and kind; text
+  only with `include_chat=true`. `dump` writes the buffers to one JSON file.
+
 ## Setup
 
 ### Requirements

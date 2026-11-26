@@ -117,6 +117,9 @@ class BotState:
         self.login_proxy: OTProxy | None = None
         self.game_proxy: OTProxy | None = None
         self.packet_observer = None
+        from session_journal import SessionJournal
+        self.packet_journal = SessionJournal()
+        self.observer_bridge = None
         self.ready: bool = False
         self._auto_task: asyncio.Task | None = None
         self.login_startup = LoginStartup()
@@ -938,6 +941,13 @@ def _flush_movement_report():
     if history:history.close(wait=True)
 
 
+@atexit.register
+def _close_observer():
+    state.packet_journal.stop("exit")
+    if state.observer_bridge is not None:
+        state.observer_bridge.close()
+
+
 def _check_process_running(name: str) -> bool:
     """Check if a process with the given name is running (Windows)."""
     try:
@@ -1166,6 +1176,7 @@ async def _reset_bot() -> str:
         await asyncio.gather(pending_start, return_exceptions=True)
 
     state._adaptive_prepare_token=None
+    state.packet_journal.stop("reset")
     # 1. Stop all running actions
     history = getattr(state.game_state, "movement_history", None)
     if history:history.close()
@@ -1550,6 +1561,7 @@ async def start_bot() -> str:
         login_state.movement_history.start_worker()
         login_state.client_state_required = observer
         login_state.session_id = observation_proxy.session_generation
+        if getattr(state, "packet_journal", None):state.packet_journal.session_changed(observation_proxy.session_generation)
         session_observations(login_state)
         monitor = getattr(state, "passive_map_monitor", None)
         if monitor:
@@ -1566,6 +1578,17 @@ async def start_bot() -> str:
 
     def apply_packet_observations(gs, result, kills):
         if gs is not state.game_state:return
+        journal = getattr(state, "packet_journal", None)
+        if journal is not None and journal.enabled:
+            # Metadata and already-parsed events only; never the frame itself.
+            journal.server_frame(result.first_opcode, result.plain_size, result.sequential_complete,
+                                 state.packet_observer.last_lag_ms if state.packet_observer else None)
+            journal.server_events(result.state.server_events)
+            journal.kills(kills)
+            for message in result.messages:
+                journal.chat(message)
+            batch = result.state.message_history
+            journal.server_messages(list(batch.general) + list(batch.combat))
         publish_semantic_result(gs, result, kills)
         for message in result.messages:
             state.alert_center.observe_chat(message, state, gs, result.received_at)
@@ -1579,6 +1602,7 @@ async def start_bot() -> str:
 
     def packet_observation_gap(reason):
         gs = state.game_state
+        if getattr(state, "packet_journal", None):state.packet_journal.gap(reason)
         note_observation_gap(gs, reason)
         history = getattr(gs, "movement_history", None)
         if history:history.observation_gap(reason)
@@ -1604,6 +1628,7 @@ async def start_bot() -> str:
         if state.game_proxy is not observation_proxy:
             return
         state.login_startup.cancel()
+        if getattr(state, "packet_journal", None):state.packet_journal.stop("disconnected")
         if getattr(state,"packet_observer",None):state.packet_observer.invalidate()
         history = getattr(state.game_state, "movement_history", None)
         if history:history.close()
@@ -1632,6 +1657,11 @@ async def start_bot() -> str:
         if monitor:
             monitor.record_client_packet(opcode, reader)
     state.game_proxy.register_client_packet_callback(observe_navigation_command)
+
+    def journal_client_packet(opcode, reader):
+        if getattr(state, "packet_journal", None) and state.packet_journal.enabled:
+            state.packet_journal.client_packet(opcode, reader.remaining + 1)
+    state.game_proxy.register_client_packet_callback(journal_client_packet)
     state.game_proxy.on_login_success = on_login_success
     state.game_proxy.on_game_disconnected = on_disconnect
     state.game_proxy.on_encrypted_server_data = state.packet_observer.offer
@@ -1648,6 +1678,7 @@ async def start_bot() -> str:
     import dashboard_api
     dashboard_api.start_api(asyncio.get_running_loop(), state)
     _launch_dashboard()
+    _publish_observer_bridge()
 
     status = _build_status_report()
     return (
@@ -2067,6 +2098,134 @@ async def get_status() -> str:
         status += f"\nSession: {commands['session']} · queued commands: {commands['queued']}"
 
     return f"=== Component Status ===\n{status}"
+
+
+# ── Read-only observation, local or over the launcher's bridge ─────────
+
+def _tail(items, count):
+    items = list(items)
+    return items[-count:] if count else []
+
+
+async def _session_activity() -> dict:
+    """Compact read-only snapshot of what this process is doing in the game."""
+    from session_journal import _plain
+    gs, proxy = state.game_state, state.game_proxy
+    running = sorted(n for n, t in state._action_tasks.items() if t and not t.done())
+    adaptive = getattr(state, "adaptive_cavebot", None)
+    observer = getattr(state, "packet_observer", None)
+    return _plain({
+        "pid": os.getpid(), "engine": ENGINE_LABEL,
+        "connected": state.connected, "logged_in": bool(proxy and proxy.logged_in),
+        "session": getattr(proxy, "session_generation", None) if proxy else None,
+        "packets": {"server": proxy.packets_from_server, "client": proxy.packets_from_client} if proxy else None,
+        "player": {key: getattr(gs, key, None) for key in (
+            "player_name", "level", "experience", "hp", "max_hp", "mana", "max_mana", "capacity", "speed",
+            "position", "in_protection_zone", "attack_target_id", "stats_updated_at")},
+        "creatures_known": len(gs.creatures), "session_kills": getattr(gs, "session_kills", 0),
+        "automation_paused": state.automation_paused, "pause_kind": state.automation_pause_kind,
+        "running_actions": running,
+        "action_log_tail": {name: _tail(state.action_logs.get(name, ()), 5) for name in running},
+        "recording": {"active": state.recording_active, "name": state.recording_name,
+                      "waypoints": len(state.recording_waypoints)},
+        "playback": {"active": state.playback_active, "recording": state.playback_recording_name,
+                     "index": state.playback_index, "total": state.playback_total, "loop": state.playback_loop,
+                     "loops_done": state.playback_loop_count, "kills": state.playback_kills},
+        "adaptive_cavebot": adaptive.snapshot() if adaptive else None,
+        "auto_walk": bool(state._auto_task and not state._auto_task.done()),
+        "observer": observer.snapshot() if observer else None,
+        "commands": proxy.command_snapshot() if proxy and hasattr(proxy, "command_snapshot") else None,
+        "recent_server_events": [{"at": at, "kind": kind, "details": details}
+                                 for at, kind, details in _tail(gs.server_events, 20)],
+        "recent_kills": _tail(gs.kill_log, 10),
+        "recent_combat_messages": _tail(gs.message_history.combat, 15),
+        "journal": state.packet_journal.status(),
+    })
+
+
+async def _journal_control(action: str = "status", include_chat: bool = False) -> dict:
+    proxy = state.game_proxy
+    if action == "status":
+        return state.packet_journal.status()
+    if action == "start":
+        session = proxy.session_generation if proxy is not None and proxy.logged_in else None
+        return state.packet_journal.start(session, include_chat=include_chat)
+    if action == "stop":
+        return state.packet_journal.stop()
+    if action == "dump":
+        extra = {"activity": await _session_activity(), "status_report": await get_status()}
+        path = state.packet_journal.dump(extra)
+        return {"path": str(path), **state.packet_journal.status()}
+    raise ValueError("action must be status, start, stop or dump")
+
+
+_OBSERVER_HANDLERS = {"status": get_status, "activity": _session_activity, "journal": _journal_control}
+
+
+def _publish_observer_bridge():
+    if state.observer_bridge is not None:
+        return
+    from session_bridge import ObserverBridge
+    bridge = ObserverBridge(asyncio.get_running_loop(), _OBSERVER_HANDLERS)
+    try:
+        if bridge.start():
+            state.observer_bridge = bridge
+    except OSError as error:
+        log.warning("Observer bridge unavailable: %s", error)
+
+
+async def _observe(op: str, **args):
+    """Answer locally when this process owns the game, else ask the launcher's process."""
+    if state.game_proxy is not None:
+        return "local", await _OBSERVER_HANDLERS[op](**args)
+    import session_bridge
+    return "launcher", await asyncio.to_thread(session_bridge.call, op, **args)
+
+
+@mcp.tool()
+async def attach_status() -> dict:
+    """Find the game session (this process or the launcher's) and return its status. Read-only."""
+    import session_bridge
+    if state.game_proxy is not None:
+        return {"source": "local", "pid": os.getpid(), "status": await get_status()}
+    try:
+        info = await asyncio.to_thread(session_bridge.read_info)
+        status = await asyncio.to_thread(session_bridge.call, "status")
+    except session_bridge.BridgeUnavailable as error:
+        return {"source": None, "attached": False, "reason": str(error)}
+    return {"source": "launcher", "attached": True, "pid": info.get("pid"),
+            "started_at": info.get("started_at"), "status": status}
+
+
+@mcp.tool()
+async def session_activity() -> dict:
+    """Read-only snapshot of the running session: player, actions, cavebot, commands, recent events."""
+    import session_bridge
+    try:
+        source, result = await _observe("activity")
+    except session_bridge.BridgeUnavailable as error:
+        return {"source": None, "error": str(error)}
+    return {"source": source, **result}
+
+
+@mcp.tool()
+async def packet_journal(action: str = "status", include_chat: bool = False) -> dict:
+    """Opt-in packet metadata journal for the current game session (no payloads or keys).
+
+    action: status | start | stop | dump. start switches it on until logout or reconnect and
+    writes .codex/journal/journal-*.jsonl; dump writes the in-memory rings to a JSON file and
+    returns its path. Other players' chat text is kept only with include_chat=true.
+    """
+    import session_bridge
+    if action not in {"status", "start", "stop", "dump"}:
+        return {"error": "action must be status, start, stop or dump"}
+    try:
+        source, result = await _observe("journal", action=action, include_chat=include_chat)
+    except session_bridge.BridgeUnavailable as error:
+        return {"source": None, "error": str(error)}
+    except RuntimeError as error:
+        return {"source": "launcher", "error": str(error)}
+    return {"source": source, **result}
 
 
 @mcp.tool()

@@ -59,6 +59,8 @@ class DetachedScan:
     received_at: float | None = None
     received_perf: float | None = None
     sequential_complete: bool = True
+    first_opcode: int | None = None
+    plain_size: int | None = None
 
 
 def detach_state(live, target_id):
@@ -88,6 +90,8 @@ def parse_detached(raw, keys, scan):
     plain = decrypt_game_packet(raw, keys)
     if plain is None:
         return None
+    # Frame metadata for the opt-in journal; the plaintext itself stays here.
+    scan.first_opcode, scan.plain_size = (plain[0] if plain else None), len(plain)
     scan.sequential_complete = scan_packet(plain, scan.state, received_at=scan.received_perf)
     if len(scan.messages)+len(scan.potion_messages)+len(scan.state.kill_log)-len(scan.kills)>256:
         raise ValueError("observation_result_limit")
