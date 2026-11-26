@@ -55,15 +55,15 @@ async function launcherRenderer() {
   return {env,nodes,desktop};
 }
 
-test("the manual connection button follows character-list readiness", async () => {
+test("the connection button relies on the user and is always available when prepared", async () => {
   const {env,nodes}=await launcherRenderer();
   const state={phase:"prepared",folder:"",text:"",changes:[]};
-  for (const [characterListPid, disabled] of [[null,true],[17,false],[null,true]]) {
-    env.update({...state,characterListPid});
+  for (const readOnly of [false,true,false]) {
+    env.update({...state,readOnly});
     const button=nodes.get("#primary");
     assert.equal(button.textContent,"Połącz z grą");
     assert.equal(button.hidden,false);
-    assert.equal(button.disabled,disabled);
+    assert.equal(button.disabled,readOnly);
   }
 });
 
@@ -87,13 +87,13 @@ async function launcherWithClient(initialPid) {
   const folder = path.resolve("DBVictory");
   const handlers = new Map();
   const proc = new EventEmitter();
-  const stub = {pid:initialPid, listVisible:false, opens:0, writes:[], ended:false};
+  const stub = {pid:initialPid, captures:0, opens:0, writes:[], ended:false};
   proc.stdin = {write:data=>stub.writes.push(data), end:()=>{stub.ended=true;}};
   const host = {
     clients:async()=>stub.pid ? [{Id:stub.pid, Path:path.join(folder,"dbvStart.exe"), HasWindow:true}] : [],
     clientExe:async()=>path.join(folder,"dbvStart.exe"),
     openWindowPid:async()=>stub.pid,
-    characterListPid:async()=>stub.listVisible ? stub.pid : null,
+    characterListPid:async()=>{stub.captures++;throw Error("Screen capture must not be used");},
     openClient:async()=>{stub.opens++; stub.pid=20;},
     checkRelease:async()=>({state:"current"}), history:async()=>[],
     interactive:(_root,_id,_rev,onLine)=>{stub.onLine=onLine; return proc;}
@@ -135,11 +135,9 @@ test("cold Start keeps the panel closed until Connect", async () => {
   client.onLine("OCZEKIWANIE NA POŁĄCZENIE");
   await client.poll();
   assert.equal(client.view.phase,"prepared");
-  assert.equal(client.view.characterListPid,null);
-  await client.connect();
-  client.listVisible=true;
+  const instruction=client.view.text;
   await client.poll();
-  assert.equal(client.view.characterListPid,20);
+  assert.equal(client.view.text,instruction);
   assert.deepEqual(client.writes,["prepare-login\n"]);
   await Promise.all([client.connect(),client.connect()]);
   assert.deepEqual(client.writes,["prepare-login\n","connect\n"]);
@@ -148,23 +146,25 @@ test("cold Start keeps the panel closed until Connect", async () => {
   await client.poll();
   assert.equal(client.view.phase,"running");
   assert.equal(client.hidden,true);
+  assert.equal(client.captures,0);
 });
 
-test("Start accepts an already-open character list in one click", async () => {
+test("an already-open client still waits for the user's Connect confirmation", async () => {
   const client=await launcherWithClient(17);
-  client.listVisible=true;
   await client.start();
   assert.equal(client.opens,0);
   assert.equal(client.view.phase,"starting");
-  assert.deepEqual(client.writes,["\n"]);
+  assert.deepEqual(client.writes,["prepare-login\n"]);
+  client.onLine("OCZEKIWANIE NA POŁĄCZENIE");
+  await client.connect();
+  assert.deepEqual(client.writes,["prepare-login\n","connect\n"]);
+  assert.equal(client.captures,0);
 });
 
 test("a replacement client must be confirmed again on the character list", async () => {
   const client=await launcherWithClient(null);
   await client.start();
   client.onLine("OCZEKIWANIE NA POŁĄCZENIE");
-  await client.poll();
-  client.listVisible=true;
   await client.poll();
   client.pid=42;
   await client.connect();
@@ -175,41 +175,35 @@ test("a replacement client must be confirmed again on the character list", async
   assert.deepEqual(client.writes,["prepare-login\n","connect\n"]);
 });
 
-test("an open login screen waits and the button rechecks the list on click", async () => {
+test("Connect reports a missing window and allows another manual attempt", async () => {
   const client=await launcherWithClient(17);
   await client.start();
   assert.deepEqual(client.writes,["prepare-login\n"]);
   client.onLine("OCZEKIWANIE NA POŁĄCZENIE");
-  client.listVisible=true;
-  await client.poll();
-  client.listVisible=false;
+  client.pid=null;
   await client.connect();
-  assert.equal(client.view.characterListPid,null);
+  assert.equal(client.view.phase,"prepared");
+  assert.match(client.view.text,/okn/);
   assert.deepEqual(client.writes,["prepare-login\n"]);
-
-  client.listVisible=true;
-  await client.poll();
-  client.host.characterListPid=async()=>{throw Error("window capture unavailable");};
-  await client.poll();
-  assert.equal(client.view.characterListPid,null);
-  assert.deepEqual(client.writes,["prepare-login\n"]);
+  client.pid=17;
+  await client.connect();
+  assert.deepEqual(client.writes,["prepare-login\n","connect\n"]);
+  assert.equal(client.captures,0);
 });
 
-test("a late poll cannot overwrite the newer click-time check", async () => {
+test("Connect preserves an actionable process error instead of silently discarding the click", async () => {
   const client=await launcherWithClient(null);
   await client.start();
   client.onLine("OCZEKIWANIE NA POŁĄCZENIE");
-  client.listVisible=true;
-  await client.poll();
-  let finish;
-  client.host.characterListPid=()=>new Promise(resolve=>{finish=resolve;});
-  const polling=client.poll();
-  client.host.characterListPid=async()=>null;
+  client.host.openWindowPid=async()=>{throw Error("Pozostaw jedno okno klienta.");};
   await client.connect();
-  finish(client.pid);
-  await polling;
-  assert.equal(client.view.characterListPid,null);
+  assert.equal(client.view.phase,"prepared");
+  assert.equal(client.view.text,"Pozostaw jedno okno klienta.");
   assert.deepEqual(client.writes,["prepare-login\n"]);
+  client.host.openWindowPid=async()=>client.pid;
+  await client.connect();
+  assert.deepEqual(client.writes,["prepare-login\n","connect\n"]);
+  assert.equal(client.captures,0);
 });
 
 test("closing the launcher while the game is opening cannot advance startup", async () => {

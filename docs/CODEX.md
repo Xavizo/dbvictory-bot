@@ -14,13 +14,15 @@ login, native marker behavior and gameplay are not yet accepted.
 Skrót **Uruchom bota** otwiera **DBVictory Launcher.exe**. W tym samym oknie
 launcher sprawdza lokalną kolejkę, instaluje wydanie i pokazuje wersję na dysku.
 Przy aktywnej sesji pakiet czeka. Po jej zakończeniu użyj **Sprawdź ponownie**.
-Jeśli klient jest zamknięty, kliknij **Start**. Launcher otworzy klienta,
-przygotuje silnik i poczeka. Zaloguj się na konto i pozostaw otwartą listę
-postaci. Przycisk **Połącz z grą** uaktywni się, gdy launcher rozpozna napisy
-**Select Character** i **Enter to DBVictory** w oknie klienta. Po kliknięciu
-launcher ponownie sprawdzi listę. W głównym panelu poczekaj na **Zaloguj się do gry** i wejdź na postać.
-Jeśli lista postaci jest już otwarta przy uruchamianiu launchera, **Start**
-od razu wykonuje dotychczasowy start sesji. Po jego zakończeniu wejdź na postać.
+Kliknij **Start**. Launcher otworzy klienta, jeśli jest zamknięty, przygotuje
+silnik i poczeka. Zaloguj się na konto i pozostaw otwartą listę postaci.
+Przycisk **Połącz z grą** jest od razu dostępny po przygotowaniu silnika.
+Kliknięcie jest Twoim potwierdzeniem, że lista postaci jest otwarta. Launcher
+nie wykonuje zrzutów okna ani rozpoznawania napisów. Sprawdza jedynie, czy
+działa jedno okno klienta z wybranego folderu. Po zmianie procesu prosi o ponowne
+kliknięcie; brak okna lub wiele okien pokazuje jako błąd z możliwością ponowienia.
+Także przy już otwartym kliencie **Start** czeka na **Połącz z grą**.
+W głównym panelu poczekaj na **Zaloguj się do gry** i dopiero wtedy wejdź na postać.
 Krok **Wykrywanie klienta DBVictory…** sprawdza okno z wybranego folderu.
 Kolejne kroki pokazują gotowość silnika i głównego panelu. Po połączeniu
 launcher się schowa. Zamknięcie klienta kończy sesję uruchomioną z tego okna.

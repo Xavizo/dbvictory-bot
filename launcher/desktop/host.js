@@ -83,17 +83,6 @@ async function openWindowPid(folder) {
   return windowPid(await clients(), folder);
 }
 
-async function characterListPid(root, folder) {
-  const list = await clients();
-  const pid = windowPid(list, folder);
-  const handle = pid && list.find(client => client.Id === pid)?.WindowHandle;
-  if (!Number.isSafeInteger(handle) || handle <= 0) return null;
-  const python = path.join(root, "venv", "Scripts", "python.exe");
-  const result = await exec(python, ["-B", "-m", "launcher.character_list", String(handle), String(pid)],
-    {...options, cwd:root, timeout:4000});
-  return result.stdout.trim() === "ready" ? pid : null;
-}
-
 async function openClient(folder) {
   const exe = await clientExe(folder);
   if (!exe) throw new Error("Wybierz katalog z dbvStart.exe lub dbvStart_gl.exe.");
@@ -121,4 +110,4 @@ function interactive(root, id, revision, onLine) {
   return proc;
 }
 
-module.exports = {checkRelease,history,validSha,clientExe,clients,windowPid,openWindowPid,characterListPid,openClient,interactive};
+module.exports = {checkRelease,history,validSha,clientExe,clients,windowPid,openWindowPid,openClient,interactive};

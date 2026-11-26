@@ -90,7 +90,7 @@ function update(s) {
   button("#primary",null);button("#secondary",null);
   if (idle&&!s.readOnly) {
     button("#primary","Start","start");
-  } else if(stage==="prepared") button("#primary","Połącz z grą","connect",!s.characterListPid);
+  } else if(stage==="prepared") button("#primary","Połącz z grą","connect",!!s.readOnly);
   else if (["detecting","starting","panel"].includes(stage)) button("#primary","Start",null,true);
   else if (["closed","busy","problem","available","recovery"].includes(stage)||s.readOnly&&idle) button("#primary","Sprawdź ponownie","retry");
   if(stage==="waiting")button("#secondary","Anuluj","cancel");

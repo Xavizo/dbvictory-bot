@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.38.2",
+    "changes":[
+      {"title":"Połącz z grą na własne potwierdzenie","detail":"Przycisk jest dostępny po przygotowaniu silnika. Launcher nie wykonuje zrzutów okna ani nie rozpoznaje listy postaci. Pozostaw klienta na liście postaci i kliknij Połącz z grą."}
+    ]
+  },
+  {
     "version":"v1.38.1",
     "changes":[
       {"title":"Profil klienta z 26 listopada","detail":"Nowe adresy odczytu HP, Ki, mapy i wyposażenia oraz osobna biblioteka klienta. Sprawdzone offline; połączenie i działanie w grze wymagają jeszcze odbioru na Windows."}
