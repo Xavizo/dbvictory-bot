@@ -1,3 +1,5 @@
+import pytest
+
 from hunter_knife import FRESH, SPENT, SkinningQueue, body_counts, skinned
 
 
@@ -44,16 +46,23 @@ def tile(point, *bodies):
     ])
 
 
-def observations(deaths, credits, cells):
+def observations(deaths, credits, cells, name=NAME):
     q = SkinningQueue()
     q.observe([tile(A), tile(B)], 10)
     for i, p in enumerate(deaths):
-        q.death(dict(name=NAME, cid=i+1, x=p[0], y=p[1], z=p[2]), 10.3)
+        q.death(dict(name=name, cid=i+1, x=p[0], y=p[1], z=p[2]), 10.3)
     for _ in range(credits):
-        q.personal_loot("[Mutant Fire Elemental]: nothing.", 10.4)
+        q.personal_loot(f"[{name}]: nothing.", 10.4)
     q.observe(cells, 10.5)
     q.observe(cells, 11.6)
     return q
+
+
+@pytest.mark.parametrize("name", ["Gunso", "Chibi Gunso", "Fury Gunso"])
+def test_gunso_loot_and_death_identify_body_910(name):
+    corpse = tile(A, 910)
+    queue = observations([A], 1, [corpse], name=name)
+    assert queue.next_body(A, corpse["items"]) == ("skin", corpse["items"][-1])
 
 
 def test_distinct_own_deaths_and_identical_layers():

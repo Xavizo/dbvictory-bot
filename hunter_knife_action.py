@@ -15,7 +15,7 @@ NAME = "auto_hunter_knife"
 INPUTS = ("map", "position", "target", "death", "loot", "inventory", "health")
 ATTEMPT_VALID_FOR = .55
 MAP_FRESH_FOR = .6
-WAITING_FOR_BODY = "Czekam na świeże ciało elementala lub Roco w zasięgu"
+WAITING_FOR_BODY = "Czekam na świeże ciało do skórowania w zasięgu"
 
 
 def point(cell):

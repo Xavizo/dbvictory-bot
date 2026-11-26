@@ -10,11 +10,13 @@ from hunt_sightings import fresh_monster_name
 KNIFE = 5908
 FRESH = 9068
 ROCO = 8548
-FRESH_BODIES = frozenset((FRESH, ROCO))
+GUNSO = 910
+FRESH_BODIES = frozenset((FRESH, ROCO, GUNSO))
 SPENT = 8141
 SKINNABLE_SPECIES = frozenset({"fire elemental", "fire elementalis", "mutant fire elemental",
                         "fury mutant fire", "fury mutant fire elemental",
-                        "roco", "chibi roco", "fury roco"})
+                        "roco", "chibi roco", "fury roco",
+                        "gunso", "chibi gunso", "fury gunso"})
 LOOT_LINE = re.compile(
     r"(?:(?:[01][0-9]|2[0-3]):[0-5][0-9][ \t]+)?"
     r"\[([^\[\]\r\n]{1,64})\]: [^\r\n]+"

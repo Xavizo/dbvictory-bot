@@ -25,7 +25,7 @@ export default function HunterKnifePanel({ state, onRefresh }: {
     }
   }
   return <section className="barrier-band-panel" aria-label="Hunter Knife">
-    <div><strong>Hunter Knife</strong><small>5908 · elementale ognia, Roco, Chibi Roco i Fury Roco</small></div>
+    <div><strong>Hunter Knife</strong><small>5908 · elementale ognia, Roco i Gunso (także Chibi i Fury)</small></div>
     <span className="barrier-band-status">{enabled ? info?.status ?? "Oczekiwanie" : "Wyłączony"}</span>
     <button className={`action-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled}
       aria-label="Automatyczny Hunter Knife" disabled={busy || !!state?.automation_paused} onClick={toggle}><span/></button>
