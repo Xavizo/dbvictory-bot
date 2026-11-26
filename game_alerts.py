@@ -52,30 +52,6 @@ def cavebot_running(state):
     return bool(controller and controller.status == 'running' and task and not task.done())
 
 
-def visible_map_clear(frame, position, previous, stamp, now):
-    captured = frame.get('captured_at', 0)
-    if (frame.get('status') != 'ready' or tuple(frame.get('center', ())) != position
-            or not 0 <= now - captured <= 1 or abs(stamp - captured) > 1
-            or (frame.get('width'), frame.get('height')) != (WIDTH, HEIGHT)):
-        return False
-    left, top = frame['origin']
-    if not (left <= previous[0] < left + WIDTH and top <= previous[1] < top + HEIGHT):
-        return False
-    seen = set()
-    for cell in frame.get('cells', ()):
-        if cell['z'] != position[2]:
-            continue
-        x, y = cell['x'], cell['y']
-        if not (left <= x < left + WIDTH and top <= y < top + HEIGHT):
-            continue
-        types = cell.get('occupant_types')
-        if (cell.get('kind') == 'unknown' or types is None or types.get('monster')
-                or types.get('unknown') or sum(types.values()) != cell.get('occupants')):
-            return False
-        seen.add((x, y))
-    return len(seen) == WIDTH * HEIGHT
-
-
 class AlertCenter:
     def __init__(self, config=None, clock=time.time, spells=None, monotonic=time.monotonic):
         self.monotonic = monotonic
@@ -260,20 +236,18 @@ class AlertCenter:
             if previous is None:
                 return
             before, high, old_max, origin = previous
-            if not 0 <= stamp - before <= KI_DROP_WINDOW or old_max != maximum or origin[2] != position[2]:
+            if (not 0 <= stamp - before <= KI_DROP_WINDOW or old_max != maximum or origin[2] != position[2]
+                    or abs(origin[0] - position[0]) > WIDTH // 2 or abs(origin[1] - position[1]) > HEIGHT // 2):
                 self.last_high_ki = None
                 return
             if mana * 100 > maximum * 5:
                 return
             self.last_high_ki = None
-            monitor = getattr(state, 'passive_map_monitor', None)
             drop = current - (now - stamp)
             if last_hit is not None and last_hit >= drop - KI_DROP_WINDOW:
                 return
-            if not visible_map_clear(getattr(monitor, '_result', {}), position, origin, stamp, now):
-                return
             text = (f'Ki spadło z {high / maximum:.0%} do {mana / maximum:.0%} '
-                    f'w {stamp - before:.2f} s. Brak widocznego potwora i komunikatu o ataku.')
+                    f'w {stamp - before:.2f} s. Brak komunikatu o ataku na postać.')
             if self.pending_ki is None:
                 self.pending_ki = (drop, text, position)
 

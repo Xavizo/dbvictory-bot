@@ -161,7 +161,7 @@ def publish_semantic_result(gs, result, kills):
             families.append("effects")
     if parsed.last_walk_cancel != old.get("last_walk_cancel"):
         families.append("walk_cancel")
-    if result.messages or result.potion_messages or parsed.messages:
+    if result.messages or result.potion_messages or parsed.messages or parsed.message_history.combat:
         families.append("messages")
     if any(kind == "loot" for kind, _ in parsed.knife_feedback):
         families.append("loot")

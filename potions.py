@@ -221,6 +221,20 @@ async def run_potions(bot):
         await wait_for_inputs(bot, POTION_INPUTS, cursor, .05)
 
 
+def next_senzu_stock(previous, msg_type, text, batch_id, at):
+    """Return the next stock observation and the time of a corroborated one-unit use."""
+    if msg_type == 26 and previous:
+        refusal = USE_REFUSAL.fullmatch(text)
+        if refusal and (refusal[1] or batch_id is not None and batch_id == previous[2]):
+            return None, None
+    report = STOCK_REPORT.fullmatch(text) if msg_type == 25 else None
+    if not report or report[2] != "Senzu":
+        return previous, None
+    count = int(report[1])
+    used_at = previous[1] if previous and previous[0] - count == 1 else None
+    return (count, at, batch_id), used_at
+
+
 class SenzuUsage:
     """Confirmed stock decreases for one Cavebot run, timestamped at the prior use."""
     window = 15 * 60
@@ -247,21 +261,10 @@ class SenzuUsage:
         with self._lock:
             if at < self.inventory_since or (self.ended is not None and at > self.ended):
                 return
-            if msg_type == 26 and self.previous:
-                refused = USE_REFUSAL.fullmatch(text)
-                if refused and (refused[1] or batch_id is not None and batch_id == self.previous[2]):
-                    self.previous = None
-                return
-            report = STOCK_REPORT.fullmatch(text) if msg_type == 25 else None
-            if not report or report[2] != "Senzu":
-                return
-            count = int(report[1])
-            if self.previous:
-                stock, used_at, _ = self.previous
-                if stock - count == 1:
-                    self.total += 1
-                    self.recent.append(used_at)
-            self.previous = (count, at, batch_id)
+            self.previous, used_at = next_senzu_stock(self.previous, msg_type, text, batch_id, at)
+            if used_at is not None:
+                self.total += 1
+                self.recent.append(used_at)
             self._trim(at)
 
     def _trim(self, now):
@@ -299,6 +302,9 @@ class PotionDiagnostics:
                 self.last_response = None
 
     def record_use(self, item_id, mode, gs, now=None, source="manual"):
+        history = getattr(gs, "message_history", None)
+        if history is not None and item_id in ITEMS:
+            history.record_item_attempt(item_id, mode, source, gs)
         now = time.monotonic() if now is None else now
         with self._lock:
             if now >= self.until or item_id not in ITEMS:

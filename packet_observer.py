@@ -9,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
 import logging
-import re
 import struct
 import time
 
@@ -17,11 +16,6 @@ from crypto import adler32_checksum, xtea_decrypt
 from game_state import GameState, scan_packet
 
 log = logging.getLogger(__name__)
-
-INCOMING_HIT = re.compile(
-    r"You lose [0-9]+ (?:ki points? blocking an attack by|hitpoints? due to an attack by) [^\r\n]+",
-    re.IGNORECASE,
-)
 
 SCALARS = (
     "player_id", "client_player_id", "hp", "max_hp", "mana", "max_mana",
@@ -104,11 +98,12 @@ def publish_server_feedback(live, scan, diagnostics):
     # Use the time of receipt for correlations with local actions. Parsing can
     # finish after a different Look, inventory change, or Cavebot restart.
     if scan.received_at is not None and any(
-        INCOMING_HIT.fullmatch(message["text"]) for message in scan.state.messages
+        message["kind"] == "damage_received" for message in scan.state.message_history.combat
     ):
         live.last_incoming_hit = scan.received_at
     usage = getattr(live, "senzu_usage", None)
     for kind, text, kwargs in scan.potion_messages:
+        live.message_history.observe_stock(kind, text, kwargs.get("batch_id"), scan.received_at)
         if kind == 25:
             live.pets.description(text, live.creatures, received_at=scan.received_at)
         diagnostics.observe_message(kind, text, now=scan.received_at, **kwargs)
@@ -177,7 +172,7 @@ def apply_scan(live, scan):
                     break
     from hunter_knife import publish_feedback
     publish_feedback(live, parsed, new_kills, scan.received_at)
-    live.messages.extend(parsed.messages)
+    live.message_history.merge(parsed.message_history)
     live.tile_updates.extend(parsed.tile_updates)
     for _, kind, event in parsed.server_events:
         if kind == "container_window" and scan.received_perf is not None:

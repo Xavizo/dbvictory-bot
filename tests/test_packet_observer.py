@@ -110,7 +110,9 @@ def test_packet_potion_messages_are_delivered_only_after_worker_returns():
     assert not gs.messages
     assert scan.potion_messages==[(25,text.decode(),{'batch_id':1})]
     apply_scan(gs,scan)
-    assert list(gs.messages)==[{'type':25,'text':text.decode()}]
+    message, = gs.messages
+    assert (message['type'], message['text']) == (25, text.decode())
+    assert abs(time.time() - message['at']) < 2
 
 
 def test_message_history_keeps_the_latest_100000_entries_across_batches():

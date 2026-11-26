@@ -128,6 +128,14 @@ class _Handler(BaseHTTPRequestHandler):
             return self._run_control("_async_nearby_items")
         if self.path == "/api/state":
             return self._handle_get_state()
+        if urlsplit(self.path).path == "/api/message-history":
+            query = parse_qs(urlsplit(self.path).query)
+            try:
+                limit = int(query.get("limit", ["50"])[0])
+                before = int(query["before"][0]) if "before" in query else None
+            except ValueError:
+                return self._json_response({"error": "Nieprawidłowy limit lub kursor."}, 400)
+            return self._run_control("read_message_history", query.get("channel", ["general"])[0], limit, before)
         if self.path == "/api/movement-history":
             return self._movement_history()
         if urlsplit(self.path).path == "/api/cavebot/reports":

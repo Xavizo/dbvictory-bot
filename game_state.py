@@ -11,6 +11,7 @@ import sys
 import time
 from collections import deque
 from client_player_state import client_field
+from message_history import MessageHistory
 from pet_tracking import PetTracker
 import browse_fields
 from browse_fields import BrowseFields, field_window_header
@@ -114,8 +115,8 @@ class GameState:
         self.knife_candidate_count = 0
         self.knife_manual_use_at = None
         self.knife_denials = 0
-        # Recognized server text messages, retained for the current session.
-        self.messages: deque = deque(maxlen=100_000)
+        self.message_history = MessageHistory()
+        self.messages = self.message_history.general
 
         # Timestamp of last map data packet (for creature pruning)
         self.last_map_time: float = 0
@@ -654,7 +655,8 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
         if end > len(data):
             return -1
         text = data[pos + _tm_text:end].decode('latin-1', errors='replace')
-        gs.messages.append({"type": msg_type, "text": text})
+        at = time.time() - (time.perf_counter() - received_at) if received_at is not None else time.time()
+        gs.message_history.record_server(msg_type, text, at, getattr(gs, "_server_packet_seq", None))
         if msg_type == 25:  # DBVictory's server Look description
             gs.pets.description(text, gs.creatures)
         callback = getattr(gs, "potion_message_callback", None)
@@ -977,7 +979,7 @@ def _parse(opcode: int, reader, gs: GameState) -> None:
     elif opcode == ServerOpcode.TEXT_MESSAGE:
         msg_type = reader.read_u8()
         text = reader.read_string()
-        gs.messages.append({"type": msg_type, "text": text})
+        gs.message_history.record_server(msg_type, text, time.time())
         if msg_type == 25:
             gs.pets.description(text, gs.creatures)
         callback = getattr(gs, "potion_message_callback", None)

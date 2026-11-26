@@ -330,25 +330,23 @@ def test_ki_drop_uses_the_recent_high_and_sounds_for_ten_seconds_once():
     assert c.snapshot()['ki_alarm_id'] == 2
 
 
-@pytest.mark.parametrize('problem', ['monster','unknown_type','missing_tile','unreadable_tile',
-                                      'stale_map','future_map','wrong_center','waiting','empty_map'])
-def test_ki_alarm_requires_confirmed_empty_nearby_map(problem):
-    c, state, frame, sample = ki_scene()
+@pytest.mark.parametrize("layout", ["next_to_player", "behind_wall", "unknown_map"])
+def test_visible_monster_or_own_target_cannot_establish_an_incoming_hit(layout):
+    center, state, frame, sample = ki_scene()
+    gs = state.game_state
+    gs.attack_target_id = 0x40000123
+    if layout == "unknown_map":
+        frame.update(cells=[], status="waiting")
+    else:
+        x = 104 if layout == "behind_wall" else 101
+        cell = next(c for c in frame["cells"] if (c["x"], c["y"]) == (x, 100))
+        cell.update(occupants=1, occupant_types={"monster": 1})
+        if layout == "behind_wall":
+            next(c for c in frame["cells"] if (c["x"], c["y"]) == (102, 100))["kind"] = "blocked"
     sample(100)
-    corner = next(v for v in frame['cells'] if (v['x'],v['y'])==(109,107))
-    if problem == 'monster': corner.update(occupants=1,occupant_types={'monster':1})
-    if problem == 'unknown_type': corner.update(occupants=1,occupant_types={'unknown':1})
-    if problem == 'missing_tile': frame['cells'].remove(corner)
-    if problem == 'unreadable_tile': corner['kind']='unknown'
-    if problem == 'stale_map': frame['captured_at']-=2
-    if problem == 'future_map': frame['captured_at']+=1
-    if problem == 'wrong_center': frame['center']=[100,101,7]
-    if problem == 'waiting': frame['status']='refreshing'
-    if problem == 'empty_map': frame['cells']=[]
-    state.game_state.mana=0
-    c.observe_ki(state)
-    sample(0,1.1)
-    assert not c.events
+    sample(0, .5)
+    sample(0, 1)
+    assert [row["kind"] for row in center.events] == ["ki_loss"]
 
 
 @pytest.mark.parametrize('problem', ['slow','small','max_change','new_session','teleport','dead','disabled','scope'])

@@ -1491,6 +1491,7 @@ async def start_bot() -> str:
         if opcode in (ClientOpcode.MOVE_THING, ClientOpcode.REQUEST_TRADE, ClientOpcode.ACCEPT_TRADE,
                       ClientOpcode.BUY_ITEM, ClientOpcode.SELL_ITEM):
             session_observations(state.game_state).publish("client_action", ("inventory",))
+            state.game_state.message_history.invalidate_inventory()
             state.potion_diagnostics.invalidate_inventory()
             usage = getattr(state.game_state, 'senzu_usage', None)
             if usage is not None:
@@ -1575,6 +1576,7 @@ async def start_bot() -> str:
         gs.packet_position_trusted = False
         gs.pets.invalidate_pending_look()
         gs.browse_fields.clear()
+        gs.message_history.invalidate_inventory()
         usage = getattr(gs, "senzu_usage", None)
         if usage is not None:
             usage.invalidate_inventory()
@@ -2095,6 +2097,15 @@ async def unlock_automation() -> str:
 async def configure_potions(config: dict) -> dict:
     """Configure ordered healing rules (HP/Ki, item 10161/10160/8465, threshold, jitter, interval, cooldown, mode). Legacy potion fields remain supported until rules are saved. Does not enable it."""
     return await _async_update_action_config("auto_potions", config)
+
+
+@mcp.tool()
+async def read_message_history(channel: str, limit: int = 50, before: int | None = None) -> dict:
+    """Read one page of general or combat history from this game session, oldest first.
+    Use next_before as before for the preceding page. Timestamps are Unix seconds.
+    """
+    gs = state.game_state
+    return {"session_id": gs.session_id, **gs.message_history.page(channel, limit, before)}
 
 
 @mcp.tool()
