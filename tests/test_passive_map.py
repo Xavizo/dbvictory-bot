@@ -80,8 +80,11 @@ def test_snapshot_uses_verified_item_definition_and_known_stairs(world):
     assert snapshot["counts"] == {"unknown":251,"clear":1}
 
 
-def test_updated_profile_decodes_relocated_map_without_old_confirmations(world):
-    from client_profiles import LEGACY, UPDATED
+@pytest.mark.parametrize('profile_name', ['UPDATED', 'NOVEMBER_26'])
+def test_updated_profile_decodes_relocated_map_without_old_confirmations(world, profile_name):
+    import client_profiles
+    from client_profiles import LEGACY
+    UPDATED = getattr(client_profiles, profile_name)
     mem = world.mem
     for field in ("map_center", "item_types"):
         mem.regions[world.base+getattr(UPDATED,field)] = mem.regions.pop(world.base+getattr(LEGACY,field))

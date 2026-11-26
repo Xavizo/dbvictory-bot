@@ -12,30 +12,31 @@ import logging
 
 log = logging.getLogger("dll_bridge")
 
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if hasattr(ctypes, "WinDLL") else None
 
 # ctypes defaults to a 32-bit int return value. HANDLE is pointer-sized,
 # including INVALID_HANDLE_VALUE on 64-bit Python.
 from ctypes import wintypes
-kernel32.CreateFileA.argtypes = [wintypes.LPCSTR, wintypes.DWORD, wintypes.DWORD,
+if kernel32 is not None:
+    kernel32.CreateFileA.argtypes = [wintypes.LPCSTR, wintypes.DWORD, wintypes.DWORD,
                                 ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
-kernel32.CreateFileA.restype = wintypes.HANDLE
-kernel32.SetNamedPipeHandleState.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD),
+    kernel32.CreateFileA.restype = wintypes.HANDLE
+    kernel32.SetNamedPipeHandleState.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD),
                                            ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD)]
-kernel32.SetNamedPipeHandleState.restype = wintypes.BOOL
-kernel32.WaitNamedPipeA.argtypes = [wintypes.LPCSTR, wintypes.DWORD]
-kernel32.WaitNamedPipeA.restype = wintypes.BOOL
-kernel32.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+    kernel32.SetNamedPipeHandleState.restype = wintypes.BOOL
+    kernel32.WaitNamedPipeA.argtypes = [wintypes.LPCSTR, wintypes.DWORD]
+    kernel32.WaitNamedPipeA.restype = wintypes.BOOL
+    kernel32.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
                              ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
-kernel32.ReadFile.restype = wintypes.BOOL
-kernel32.WriteFile.argtypes = kernel32.ReadFile.argtypes
-kernel32.WriteFile.restype = wintypes.BOOL
-kernel32.PeekNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+    kernel32.ReadFile.restype = wintypes.BOOL
+    kernel32.WriteFile.argtypes = kernel32.ReadFile.argtypes
+    kernel32.WriteFile.restype = wintypes.BOOL
+    kernel32.PeekNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
                                   ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
                                   ctypes.POINTER(wintypes.DWORD)]
-kernel32.PeekNamedPipe.restype = wintypes.BOOL
-kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.PeekNamedPipe.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
 
 
 # Win32 constants
@@ -51,9 +52,14 @@ PIPE_NAME = b"\\\\.\\pipe\\dbvbot"
 class DllBridge:
     """Client for the dbvbot.dll named pipe."""
 
-    def __init__(self, *, read_only=False):
+    def __init__(self, *, read_only=False, profile=None):
+        from client_profiles import UPDATED, select_profile
+        if profile is not None:
+            if select_profile(profile.sha256) != profile or profile.observer != read_only:
+                raise ValueError("DLL profile does not match the verified client")
+        self.profile = profile or (UPDATED if read_only else None)
         self.read_only = read_only
-        self.pipe_name = b"\\\\.\\pipe\\dbvbot_marker_20261117" if read_only else PIPE_NAME
+        self.pipe_name = self.profile.observer_pipe if read_only else PIPE_NAME
         self._handle = None
         self._buffer = ""
         self.marker_ready=False;self.marker_seen=0;self.marker_sequence=0
@@ -68,6 +74,8 @@ class DllBridge:
 
     def connect(self) -> bool:
         """Open the named pipe. Returns True on success."""
+        if kernel32 is None:
+            return False
         if self._handle is not None:
             return True
 
@@ -99,6 +107,8 @@ class DllBridge:
 
     def pipe_exists(self) -> bool:
         """Check if the named pipe exists (DLL is loaded and running)."""
+        if kernel32 is None:
+            return False
         if self._handle is not None:
             return True  # already connected
         if kernel32.WaitNamedPipeA(self.pipe_name, 1):

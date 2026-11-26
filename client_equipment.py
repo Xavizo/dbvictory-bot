@@ -6,14 +6,16 @@ No heap scanning and no calls into the game process.
 """
 import struct
 import time
-from client_profiles import UPDATED
+from client_profiles import UPDATED, NOVEMBER_26
 from passive_map import MapReadError, _u32
 
 
 class EquipmentReader:
     def __init__(self, player, item_ids=(3051,)):
-        if player.source.profile != UPDATED:raise MapReadError('Nieobsługiwany odczyt wyposażenia.')
+        if player.source.profile not in (UPDATED, NOVEMBER_26):raise MapReadError('Nieobsługiwany odczyt wyposażenia.')
         self.player=player;self.source=player.source;self.item_ids=frozenset(item_ids)
+        self.layout = self.source.profile.player_layout
+        self.local_vtable = next(rva for rva, kind in self.source.profile.creature_vtables if kind == 'self')
 
     def snapshot(self, *, open_windows=None):
         stats=self.player.snapshot()  # Revalidate local-player identity, health and session.
@@ -24,13 +26,13 @@ class EquipmentReader:
         def item(address):
             if not address:return 0
             obj=read(address,0x3b)
-            if _u32(obj)!=s.base+UPDATED.item_vtable:raise MapReadError('Nieprawidłowy obiekt wyposażenia.')
+            if _u32(obj)!=s.base+s.profile.item_vtable:raise MapReadError('Nieprawidłowy obiekt wyposażenia.')
             value=struct.unpack_from('<H',obj,0x35)[0]
             if not 100<=value<=65535:raise MapReadError('Nieprawidłowe ID wyposażenia.')
             return value
-        inventory=read(ptr+0x46c,88)
+        inventory=read(ptr+self.layout.inventory,88)
         slots={i:item(_u32(inventory,i*8)) for i in range(1,11)}
-        head,count=struct.unpack('<II',read(s.base+0xb73880+0x2c,8))
+        head,count=struct.unpack('<II',read(s.base+self.layout.game_singleton+0x2c,8))
         if count>32:raise MapReadError('Za dużo otwartych kontenerów.')
         todo=[_u32(read(head,28),4)];seen=set();sources=[];total=0
         windows = {}
@@ -60,7 +62,7 @@ class EquipmentReader:
             raise MapReadError('Wyposażenie zmieniło się podczas odczytu.')
         # Recheck identity after the reads; never publish process addresses.
         identity=s.read(ptr,0x3c)
-        if _u32(identity)!=s.base+0x8ba9b0 or _u32(identity,0x38)!=self.player.player_id:
+        if _u32(identity)!=s.base+self.local_vtable or _u32(identity,0x38)!=self.player.player_id:
             raise MapReadError('Zmieniła się postać.')
         if open_windows is not None:
             # Private same-window identity for revalidation. Never serialized in panel responses.

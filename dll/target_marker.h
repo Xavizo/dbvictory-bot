@@ -1,8 +1,9 @@
-// Visual-only target marker, pinned to the 2026-11-16 executable.
+// Visual-only target marker, selected by the pinned observer build layout.
 // The entire bodies of showStaticSquare/hideStaticSquare are verified below:
 // they only store a flag and RGBA floats. No Game target/shared_ptr assignment,
 // Lua callbacks, input, movement or attack calls occur in this module.
 #include <cstdio>
+#include "observer_layout.h"
 struct TargetRequest { uint32_t id,expected,sequence; DWORD expires; bool pending; };
 static CRITICAL_SECTION target_lock;
 static TargetRequest target_request={};
@@ -18,23 +19,23 @@ static HideFn hide_square=nullptr;
 static const float red[4]={1.f,0.f,0.f,1.f};
 static uint32_t current_target() {
     uint32_t ptr=0,vt=0,id=0;
-    if (!read_mem(base+0xB73880+0x14,&ptr,4)) return UINT32_MAX;
+    if (!read_mem(base+GAME+0x14,&ptr,4)) return UINT32_MAX;
     if (!ptr) return 0;
     if (!read_mem(ptr,&vt,4) || !creature_kind(vt) || !read_mem(ptr+0x38,&id,4)) return UINT32_MAX;
     return id;
 }
 static bool find_target(uint32_t id,uint32_t* shared) {
     uint32_t pos[3];
-    if (!read_mem(base+0xB73D3C,pos,12) || pos[0]<8 || pos[0]>65525 || pos[1]<6 || pos[1]>65527 || pos[2]>15) return false;
+    if (!read_mem(base+MAP_CENTER,pos,12) || pos[0]<8 || pos[0]>65525 || pos[1]<6 || pos[1]>65527 || pos[2]>15) return false;
     for (uint32_t y=pos[1]-6;y<pos[1]+8;++y) for(uint32_t x=pos[0]-8;x<pos[0]+10;++x) {
         uintptr_t block=block_at(pos[2],(y/32)*2048+x/32),tile=0;unsigned char raw[84];
         if (!block || !read_mem(block+((y%32)*32+x%32)*8,&tile,4) || !read_mem(tile,raw,84) ||
-            u32(raw)!=base+0x8C0FC4 || u32(raw+56)!=x || u32(raw+60)!=y || u32(raw+64)!=pos[2]) continue;
+            u32(raw)!=base+VT_TILE || u32(raw+56)!=x || u32(raw+60)!=y || u32(raw+64)!=pos[2]) continue;
         uint32_t first=u32(raw+44),last=u32(raw+48),cap=u32(raw+52),things[128];
         if(first<0x10000 || last<first || cap<last || cap>=0x7FFE0000 || (cap-first)/8>64 || (last-first)%8 || !read_mem(first,things,last-first))continue;
         for(unsigned i=0;i<(last-first)/4;i+=2) {
             unsigned char c[88];
-            if(!read_mem(things[i],c,88) || u32(c)!=base+0x8C0CB4 || u32(c+0x38)!=id || !u32(c+0x54) || u32(c+0x54)>100 || !things[i+1])continue;
+            if(!read_mem(things[i],c,88) || u32(c)!=base+VT_MONSTER || u32(c+0x38)!=id || !c[0x54] || c[0x54]>100 || !things[i+1])continue;
             shared[0]=things[i];shared[1]=things[i+1];return true;
         }
     }
@@ -43,9 +44,9 @@ static bool find_target(uint32_t id,uint32_t* shared) {
 
 static bool square_state(uint32_t ptr,uint32_t id,unsigned char& visible,float* color) {
     uint32_t vt=0,actual_id=0;
-    return read_mem(ptr,&vt,4) && vt==base+0x8C0CB4 &&
+    return read_mem(ptr,&vt,4) && vt==base+VT_MONSTER &&
         read_mem(ptr+0x38,&actual_id,4) && actual_id==id &&
-        read_mem(ptr+0x145,&visible,1) && visible<=1 && read_mem(ptr+0x124,color,16);
+        read_mem(ptr+SQUARE_VISIBLE,&visible,1) && visible<=1 && read_mem(ptr+SQUARE_COLOR,color,16);
 }
 static void clear_owned() {
     unsigned char visible=0;float color[4];
@@ -85,7 +86,7 @@ static BOOL WINAPI target_peek(LPMSG msg,HWND hwnd,UINT first,UINT last,UINT rem
     uintptr_t caller=(uintptr_t)__builtin_return_address(0);
     BOOL result=original_peek(msg,hwnd,first,last,remove);
     if(!result && remove==PM_REMOVE && !hwnd && first==0 && last==0 &&
-       (caller==base+0x40053B || caller==base+0x400566) && InterlockedCompareExchange(&target_ready,1,1)) {
+       (caller==base+PEEK_SITE_1+6 || caller==base+PEEK_SITE_2+6) && InterlockedCompareExchange(&target_ready,1,1)) {
         DWORD tid=GetCurrentThreadId();
         if(!game_thread)game_thread=tid;
         static thread_local bool applying=false;
@@ -94,22 +95,24 @@ static BOOL WINAPI target_peek(LPMSG msg,HWND hwnd,UINT first,UINT last,UINT rem
     return result;
 }
 static bool install_target_sync() {
-    const unsigned char show[]={0x55,0x8b,0xec,0x8b,0x55,0x08,0xc6,0x81,0x45,0x01,0x00,0x00,0x01,0x8b,0x02,0x89,0x81,0x24,0x01,0x00,0x00,0x8b,0x42,0x04,0x89,0x81,0x28,0x01,0x00,0x00,0x8b,0x42,0x08,0x89,0x81,0x2c,0x01,0x00,0x00,0x8b,0x42,0x0c,0x89,0x81,0x30,0x01,0x00,0x00,0x5d,0xc2,0x04,0x00};
-    const unsigned char hide[]={0xc6,0x81,0x45,0x01,0x00,0x00,0x00,0xc3};
+    unsigned char show[]={0x55,0x8b,0xec,0x8b,0x55,0x08,0xc6,0x81,0x45,0x01,0x00,0x00,0x01,0x8b,0x02,0x89,0x81,0x24,0x01,0x00,0x00,0x8b,0x42,0x04,0x89,0x81,0x28,0x01,0x00,0x00,0x8b,0x42,0x08,0x89,0x81,0x2c,0x01,0x00,0x00,0x8b,0x42,0x0c,0x89,0x81,0x30,0x01,0x00,0x00,0x5d,0xc2,0x04,0x00};
+    unsigned char hide[]={0xc6,0x81,0x45,0x01,0x00,0x00,0x00,0xc3};
+    std::memcpy(show+8,&SQUARE_VISIBLE,4);std::memcpy(hide+2,&SQUARE_VISIBLE,4);
+    for(unsigned i=0;i<4;++i){uint32_t offset=SQUARE_COLOR+i*4;std::memcpy(show+17+i*9,&offset,4);}
     unsigned char actual[sizeof(show)];uint32_t iat=0;
-    if(!read_mem(base+0xB9800,actual,sizeof(show)) || std::memcmp(actual,show,sizeof(show)) ||
-       !read_mem(base+0xB9840,actual,sizeof(hide)) || std::memcmp(actual,hide,sizeof(hide)))return false;
-    for(uintptr_t site:{base+0x400535,base+0x400560}) {
+    if(!read_mem(base+SHOW_SQUARE,actual,sizeof(show)) || std::memcmp(actual,show,sizeof(show)) ||
+       !read_mem(base+HIDE_SQUARE,actual,sizeof(hide)) || std::memcmp(actual,hide,sizeof(hide)))return false;
+    for(uintptr_t site:{base+PEEK_SITE_1,base+PEEK_SITE_2}) {
         unsigned char call[6];
-        if(!read_mem(site,call,6) || call[0]!=0xFF || call[1]!=0x15 || u32(call+2)!=base+0x7A939C)return false;
+        if(!read_mem(site,call,6) || call[0]!=0xFF || call[1]!=0x15 || u32(call+2)!=base+PEEK_IAT)return false;
     }
     PeekFn expected=(PeekFn)GetProcAddress(GetModuleHandleA("user32.dll"),"PeekMessageA");
-    if(!expected || !read_mem(base+0x7A939C,&iat,4) || iat!=(uintptr_t)expected)return false;
-    original_peek=expected;show_square=(ShowFn)(base+0xB9800);hide_square=(HideFn)(base+0xB9840);
+    if(!expected || !read_mem(base+PEEK_IAT,&iat,4) || iat!=(uintptr_t)expected)return false;
+    original_peek=expected;show_square=(ShowFn)(base+SHOW_SQUARE);hide_square=(HideFn)(base+HIDE_SQUARE);
     DWORD previous=0,unused=0;
-    if(!VirtualProtect((void*)(base+0x7A939C),4,PAGE_READWRITE,&previous))return false;
-    InterlockedExchangePointer((PVOID volatile*)(base+0x7A939C),(PVOID)target_peek);
-    VirtualProtect((void*)(base+0x7A939C),4,previous,&unused);
+    if(!VirtualProtect((void*)(base+PEEK_IAT),4,PAGE_READWRITE,&previous))return false;
+    InterlockedExchangePointer((PVOID volatile*)(base+PEEK_IAT),(PVOID)target_peek);
+    VirtualProtect((void*)(base+PEEK_IAT),4,previous,&unused);
     InterlockedExchange(&target_ready,1);return true;
 }
 static void receive_target(const std::string& line) {

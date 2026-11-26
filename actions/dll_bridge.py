@@ -83,13 +83,20 @@ def _dbg(msg):
         f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
 
 
-def _inject_fresh_dll(*, observer=False):
+def _inject_fresh_dll(*, observer=False, profile=None):
     """Copy the DLL to a unique temp name and inject it.
 
     LoadLibraryA keys on filename — re-injecting the same filename just bumps
     the refcount without calling DllMain.  A unique copy forces a fresh load.
     """
-    dll_source = os.path.join(PROJECT_ROOT, "dll", "dbvobserver_marker_20261117.dll") if observer else _find_latest_dll()
+    if observer:
+        from client_profiles import UPDATED, select_profile
+        profile = profile or UPDATED
+        if select_profile(profile.sha256) != profile or not profile.observer_dll:
+            raise ValueError("Unverified observer profile")
+        dll_source = os.path.join(PROJECT_ROOT, "dll", profile.observer_dll)
+    else:
+        dll_source = _find_latest_dll()
     if not dll_source or not os.path.isfile(dll_source):
         raise FileNotFoundError("No dbvbot*.dll found in dll/ directory")
     dll_dir = os.path.dirname(dll_source)
@@ -165,7 +172,7 @@ async def _connect_with_inject(bridge, bot):
     # Inject a fresh copy
     _dbg(f"[TIMING] injecting fresh DLL t={time.time()-t0:.1f}s")
     try:
-        _inject_fresh_dll(observer=bridge.read_only)
+        _inject_fresh_dll(observer=bridge.read_only, profile=getattr(bridge, "profile", None))
     except Exception as e:
         _dbg(f"[TIMING] injection failed t={time.time()-t0:.1f}s: {e}")
         return False
@@ -198,7 +205,7 @@ def _make_bridge():
     from passive_map_win32 import ReadOnlyClient
     source = ReadOnlyClient()
     try:
-        return DllBridge(read_only=source.profile.observer)
+        return DllBridge(read_only=source.profile.observer, profile=source.profile)
     finally:
         source.close()
 

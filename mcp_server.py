@@ -1407,11 +1407,12 @@ async def start_bot() -> str:
         from passive_map_win32 import ReadOnlyClient
         verified_client = ReadOnlyClient()
         try:
-            observer = verified_client.profile.observer
+            client_profile = verified_client.profile
+            observer = client_profile.observer
         finally:
             verified_client.close()
-        if observer and not Path(__file__).with_name("dll").joinpath("dbvobserver_20261116.dll").is_file():
-            return "ERROR: Build dll/dbvobserver_20261116.dll before starting this client version."
+        if observer and not Path(__file__).with_name("dll").joinpath(client_profile.observer_dll).is_file():
+            return f"ERROR: Build dll/{client_profile.observer_dll} before starting this client version."
     except Exception as exc:
         return f"ERROR: Client compatibility check failed: {exc}"
 

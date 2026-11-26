@@ -3,6 +3,16 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class PlayerLayout:
+    stats: int
+    conditions: int
+    inventory: int
+    game_singleton: int
+    speed_getter: int
+    states_getter: int
+
+
+@dataclass(frozen=True)
 class ClientProfile:
     sha256: str
     dat_sha256: str
@@ -16,6 +26,9 @@ class ClientProfile:
     u16_attribute_vtable: int
     creature_vtables: tuple
     observer: bool = False
+    player_layout: PlayerLayout | None = None
+    observer_dll: str | None = None
+    observer_pipe: bytes | None = None
 
 
 LEGACY = ClientProfile(
@@ -32,8 +45,24 @@ UPDATED = ClientProfile(
     0x6CA40, 0x8BA860,
     ((0x8BA8D4, "player"), (0x8BA9B0, "self"), (0x8C0CB4, "monster"), (0x8C0D74, "npc")),
     observer=True,
+    player_layout=PlayerLayout(0x540, 0x530, 0x46C, 0xB73880, 0xB9DA0, 0xBA1C0),
+    observer_dll="dbvobserver_marker_20261117.dll",
+    observer_pipe=rb"\\.\pipe\dbvbot_marker_20261117",
 )
-PROFILES = {p.sha256: p for p in (LEGACY, UPDATED)}
+# Static RTTI, Lua bindings/accessors and constructors reviewed 2026-11-26.
+# Windows attachment/gameplay acceptance is separate; see docs/CLIENT_UPDATE.md.
+NOVEMBER_26 = ClientProfile(
+    "af43383076c0abc7192b407210efc54da6b6cbaf4ff8a2aa18f22a7f7d7486e4",
+    UPDATED.dat_sha256,
+    0xB79E60, 0xB7A00C, 0xB7A4B0, 0x8C4F4C, 0x8BE72C, 0x8C4F18,
+    0x6D6C0, 0x8BE7B0,
+    ((0x8BE824, "player"), (0x8BE900, "self"), (0x8C4C3C, "monster"), (0x8C4CFC, "npc")),
+    observer=True,
+    player_layout=PlayerLayout(0x558, 0x548, 0x484, 0xB79B50, 0xBAEC0, 0xBB310),
+    observer_dll="dbvobserver_marker_20261126.dll",
+    observer_pipe=rb"\\.\pipe\dbvbot_marker_20261126",
+)
+PROFILES = {p.sha256: p for p in (LEGACY, UPDATED, NOVEMBER_26)}
 
 
 def select_profile(digest):

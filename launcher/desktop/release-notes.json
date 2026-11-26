@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.38.1",
+    "changes":[
+      {"title":"Profil klienta z 26 listopada","detail":"Nowe adresy odczytu HP, Ki, mapy i wyposażenia oraz osobna biblioteka klienta. Sprawdzone offline; połączenie i działanie w grze wymagają jeszcze odbioru na Windows."}
+    ]
+  },
+  {
     "version":"v1.31.0",
     "changes":[
       {"title":"Połącz z grą po wykryciu listy postaci","detail":"Launcher udostępnia przycisk po rozpoznaniu okna wyboru postaci. Kliknięcie ponownie sprawdza, czy lista jest nadal otwarta."}

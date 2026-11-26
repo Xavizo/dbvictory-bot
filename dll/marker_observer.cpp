@@ -10,9 +10,10 @@
 #include <set>
 
 static_assert(sizeof(void*) == 4, "DBVictory observer requires 32-bit MinGW");
+#include "observer_layout.h"
 static volatile LONG running = 1;
 static uintptr_t base;
-static const char* PIPE = "\\\\.\\pipe\\dbvbot_marker_20261117";
+static const char* PIPE = OBSERVER_PIPE;
 
 static bool read_mem(uintptr_t address, void* out, size_t size) {
     SIZE_T got = 0;
@@ -24,7 +25,7 @@ static uint32_t u32(const unsigned char* p) { uint32_t n; std::memcpy(&n,p,4); r
 
 static uintptr_t block_at(uint32_t z, uint32_t key) {
     uint32_t index[2]; unsigned char header[16];
-    if (!read_mem(base+0xB73B90+z*8,index,8) || index[1]>256 ||
+    if (!read_mem(base+MAP_BLOCKS+z*8,index,8) || index[1]>256 ||
         !read_mem(index[0],header,16) || header[13]!=1) return 0;
     uintptr_t node=u32(header+4);
     for (unsigned visited=0; node!=index[0] && visited<index[1]; ++visited) {
@@ -39,10 +40,10 @@ static uintptr_t block_at(uint32_t z, uint32_t key) {
 
 static const char* creature_kind(uint32_t vtable) {
     switch (vtable-base) {
-        case 0x8BA8D4:return "player";
-        case 0x8BA9B0:return "self";
-        case 0x8C0CB4:return "monster";
-        case 0x8C0D74:return "npc";
+        case VT_PLAYER:return "player";
+        case VT_SELF:return "self";
+        case VT_MONSTER:return "monster";
+        case VT_NPC:return "npc";
         default:return nullptr;
     }
 }
@@ -51,7 +52,7 @@ static const char* creature_kind(uint32_t vtable) {
 
 static std::string snapshot() {
     uint32_t pos[3], check[3];
-    if (!read_mem(base+0xB73D3C,pos,12) || pos[0]<8 || pos[0]>65525 ||
+    if (!read_mem(base+MAP_CENTER,pos,12) || pos[0]<8 || pos[0]>65525 ||
         pos[1]<6 || pos[1]>65527 || pos[2]>15)
         return "{\"mode\":\"observer\",\"creatures\":[]}\n";
     std::ostringstream out;
@@ -64,7 +65,7 @@ static std::string snapshot() {
         uintptr_t block=block_at(pos[2],(y/32)*2048+x/32), tile=0;
         unsigned char raw[84];
         if (!block || !read_mem(block+((y%32)*32+x%32)*8,&tile,4) ||
-            !read_mem(tile,raw,84) || u32(raw)!=base+0x8C0FC4 ||
+            !read_mem(tile,raw,84) || u32(raw)!=base+VT_TILE ||
             u32(raw+56)!=x || u32(raw+60)!=y || u32(raw+64)!=pos[2]) continue;
         uint32_t first=u32(raw+44), last=u32(raw+48), cap=u32(raw+52);
         if (first<0x10000 || last<first || cap<last || cap>=0x7FFE0000 ||
@@ -76,7 +77,7 @@ static std::string snapshot() {
             if (!read_mem(things[i],creature,sizeof(creature))) continue;
             const char* kind=creature_kind(u32(creature));
             if (!kind) continue;
-            uint32_t id=u32(creature+0x38), hp=u32(creature+0x54);
+            uint32_t id=u32(creature+0x38), hp=creature[0x54];
             uint32_t length=u32(creature+0x3C+16), capacity=u32(creature+0x3C+20);
             if (id<0x10000000 || id>=0x80000000 || hp>100 || !length ||
                 length>63 || capacity<length || capacity>=256 || ids.count(id)) continue;
@@ -101,7 +102,7 @@ static std::string snapshot() {
                 << ",\"kind\":\"" << kind << "\"}";
         }
     }
-    if (!read_mem(base+0xB73D3C,check,12) || std::memcmp(pos,check,12)) return "";
+    if (!read_mem(base+MAP_CENTER,check,12) || std::memcmp(pos,check,12)) return "";
     out << "]}\n";
     return out.str();
 }

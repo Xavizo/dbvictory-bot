@@ -3,7 +3,10 @@ import ctypes
 from ctypes import wintypes
 import hashlib
 from pathlib import Path
-import pymem.process
+try:
+    import pymem.process
+except ImportError:
+    pymem = None  # Synthetic reader tests can import this module off Windows.
 
 from passive_map import MapReadError
 from client_profiles import select_profile
@@ -12,6 +15,8 @@ from client_profiles import select_profile
 class ReadOnlyClient:
     def __init__(self):
         self._handle = None
+        if pymem is None or not hasattr(ctypes, "WinDLL"):
+            raise MapReadError("Odczyt klienta wymaga Windows i pymem.")
         self._k = ctypes.WinDLL("kernel32", use_last_error=True)
         k = self._k
         k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]

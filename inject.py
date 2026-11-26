@@ -29,7 +29,7 @@ TH32CS_SNAPMODULE = 0x08
 TH32CS_SNAPMODULE32 = 0x10
 TH32CS_SNAPPROCESS = 0x02
 
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if hasattr(ctypes, "WinDLL") else None
 
 
 def _get_pid(process_name: str = "dbvStart.exe") -> int:

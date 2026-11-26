@@ -2,7 +2,7 @@
 import math
 import struct
 import time
-from client_profiles import UPDATED
+from client_profiles import UPDATED, NOVEMBER_26
 from passive_map import MapReader, MapReadError, _u32, _vector
 
 FRESH_SECONDS = 0.5
@@ -27,15 +27,18 @@ def client_field(name, default=0):
 
 class ClientPlayerReader:
     def __init__(self, source, player_id):
-        if source.profile != UPDATED:
+        if source.profile not in (UPDATED, NOVEMBER_26):
             raise MapReadError("Bezpośredni odczyt statystyk nie obsługuje tej wersji.")
         self.source, self.player_id = source, player_id
+        self.layout = source.profile.player_layout
+        self.local_vtable = next(rva for rva, kind in source.profile.creature_vtables if kind == "self")
         self.reader = MapReader(source.read, source.base, False, profile=source.profile)
         self.ptr = None
         # Pinned getSpeed/getStates Lua bindings; read only, never call native code.
         try:
-            self.conditions_supported = (source.read(source.base+0xB9DA0,8)==bytes.fromhex('66 8b 81 d4 00 00 00 c3')
-                and source.read(source.base+0xBA1C0,7)==bytes.fromhex('8b 81 30 05 00 00 c3'))
+            states_signature = b'\x8b\x81' + struct.pack('<I', self.layout.conditions) + b'\xc3'
+            self.conditions_supported = (source.read(source.base+self.layout.speed_getter,8)==bytes.fromhex('66 8b 81 d4 00 00 00 c3')
+                and source.read(source.base+self.layout.states_getter,7)==states_signature)
         except Exception:
             self.conditions_supported = False
 
@@ -46,7 +49,7 @@ class ClientPlayerReader:
         if not block: raise MapReadError("Brak lokalnego gracza na mapie.")
         tile=_u32(block,((y%32)*32+x%32)*8)
         raw=self.source.read(tile,84)
-        if _u32(raw)!=self.source.base+UPDATED.tile_vtable or struct.unpack_from('<III',raw,56)!=center:
+        if _u32(raw)!=self.source.base+self.source.profile.tile_vtable or struct.unpack_from('<III',raw,56)!=center:
             raise MapReadError("Pozycja gracza zmienia się.")
         first,count=_vector(raw,44,8,64)
         candidates = []
@@ -54,7 +57,7 @@ class ClientPlayerReader:
             ptr=_u32(self.source.read(first+i*8,8))
             obj=self.source.read(ptr,0x3C)
             pid = _u32(obj,0x38)
-            if (_u32(obj)==self.source.base+0x8BA9B0 and 0x10000000<=pid<0x20000000
+            if (_u32(obj)==self.source.base+self.local_vtable and 0x10000000<=pid<0x20000000
                     and (not self.player_id or pid==self.player_id)):
                 candidates.append(ptr)
         if len(candidates)==1:
@@ -63,20 +66,19 @@ class ClientPlayerReader:
 
     def snapshot(self):
         s=self.source
-        center=struct.unpack('<III',s.read(s.base+UPDATED.map_center,12))
+        center=struct.unpack('<III',s.read(s.base+s.profile.map_center,12))
         if not (8<=center[0]<=65525 and 6<=center[1]<=65527 and center[2]<16):
             raise MapReadError("Nieprawidłowa pozycja gracza.")
         try:
             if self.ptr is None: self.ptr=self._locate(center)
             obj=s.read(self.ptr,0x3C)
             pid = _u32(obj,0x38)
-            if (_u32(obj)!=s.base+0x8BA9B0 or not 0x10000000<=pid<0x20000000
+            if (_u32(obj)!=s.base+self.local_vtable or not 0x10000000<=pid<0x20000000
                     or (self.player_id and pid!=self.player_id)):
                 raise MapReadError("Zmieniła się tożsamość lokalnego gracza.")
-            # Constructor and getters verified statically; compared with game UI.
-            raw=s.read(self.ptr+0x540,80)
-            # Creature::getDirection at RVA 0x72B40 returns [this+0x58].
-            # Verified from the getDirection Lua binding in the pinned build.
+            # Per-build constructor/getters; new builds still need Windows acceptance.
+            raw=s.read(self.ptr+self.layout.stats,80)
+            # getDirection reads [this+0x58] in both reviewed builds.
             direction=None
             try:
                 facing_raw=s.read(self.ptr+0x58,4)
@@ -90,7 +92,7 @@ class ClientPlayerReader:
             if not (0<=hp<=maximum<=2**31-1 and maximum>0 and 0<=mana<=2**31-1 and
                     0<max_mana<=2**31-1 and 1<=level<=5000 and 0<=magic<=5000):
                 raise MapReadError("Statystyki przekraczają sprawdzony zakres.")
-            if s.read(self.ptr+0x540,80)!=raw or s.read(self.ptr,0x3C)!=obj:
+            if s.read(self.ptr+self.layout.stats,80)!=raw or s.read(self.ptr,0x3C)!=obj:
                 raise MapReadError("Statystyki zmieniły się podczas odczytu.")
             # An unstable/unknown facing must only inhibit directional spells,
             # never discard otherwise valid healing statistics.
@@ -101,15 +103,15 @@ class ClientPlayerReader:
             conditions = {}
             if self.conditions_supported:
                 try:
-                    flags = s.read(self.ptr+0x530,4)
+                    flags = s.read(self.ptr+self.layout.conditions,4)
                     speed = s.read(self.ptr+0xD4,2)
-                    if (s.read(self.ptr+0x530,4)==flags and s.read(self.ptr+0xD4,2)==speed
+                    if (s.read(self.ptr+self.layout.conditions,4)==flags and s.read(self.ptr+0xD4,2)==speed
                             and s.read(self.ptr,0x3C)==obj):
                         conditions = {"conditions":_u32(flags),"movement_speed":struct.unpack('<H',speed)[0]}
                 except (MapReadError, struct.error):
                     pass  # Optional effect reads never invalidate healing values.
             if not self.player_id:
-                if s.read(s.base+UPDATED.map_center,12)!=struct.pack("<III",*center):
+                if s.read(s.base+s.profile.map_center,12)!=struct.pack("<III",*center):
                     raise MapReadError("Pozycja zmieniła się podczas identyfikacji.")
                 self.player_id=pid
             return {**conditions,"player_id":pid,"hp":int(hp),"max_hp":int(maximum),"mana":int(mana),"max_mana":int(max_mana),

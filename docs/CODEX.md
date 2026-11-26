@@ -1,5 +1,14 @@
 # Codex on Windows
 
+## Client update 2026-11-26
+
+The new x86 executable uses its own profile, player field offsets and
+`dbvobserver_marker_20261126.dll` / `dbvbot_marker_20261126` pipe. Startup and
+injection now select the same DLL from that profile. The previous profiles
+remain available. See [static evidence, build and acceptance](CLIENT_UPDATE.md).
+This is an offline-validated compatibility candidate; Windows attachment,
+login, native marker behavior and gameplay are not yet accepted.
+
 ## Aktualizacja z launchera na Windows
 
 Skrót **Uruchom bota** otwiera **DBVictory Launcher.exe**. W tym samym oknie
@@ -426,13 +435,16 @@ The subsequent client update replaced six Lua resources, including gamelib/const
 but not actionbar.lua or the executable. Neither the update nor this stack trace
 proves or excludes a contribution from the experimental target hook.
 
-As containment, the current observer profile again uses dbvobserver_20261116.dll
-and its read-only pipe. Proxy attacks no longer call a native target callback.
+At this containment step, the observer profile returned to dbvobserver_20261116.dll
+and its read-only pipe. Proxy attacks no longer called a native target callback.
 The native red-square integration below is withdrawn, not validated for gameplay.
 Its source/binary are retained for offline investigation only; normal startup
 does not select them. Existing movement/combat fixes remain in place. No client
 files were modified, and the session is not automatically restarted after this
 rollback. A future live check must be coordinated in a safe location.
+This is historical: the later visual-only marker uses separate code and the
+marker observer selected in `client_profiles.py`; it does not restore the
+withdrawn Game target/shared-pointer hook.
 
 
 ## Combat edits and discarding stopped progress (2026-11-17)
@@ -798,13 +810,15 @@ traversal and band equipment have only synthetic transport tests, not live tests
 
 ## Client update 2026-11-16
 
-`client_profiles.py` pins both reviewed executable digests. Startup checks the
-running executable before patching addresses or closing connections. The updated
-build uses a separate read-only `dll/dbvobserver_20261116.dll`, built from
+The original November 16 integration pinned both reviewed executable digests.
+Startup checked the running executable before patching addresses or closing
+connections. That integration used a separate read-only `dll/dbvobserver_20261116.dll`, built from
 `dll/observer.cpp` with 32-bit MinGW (`-shared -static -O2 -std=c++17`).
 It reads the visible 18x14 map and creature metadata and accepts no commands.
 Attack, XTEA, keyboard and lighting hooks from the legacy bridge are not loaded.
-Automatic DLL targeting is therefore unavailable for this profile. HP/Ki are read from the verified LocalPlayer double fields by a separate read-only
+Automatic DLL targeting was therefore unavailable for that observer. Current
+startup selects the later visual-only marker observer from `client_profiles.py`;
+see the November 26 section for the new build. HP/Ki are read from the verified LocalPlayer double fields by a separate read-only
 Python sampler. Atomic snapshots expire after 500 ms; delayed packet statistics
 cannot overwrite them. Windows comparison with the client confirmed matching
 HP/Ki after login. This does not establish server cooldown or future combat safety.

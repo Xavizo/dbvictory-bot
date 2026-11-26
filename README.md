@@ -10,6 +10,12 @@ A man-in-the-middle proxy bot for the DBVictory game, controlled through Codex o
 
 ## Codex setup (this fork)
 
+The 2026-11-26 client (`af433830…7486e4`) has a separate memory profile and
+`dbvobserver_marker_20261126.dll`. The new layout and native build have offline
+checks; Windows attachment, login and gameplay acceptance remain pending.
+See [client update and verification](docs/CLIENT_UPDATE.md). Unknown builds
+still stop before memory patches or connection teardown.
+
 See [Codex on Windows](docs/CODEX.md) for installation, safe MCP checks, dashboard authentication, and the Windows acceptance test. The Windows game/DLL integration still needs testing against your client version.
 
 ```powershell
