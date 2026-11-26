@@ -1,9 +1,13 @@
 {
   "mcpServers": {
     "dbvictory-bot": {
-      "command": "C:\\Users\\patry\\Desktop\\dbv_exp\\venv\\Scripts\\python.exe",
-      "args": ["C:\\Users\\patry\\Desktop\\dbv_exp\\mcp_server.py"],
-      "transport": "stdio"
+      "type": "stdio",
+      "command": "D:\\Projekty\\tibia-ots-mcp-bot\\venv\\Scripts\\python.exe",
+      "args": ["D:\\Projekty\\tibia-ots-mcp-bot\\run_mcp.py"],
+      "env": {
+        "PYTHONUTF8": "1",
+        "PYTHONUNBUFFERED": "1"
+      }
     }
   }
 }

@@ -24,6 +24,11 @@ def test_stdio_catalog_and_disconnected_status(tmp_path):
                 names = {tool.name for tool in result.tools}
                 assert {"start_bot", "open_dashboard", "get_status", "list_actions", "toggle_action"} <= names
                 assert {"emergency_stop", "unlock_automation", "configure_potions", "potion_diagnostics"} <= names
+                assert {"attach_status", "session_activity", "packet_journal"} <= names
+                attach = await session.call_tool("attach_status", {})
+                assert not attach.isError
+                journal = await session.call_tool("packet_journal", {"action": "bogus"})
+                assert "error" in journal.content[0].text
                 catalog = await session.list_resources()
                 resources = {str(resource.uri): resource for resource in catalog.resources}
                 for name in ("architecture", "modules", "decisions"):
