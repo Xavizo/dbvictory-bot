@@ -6,8 +6,10 @@ Skrót **Uruchom bota** otwiera **DBVictory Launcher.exe**. W tym samym oknie
 launcher sprawdza lokalną kolejkę, instaluje wydanie i pokazuje wersję na dysku.
 Przy aktywnej sesji pakiet czeka. Po jej zakończeniu użyj **Sprawdź ponownie**.
 Jeśli klient jest zamknięty, kliknij **Start**. Launcher otworzy klienta,
-przygotuje silnik i poczeka. Zaloguj się na konto. Na liście
-postaci kliknij **Połącz z grą** w launcherze. W głównym panelu poczekaj na **Zaloguj się do gry** i wejdź na postać.
+przygotuje silnik i poczeka. Zaloguj się na konto i pozostaw otwartą listę
+postaci. Przycisk **Połącz z grą** uaktywni się, gdy launcher rozpozna napisy
+**Select Character** i **Enter to DBVictory** w oknie klienta. Po kliknięciu
+launcher ponownie sprawdzi listę. W głównym panelu poczekaj na **Zaloguj się do gry** i wejdź na postać.
 Jeśli lista postaci jest już otwarta przy uruchamianiu launchera, **Start**
 od razu wykonuje dotychczasowy start sesji. Po jego zakończeniu wejdź na postać.
 Krok **Wykrywanie klienta DBVictory…** sprawdza okno z wybranego folderu.

@@ -60,7 +60,7 @@ async function clientExe(folder) {
 
 async function clients() {
   const ps = path.join(process.env.SystemRoot, "System32","WindowsPowerShell","v1.0","powershell.exe");
-  const query = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ConvertTo-Json -Compress -InputObject @(Get-Process -Name dbvStart,dbvStart_gl -ErrorAction SilentlyContinue | Select-Object Id,Path,@{Name='HasWindow';Expression={$_.MainWindowHandle -ne [IntPtr]::Zero}})";
+  const query = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ConvertTo-Json -Compress -InputObject @(Get-Process -Name dbvStart,dbvStart_gl -ErrorAction SilentlyContinue | Select-Object Id,Path,@{Name='WindowHandle';Expression={$_.MainWindowHandle.ToInt64()}},@{Name='HasWindow';Expression={$_.MainWindowHandle -ne [IntPtr]::Zero}})";
   try {
     return JSON.parse((await exec(ps, ["-NoProfile","-NonInteractive","-Command",query],{...options,timeout:12000})).stdout);
   } catch {
@@ -81,6 +81,17 @@ function windowPid(list, folder) {
 
 async function openWindowPid(folder) {
   return windowPid(await clients(), folder);
+}
+
+async function characterListPid(root, folder) {
+  const list = await clients();
+  const pid = windowPid(list, folder);
+  const handle = pid && list.find(client => client.Id === pid)?.WindowHandle;
+  if (!Number.isSafeInteger(handle) || handle <= 0) return null;
+  const python = path.join(root, "venv", "Scripts", "python.exe");
+  const result = await exec(python, ["-B", "-m", "launcher.character_list", String(handle), String(pid)],
+    {...options, cwd:root, timeout:4000});
+  return result.stdout.trim() === "ready" ? pid : null;
 }
 
 async function openClient(folder) {
@@ -110,4 +121,4 @@ function interactive(root, id, revision, onLine) {
   return proc;
 }
 
-module.exports = {checkRelease,history,validSha,clientExe,clients,windowPid,openWindowPid,openClient,interactive};
+module.exports = {checkRelease,history,validSha,clientExe,clients,windowPid,openWindowPid,characterListPid,openClient,interactive};

@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.31.0",
+    "changes":[
+      {"title":"Połącz z grą po wykryciu listy postaci","detail":"Launcher udostępnia przycisk po rozpoznaniu okna wyboru postaci. Kliknięcie ponownie sprawdza, czy lista jest nadal otwarta."}
+    ]
+  },
+  {
     "version":"v1.26.9",
     "changes":[
       {"title":"Podejście do schodów i zejść z innej strony","detail":"Gdy pole przed zapisanym przejściem jest nieczytelne, Cavebot sprawdza dojście przez sąsiednie wolne pola do tego samego wejścia."},

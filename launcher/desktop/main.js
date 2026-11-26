@@ -17,6 +17,8 @@ const settings = path.join(app.getPath("userData"),"client.json");
 let win, child, oldPending, marker, clientPid, poll, deadline;
 let locked = false, checkingPanel = false, quitting = false, sessionError = "", awaitingStart = false;
 let awaitingConnection = false;
+let characterCheck = 0;
+const waitingForList = "Zaloguj się na konto i pozostaw otwartą listę postaci. Przycisk uaktywni się po jej wykryciu.";
 let view = {phase:"checking", text:"Sprawdzanie lokalnej kolejki wydań…",version:"",changes:[],
   folder:"",installed:false,clientOpen:false,canDefer:false,readOnly};
 
@@ -87,6 +89,17 @@ function startDeadline(proc) {
       set("waiting",checkingPanel?"Główne okno nie potwierdziło gotowości.":"Silnik nie potwierdził gotowości.",{failedStep:checkingPanel?"panel":"engine"});
   },75000);
 }
+async function refreshCharacterList(proc) {
+  const check = ++characterCheck;
+  const pid = await host.characterListPid(root, view.folder).catch(() => null);
+  if (check !== characterCheck || quitting || child !== proc || !awaitingConnection || view.phase !== "prepared") return null;
+  if (pid !== view.characterListPid) {
+    const text = pid ? "Wykryto listę postaci. Możesz wybrać „Połącz z grą”." : waitingForList;
+    set("prepared", text, {characterListPid:pid});
+  }
+  return pid;
+}
+
 function watchSession(proc) {
   startDeadline(proc);
   let probing = false;
@@ -106,6 +119,9 @@ function watchSession(proc) {
             else {clientPid=null;proc.stdin.end();return;}
           }
         }
+      }
+      if (awaitingConnection && view.phase === "prepared" && !locked) {
+        await refreshCharacterList(proc);
       }
       if (checkingPanel && marker) {
         try {await fs.access(marker);} catch {return;}
@@ -131,7 +147,7 @@ async function preparePrompt() {
       showStart();
     } else if (line==="OCZEKIWANIE NA POŁĄCZENIE" && awaitingConnection) {
       clearTimeout(deadline);
-      set("prepared","Zaloguj się na konto. Na liście postaci wybierz „Połącz z grą”.");
+      set("prepared", waitingForList, {characterListPid:null});
     } else if (line.startsWith("GOTOWE")) {
       checkingPanel=true;set("panel","Silnik gotowy. Oczekiwanie na główne okno…");
     } else if (line.startsWith("BŁĄD:")||line.startsWith("Błąd launchera:")) {
@@ -162,7 +178,11 @@ async function findOrLaunchClient(proc) {
   set("detecting","Wykrywanie klienta DBVictory…");
   const existing = await host.openWindowPid(folder);
   if (!current()) return null;
-  if (existing) return {pid:existing, prepare:existing !== view.windowPid};
+  if (existing) {
+    const readyPid = existing === view.windowPid
+      ? await host.characterListPid(root, folder).catch(() => null) : null;
+    return current() ? {pid:existing, prepare:readyPid !== existing} : null;
+  }
 
   set("detecting","Uruchamianie klienta DBVictory…",{clientOpen:false,windowPid:null});
   await host.openClient(folder);
@@ -204,14 +224,10 @@ async function action(name) {
       proc.stdin.write(awaitingConnection ? "prepare-login\n" : "\n");
     } else if (name==="connect" && awaitingConnection && view.phase==="prepared" && !readOnly) {
       const proc=child;
-      let pid;
-      try {pid=await host.openWindowPid(view.folder);}
-      catch(error){if(proc===child)set("prepared",error.message);return;}
-      if (quitting || proc!==child) return;
-      if (!pid || pid!==view.windowPid) {
-        set("prepared","Sprawdź, czy lista postaci jest otwarta w wybranym kliencie.",{windowPid:pid});
-        return;
-      }
+      const enabledFor = view.characterListPid;
+      if (!enabledFor) return;
+      const pid = await refreshCharacterList(proc);
+      if (!pid || pid !== enabledFor) return;
       clientPid=pid;
       awaitingConnection=false;
       set("connecting","Łączenie z klientem DBVictory…");
