@@ -35,6 +35,7 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
   useEffect(()=>{if(scrollRef.current) scrollRef.current.scrollTop=0;},[view]);
   const running=state?.actions.filter(a=>a.running && a.name!=="dll_bridge") ?? [];
   const connected=mcpConnected && !!state?.connected, paused=!!state?.automation_paused, preview=!!state?.passive_map?.preview;
+  const manualPause = state?.automation_pause_kind === "manual";
   const player=state?.player, map=state?.passive_map, families=state?.observation_families?.families;
   const healthFresh = families?.health ? families.health.state === "fresh"
     : (player?.stats_age ?? -1) >= 0 && (player?.stats_age ?? Infinity) <= 2;
@@ -67,6 +68,14 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
       <span className={`automation-pill ${paused ? "paused" : running.length ? "active" : ""}`}>{paused ? "PAUZA" : `Aktywne: ${running.length}`}</span>
       <button className="emergency-button" disabled={busy || !state} onClick={onStop} title="Awaryjny STOP. Pause/Break: pauza i wznowienie poprzednich akcji."><span aria-hidden="true">■</span> STOP <small>wszystkie akcje</small></button>
     </header>
+    {paused && <div className={manualPause ? "pause-banner" : "pause-banner emergency"}>
+      <span className="pause-symbol" aria-hidden="true">{manualPause ? "Ⅱ" : "■"}</span>
+      <div role="status"><strong>{manualPause ? "Automatyka wstrzymana" : "Awaryjny STOP"}</strong>
+        <span>{manualPause
+          ? (state?.pause_hotkey?.registered ? "Naciśnij Pause/Break, aby wznowić wybrane akcje." : "Wybrane akcje czekają na wznowienie.")
+          : "Po odblokowaniu wybierz akcje do uruchomienia."}</span></div>
+      <button disabled={busy || !mcpConnected} onClick={manualPause ? onResume : onUnlock}>{manualPause ? "Wznów wybrane" : "Odblokuj"}</button>
+    </div>}
     {state?.alerts?.vitals_alarm_id != null && <div role="alert" className="error-banner">
       Brak aktualnego HP postaci. Automatyczne leczenie czeka na odczyt.
     </div>}
@@ -86,7 +95,6 @@ export default function DashboardChrome({view,onView,state,mcpConnected,busy,onS
     {atlasOpen&&<GlobalAtlas state={state} onRefresh={onRefresh} onClose={closeAtlas}/>}
     <CavebotRunBar state={state} connected={mcpConnected} onRefresh={onRefresh}/>
     <div className="workspace-scroll" ref={scrollRef}>
-      {paused && <div className="pause-banner"><span><strong>Automatyka zatrzymana.</strong> {state?.automation_pause_kind==="manual" ? "Wybór akcji został zachowany." : "Odblokowanie nie uruchamia akcji."}</span><button disabled={busy || !mcpConnected} onClick={state?.automation_pause_kind==="manual" ? onResume : onUnlock}>{state?.automation_pause_kind==="manual" ? "Wznów wybrane" : "Odblokuj"}</button></div>}
       {error && <div role="alert" className="error-banner">{error}</div>}
       <main id="workspace-content">{children}</main>
     </div>

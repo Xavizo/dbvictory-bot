@@ -1164,7 +1164,11 @@ def _start_game_monitors(loop, bot_state):
 
     if not getattr(bot_state,"pause_hotkey",None):
         from pause_hotkey import PauseHotkey
-        bot_state.pause_hotkey=PauseHotkey(loop,lambda:getattr(sys.modules["__main__"],"_async_toggle_all")())
+        bot_state.pause_hotkey = PauseHotkey(
+            loop, lambda: getattr(sys.modules["__main__"], "_async_toggle_all")(),
+            indicator_active=lambda: (bot_state.connected and bot_state.automation_paused
+                                      and bot_state.automation_pause_kind == "manual"),
+        )
         bot_state.pause_hotkey.start()
 
     if not getattr(bot_state, "_alert_monitor_future", None):

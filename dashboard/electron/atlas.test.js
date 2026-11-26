@@ -1155,3 +1155,24 @@ test('loop button persists only the execution preference and preserves unsaved l
   assert.equal(savedRow.labels[0],'','loop change did not save geometry edits');
   assert.deepEqual(changed,[false,true]);
 });
+
+test('manual automation pause stays above the scrolling workspace and retains its own resume action',()=>{
+  const React=require('react'), render=require('react-dom/server').renderToStaticMarkup;
+  const empty=()=>null;
+  const Chrome=component('../app/DashboardChrome.tsx',{
+    './CavebotRunBar':{default:empty}, './AlertBell':{default:empty},
+    './SessionStats':{default:empty}, 'next/dynamic':{default:()=>empty}
+  }).default;
+  const state={actions:[],connected:true,automation_paused:true,automation_pause_kind:'manual'};
+  const html=()=>render(React.createElement(Chrome,{view:'cavebot',state,mcpConnected:true}));
+  const manual=html();
+  assert.ok(manual.indexOf('class="pause-banner"')>=0 && manual.indexOf('class="pause-banner"')<manual.indexOf('class="workspace-scroll"'));
+  assert.match(manual,/Automatyka wstrzymana/);assert.match(manual,/Wznów wybrane/);
+  assert.doesNotMatch(manual,/Naciśnij Pause/);
+  state.pause_hotkey={registered:true};
+  assert.match(html(),/Naciśnij Pause\/Break/);
+  state.automation_pause_kind='emergency';
+  assert.match(html(),/Awaryjny STOP/);assert.match(html(),/>Odblokuj</);
+  state.automation_paused=false;
+  assert.doesNotMatch(html(),/class="pause-banner/);
+});

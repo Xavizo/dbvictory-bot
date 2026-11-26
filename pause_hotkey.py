@@ -1,12 +1,14 @@
 """Windows Pause/Break only; OS hotkey registration, no keyboard capture/input."""
 import asyncio
+import logging
 import sys
 import threading
 import time
 
 
 class PauseHotkey:
-    def __init__(self, loop, callback):
+    def __init__(self, loop, callback, indicator_active=None):
+        self.indicator_active = indicator_active
         self.loop=loop;self.callback=callback;self.registered=False;self.error=None
         self.thread_id=None;self.busy=False;self.last_press=float('-inf')
 
@@ -41,17 +43,48 @@ class PauseHotkey:
         self.thread_id=kernel.GetCurrentThreadId()
         key_id=0x4DB1
         # MOD_NOREPEAT; VK_PAUSE. This one key is reserved while the bot runs.
-        if not user.RegisterHotKey(None,key_id,0x4000,0x13):
-            self.error='Pause/Break jest zajęty lub niedostępny. Użyj pauzy w panelu.';return
-        self.registered=True
+        self.registered = bool(user.RegisterHotKey(None, key_id, 0x4000, 0x13))
+        if not self.registered:
+            self.error = 'Pause/Break jest zajęty lub niedostępny. Użyj pauzy w panelu.'
+        user.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p]
+        user.SetTimer.restype = ctypes.c_size_t
+        user.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
+        user.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+        user.DispatchMessageW.restype = ctypes.c_ssize_t
+        timer = user.SetTimer(None, 0, 200, None) if self.indicator_active else 0
+        badge = None
         try:
-            msg=wintypes.MSG()
-            while True:
-                result=user.GetMessageW(ctypes.byref(msg),None,0,0)
-                if result<=0:break
-                if msg.message==0x0312 and msg.wParam==key_id:self.press()
+            msg = wintypes.MSG()
+            while self.registered or timer:
+                if user.GetMessageW(ctypes.byref(msg), None, 0, 0) <= 0:
+                    break
+                if msg.message == 0x0312 and msg.wParam == key_id:
+                    self.press()
+                elif timer and msg.message == 0x0113 and msg.wParam == timer:
+                    try:
+                        active = self.indicator_active()
+                        if active and badge is None:
+                            from game_pause_badge import GamePauseBadge
+                            badge = GamePauseBadge()
+                        if badge is not None:
+                            badge.update(active)
+                    except Exception:
+                        logging.getLogger(__name__).exception("Game pause badge unavailable")
+                        user.KillTimer(None, timer)
+                        timer = 0
+                        if badge is not None:
+                            badge.close()
+                            badge = None
+                else:
+                    user.DispatchMessageW(ctypes.byref(msg))
         finally:
-            user.UnregisterHotKey(None,key_id);self.registered=False
+            if timer:
+                user.KillTimer(None, timer)
+            if badge is not None:
+                badge.close()
+            if self.registered:
+                user.UnregisterHotKey(None, key_id)
+            self.registered = False
 
     def stop(self):
         if self.thread_id and sys.platform=='win32':
