@@ -302,6 +302,38 @@ def ki_scene():
     return center, state, frame, sample
 
 
+@pytest.mark.parametrize("already_sounding", [False, True])
+def test_global_pause_cancels_ki_and_skips_muted_and_late_events(already_sounding):
+    center, state, _, sample = ki_scene()
+    gs = state.game_state
+    sample(95)
+    sample(0, .2)
+    if already_sounding:
+        sample(0, 1)
+        assert center.snapshot()["ki_alarm_id"] is not None
+    center.set_automation_paused(True)
+    assert center.snapshot()["ki_alarm_id"] is None
+    sample(0, .2)
+    center.observe_chat(message(), state, gs)
+    snap = center.snapshot()
+    assert snap["paused"] and snap["automation_paused"] and snap["unread"] == 0
+    assert snap["events"][-1]["sound"] is False
+    sample(100, .1)
+    center.set_automation_paused(False)
+    sample(0, .1)
+    sample(0, 1)
+    assert center.snapshot()["ki_alarm_id"] is None
+    assert len(center.events) == int(already_sounding) + 1
+    center.observe_chat(message(statement=2), state, gs, received_at=100.2)
+    assert center.snapshot()["unread"] == 0
+    center.observe_chat(message(statement=3), state, gs, received_at=center.monotonic())
+    assert center.snapshot()["unread"] == 1 and center.events[-1]["sound"]
+    sample(100)
+    sample(0, .25)
+    sample(0, 1)
+    assert center.snapshot()["ki_alarm_id"] == center.latest_id
+
+
 def test_single_ki_drop_sounds_for_ten_seconds_once():
     c, state, frame, sample = ki_scene()
     state.adaptive_cavebot.status = 'stopped'

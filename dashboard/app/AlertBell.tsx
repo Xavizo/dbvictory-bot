@@ -88,24 +88,25 @@ export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertSta
   const through=legacy&&alerts?Math.max(localPause?.session===alerts.session?localPause.through:0,
     lastMuted.current?.session===alerts.session?lastMuted.current.through:0):alerts?.silenced_through??0;
   const unread=legacy&&alerts?Math.min(alerts.unread,alerts.events.filter(e=>e.id>through).length):alerts?.unread??0;
-  const paused=alerts?.paused??localPause?.paused??true;
-  const pauseLabel=paused?"Wznów alerty":"Wstrzymaj alerty";
+  const automationPaused=alerts?.automation_paused===true;
+  const paused=automationPaused || (alerts?.paused??localPause?.paused??true);
+  const pauseLabel=automationPaused?"Alerty wstrzymane przez pauzę automatyki":paused?"Wznów alerty":"Wstrzymaj alerty";
   return <div className="alert-hub" ref={ref}>
     <button className={`alert-bell ${unread&&!paused?"has-alert":""}`} aria-label={`Alerty${paused?" wstrzymane":unread?`: ${unread} nieprzeczytanych`:""}`} title={paused?"Alerty wstrzymane":"Alerty i dźwięk"} aria-expanded={open} aria-controls="alert-panel" onClick={()=>setOpen(v=>!v)}>
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M9 21h6"/></svg>
       <span>Alerty</span>{!paused&&unread>0&&<span className="alert-count">{unread>99?"99+":unread}</span>}
     </button>
     {(typeof alerts?.paused==="boolean"||localPause)&&<button className={`alert-pause${paused?" is-paused":""}`} aria-label={pauseLabel}
-      title={pauseLabel} disabled={busy||!connected} onClick={()=>void changePause()}>
+      title={pauseLabel} disabled={busy||!connected||automationPaused} onClick={()=>void changePause()}>
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
         <path d={paused?"M4 2.5 13 8l-9 5.5z":"M3 2h3.5v12H3zm6.5 0H13v12H9.5z"}/>
-      </svg><span>{paused?"Wznów":"Wstrzymaj"}</span>
+      </svg><span>{automationPaused?"Pauza":paused?"Wznów":"Wstrzymaj"}</span>
     </button>}
     {!open&&!paused&&unread>0&&latest&&latest.id>through&&previewKey!==dismissedPreview&&
       <AlertPreview event={latest} onOpen={()=>setOpen(true)} onDismiss={dismissPreview}/>}
 
     {open&&<section id="alert-panel" className="alert-panel" aria-label="Alerty">
-      <header><strong>Alerty</strong><span>{paused?"Wstrzymane":alerts?.cavebot_active?"Cavebot działa":"Cavebot zatrzymany"}</span><button aria-label="Zamknij alerty" className="alert-close" onClick={()=>setOpen(false)}>×</button></header>
+      <header><strong>Alerty</strong><span>{automationPaused?"Pauza automatyki":paused?"Wstrzymane":alerts?.cavebot_active?"Cavebot działa":"Cavebot zatrzymany"}</span><button aria-label="Zamknij alerty" className="alert-close" onClick={()=>setOpen(false)}>×</button></header>
       {!alerts||!config?<p>Alerty wymagają nowej sesji silnika.</p>:<>
         <div className="alert-setting-head"><span>Zdarzenie</span><span>Sygnał</span><span>Kiedy</span></div>
         {kinds.filter(kind=>config[kind]).map(kind=><div key={kind} className="alert-setting">

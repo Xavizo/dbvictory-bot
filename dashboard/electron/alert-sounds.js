@@ -48,12 +48,14 @@ function createSoundConsumer(playSound, now=Date.now) {
   };
 }
 
-function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now}) {
+function startAlertSounds({token,fetchImpl,beep,onHuntReady,onMute,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now}) {
   const consumer=createSoundConsumer(beep,now);let stopped=false,timer,request;
-  let notifiedRecording=null;
+  let notifiedRecording=null, automationPaused=false;
   // Older engines have independent alert preferences but no session-wide mute.
   let panelPaused=true, alertSession=null, silencedThrough=0, lastId=0, resumedAt=null;
+  const muted=()=>panelPaused || automationPaused;
   function panelPause(value) {
+    const wasMuted=muted();
     if (value !== undefined) {
       if (typeof value !== 'boolean') throw new TypeError('Invalid alert pause');
       if (value!==panelPaused) {
@@ -62,7 +64,8 @@ function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,
         resumedAt=value?null:now()/1000;
       }
     }
-    return {paused:panelPaused, session:alertSession, through:silencedThrough};
+    if(!wasMuted && muted())onMute?.();
+    return {paused:muted(), session:alertSession, through:silencedThrough};
   }
   async function poll(){
     if(stopped||!token)return;
@@ -73,7 +76,10 @@ function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,
           headers:{Authorization:`Bearer ${token}`,Origin:'http://127.0.0.1:4747'},cache:'no-store',redirect:'error',signal:request.signal});
         if(response.ok){
           const data=await response.json();
-          if(!stopped && data.alerts){
+          if(stopped)return;
+          const wasMuted=muted();
+          automationPaused=data.automation_paused===true || data.alerts?.automation_paused===true;
+          if(data.alerts){
             let alerts=data.alerts;
             if(alertSession!==alerts.session){
               if(alertSession!==null)panelPaused=true;
@@ -91,13 +97,15 @@ function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,
             } else {
               panelPaused=alerts.paused;
             }
+            if(automationPaused)alerts={...alerts,paused:true};
             consumer.consume(alerts,alerts.paused?[]:visiblePlayers(data,now()));
           }
+          if(!wasMuted && muted())onMute?.();
           const recording=data.cavebot?.recording;
           if(!recording?.active || recording.mode!=='adaptive')notifiedRecording=null;
           else if(!stopped && recording.name && recording.hunt_progress?.stage===4 && notifiedRecording!==recording.name){
             notifiedRecording=recording.name;
-            if(data.alerts && !panelPaused)onHuntReady?.();
+            if(data.alerts && !muted())onHuntReady?.();
           }
         }
       }finally{clearTimer(timeout);request=null;}
@@ -105,6 +113,6 @@ function startAlertSounds({token,fetchImpl,beep,onHuntReady,setTimer=setTimeout,
     if(!stopped){timer=setTimer(poll,750);timer?.unref?.();}
   }
   void poll();
-  return {panelPause,testSound:()=>!panelPaused&&consumer.testSound(),stop(){stopped=true;request?.abort();clearTimer(timer);}};
+  return {panelPause,testSound:()=>!muted()&&consumer.testSound(),stop(){stopped=true;request?.abort();clearTimer(timer);}};
 }
 module.exports={createSoundConsumer,startAlertSounds,visiblePlayers};

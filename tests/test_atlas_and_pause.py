@@ -92,6 +92,22 @@ def test_map_defaults_are_semantic(kind,default):
     assert validate_note(n)["activation_hint"]==default
 
 
+@pytest.mark.parametrize("previously_muted", [False, True])
+def test_pause_and_stop_restore_the_independent_alert_preference(state, previously_muted):
+    async def exercise():
+        center = state.alert_center
+        center.set_paused(previously_muted)
+        await server._async_toggle_all()
+        assert center.snapshot()["automation_paused"] and center.snapshot()["paused"]
+        await server._async_toggle_all()
+        assert not center.snapshot()["automation_paused"] and center.paused is previously_muted
+        await server._async_emergency_stop()
+        assert center.snapshot()["automation_paused"] and center.paused
+        await server._async_unlock_automation()
+        assert not center.snapshot()["automation_paused"] and center.paused is previously_muted
+    asyncio.run(exercise())
+
+
 def test_pause_keeps_selection_cancels_injections_and_resumes_only_selection(state,monkeypatch):
     async def exercise():
         state.game_proxy=proxy();state.ready=True
@@ -126,10 +142,12 @@ def test_resume_failure_stays_paused_and_does_not_reset_cooldowns(state,monkeypa
     async def exercise():
         state.ready=True;state.game_proxy=proxy();state.settings["actions"]={"eat_food":{"enabled":True}}
         state.potion_scheduler.last_any=123
+        state.alert_center.set_paused(False)
         await server._async_pause_automation()
         monkeypatch.setattr(server,"_start_action",lambda name:"synthetic launch failure")
         with pytest.raises(ValueError,match="paused again"):await server._async_resume_automation()
         assert state.automation_paused and state.potion_scheduler.last_any==123
+        assert state.alert_center.snapshot()["automation_paused"] and state.alert_center.paused
     asyncio.run(exercise())
 
 

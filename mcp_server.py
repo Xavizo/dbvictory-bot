@@ -139,6 +139,7 @@ class BotState:
         self.game_state: GameState = GameState()
         from game_alerts import AlertCenter
         self.alert_center = AlertCenter(self.settings.get("alerts"))
+        self.alert_center.set_automation_paused(self.automation_paused)
         from bot_profiles import ProfileStore
         self.profile_store = ProfileStore()
         self.action_logs: dict[str, collections.deque] = {}
@@ -255,7 +256,7 @@ async def _async_alerts(command, body):
         state.alert_center.configure(config)
     elif command == "set_paused":
         state.alert_center.set_paused(body.get("paused"))
-        return "Alerty wstrzymane." if body["paused"] else "Alerty wznowione."
+        return "Alerty wstrzymane." if state.alert_center.paused else "Alerty wznowione."
     elif command == "acknowledge":
         state.alert_center.acknowledge(body.get("through"))
     else:
@@ -651,6 +652,7 @@ async def _async_emergency_stop(*, preserve_enabled=False) -> str:
         return "Emergency pause is already stopping actions."
     state._emergency_stopping = True
     state.automation_paused = True
+    state.alert_center.set_automation_paused(True)
     state.settings["automation_paused"] = True
     state.automation_pause_kind = "manual" if preserve_enabled else "emergency"
     state.settings["automation_pause_kind"] = state.automation_pause_kind
@@ -753,6 +755,7 @@ async def _async_resume_automation() -> str:
         await _async_pause_automation()
         raise ValueError("Resume failed; paused again: " + "; ".join(errors))
     state._paused_playback=None
+    state.alert_center.set_automation_paused(state.automation_paused)
     return "Selected actions resumed." if state.connected else "Pause removed; selected actions will start after login."
 
 
@@ -771,6 +774,7 @@ async def _async_unlock_automation() -> str:
         state.settings["automation_paused"] = previous
         raise
     state.automation_paused = False
+    state.alert_center.set_automation_paused(False)
     state.automation_pause_kind = None
     if state.game_proxy:
         state.game_proxy.injections_paused = False
@@ -1255,6 +1259,7 @@ async def _reset_bot() -> str:
     state.game_state = GameState()
     state.settings = load_settings()
     state.automation_paused = bool(state.settings.get("automation_paused", False))
+    state.alert_center.set_automation_paused(state.automation_paused)
     state.automation_pause_kind = state.settings.get("automation_pause_kind","emergency") if state.automation_paused else None
     state._paused_playback = None
     state._stopping_tasks = []
@@ -1558,7 +1563,7 @@ async def start_bot() -> str:
         if gs is not state.game_state:return
         publish_semantic_result(gs, result, kills)
         for message in result.messages:
-            state.alert_center.observe_chat(message, state, gs)
+            state.alert_center.observe_chat(message, state, gs, result.received_at)
         publish_server_feedback(gs, result, state.potion_diagnostics)
         for kill in kills:
             if state.playback_active:

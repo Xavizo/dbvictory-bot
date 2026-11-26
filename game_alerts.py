@@ -67,7 +67,9 @@ class AlertCenter:
             self.config = default_config()
         self.session = uuid.uuid4().hex
         self.events = deque(maxlen=100)
-        self.paused = True
+        self.alerts_paused = True
+        self.automation_paused = False
+        self.ignore_chat_before = float('-inf')
         self.silenced_through = 0
         self.latest_id = self.read_id = 0
         self.last_sound = float('-inf')
@@ -88,14 +90,31 @@ class AlertCenter:
                 self.ki_detector.high = self.pending_ki = self.ki_alarm_id = None
             self.config = config
 
+    @property
+    def paused(self):
+        return self.alerts_paused or self.automation_paused
+
+    def set_automation_paused(self, paused):
+        with self.lock:
+            if self.automation_paused == paused:
+                return
+            self.automation_paused = paused
+            self.silenced_through = self.latest_id
+            self.ki_detector.high = self.pending_ki = self.ki_alarm_id = None
+            self.last_vitals = self.vitals_alarm_id = None
+            self.last_sound = float('-inf')
+            if not paused:
+                # An observation received before resume can still be in the parser queue.
+                self.ignore_chat_before = self.monotonic()
+
     def set_paused(self, paused):
         if type(paused) is not bool:
             raise ValueError('Nieprawidłowy stan pauzy alertów.')
         with self.lock:
-            if self.paused != paused:
+            if self.alerts_paused != paused:
                 self.silenced_through = self.latest_id
                 self.pending_ki = None
-                self.paused = paused
+                self.alerts_paused = paused
 
     def acknowledge(self, through):
         with self.lock:
@@ -109,7 +128,8 @@ class AlertCenter:
                     'events': copy.deepcopy(list(self.events)), 'latest_id': self.latest_id,
                     'vitals_alarm_id': self.vitals_alarm_id,
                     'ki_alarm_id': self.ki_alarm_id if self.monotonic() < self.ki_alarm_until else None,
-                    'paused': self.paused, 'silenced_through': self.silenced_through,
+                    'paused': self.paused, 'automation_paused': self.automation_paused,
+                    'silenced_through': self.silenced_through,
                     'unread': sum(e['id'] > max(self.read_id, self.silenced_through) for e in self.events),
                     'cavebot_active': self.active, 'map_fresh': self.map_fresh,
                     'chat_received': self.chat_received, 'last_chat_at': self.last_chat_at}
@@ -149,13 +169,15 @@ class AlertCenter:
         self.active = connected and cavebot_running(state)
         return connected
 
-    def observe_chat(self, message, state, source):
+    def observe_chat(self, message, state, source, received_at=None):
         with self.lock:
             if source is not state.game_state or not self._context(state):
                 return
             now = self.clock()
             self.chat_received += 1
             self.last_chat_at = now
+            if received_at is not None and received_at < self.ignore_chat_before:
+                return
             name = message['sender'].strip()
             me = getattr(source, 'player_name', '').strip()
             # Wait for authoritative own identity instead of alerting on own casts.
@@ -182,7 +204,7 @@ class AlertCenter:
         gs = state.game_state
         potion_task = getattr(state, '_action_tasks', {}).get('auto_potions')
         potions = potion_task is not None and not potion_task.done()
-        if (self.identity is None or getattr(state, 'automation_paused', False)
+        if (self.identity is None or self.automation_paused or getattr(state, 'automation_paused', False)
                 or not getattr(gs, 'client_state_required', False)
                 or not (potions or cavebot_running(state))):
             self.last_vitals = self.vitals_alarm_id = None
@@ -210,7 +232,7 @@ class AlertCenter:
             now = self.clock()
             stamp, mana, maximum = gs.stats_updated_at, gs.mana, gs.max_mana
             position = tuple(gs.position)
-            if (not connected or not cfg['enabled'] or (cfg['scope'] == 'cavebot' and not self.active)
+            if (self.automation_paused or not connected or not cfg['enabled'] or (cfg['scope'] == 'cavebot' and not self.active)
                     or not 0 <= now - stamp <= KI_DROP_WINDOW or gs.hp <= 0
                     or maximum <= 0 or not 0 <= mana <= maximum or len(position) != 3):
                 self.ki_detector.high = self.pending_ki = None

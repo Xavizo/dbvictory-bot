@@ -120,6 +120,48 @@ test('adaptive hunt readiness notifies once per recording and respects mute',asy
   rec.name='third';await poll();assert.equal(count,2);
   sounds.stop();
 });
+test('global automation pause interrupts existing signals, mutes tests and the tray, and resumes on new chat',async()=>{
+  let t=100000,poll,interruptions=0,balloons=0;
+  const heard=[];
+  let alerts=snapshot([],{paused:false}), active=false, stage=3;
+  const data=()=>({automation_paused:active,alerts,cavebot:{recording:{active:true,mode:'adaptive',name:'hunt',hunt_progress:{stage}}}});
+  const p=startAlertSounds({token:'test',now:()=>t,beep:k=>heard.push(k),
+    onMute:()=>interruptions++,onHuntReady:()=>balloons++,
+    fetchImpl:async()=>({ok:true,json:async()=>data()}),
+    setTimer:(fn,ms)=>{if(ms===750)poll=fn;return 0;},clearTimer:()=>{}});
+  const tick=async()=>{t+=750;await poll();};
+  await new Promise(resolve=>setImmediate(resolve));
+  alerts=snapshot([event(1),event(2)],{paused:false});
+  await tick();
+  assert.deepEqual(heard,['message']);
+  active=true;stage=4;
+  alerts=snapshot([event(1),event(2),event(3)],{paused:true,automation_paused:true,silenced_through:3});
+  await tick();await tick();
+  assert.equal(p.panelPause(false).paused,true);
+  assert.equal(p.testSound(),false);
+  assert.equal(interruptions,1);
+  assert.equal(balloons,0);
+  active=false;alerts={...alerts,paused:false,automation_paused:false};
+  await tick();assert.deepEqual(heard,['message']);
+  alerts=snapshot([event(4,{at:t/1000})],{paused:false,silenced_through:3});
+  await tick();
+  assert.deepEqual(heard,['message','message']);
+  p.stop();
+});
+
+test('interrupting audio does not beep on cancellation or clear the next active sound',()=>{
+  const callbacks=[],killed=[],fallback=[];
+  const audio=createNotificationAudio({platform:'win32',directory:'test',fallback:()=>fallback.push(true),
+    run:(_exe,_args,_opts,cb)=>{callbacks.push(cb);const id=callbacks.length;return {kill:()=>killed.push(id)};}});
+  audio.play('vitals');audio.interrupt();audio.interrupt();
+  assert.equal(audio.play('message'),true);
+  callbacks[0](new Error('cancelled'));
+  assert.equal(audio.play('player'),false);
+  assert.deepEqual(killed,[1]);assert.deepEqual(fallback,[]);
+  callbacks[1]();assert.equal(audio.play('player'),true);
+  audio.stop();
+});
+
 test('both notification kinds use the same hidden Windows helper; busy or stopped signals stay silent',()=>{
  const calls=[];let done,killed=0;
  const directory="C:\\test's app";
@@ -140,10 +182,13 @@ test('an unread preview stays dismissible even after four seconds; a read alert 
    target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  const mod={exports:{}};
  new Function('exports','require',js)(mod.exports,name=>name==='@/lib/api'?{}:require(name));
- const render=(age,unread=1,paused=false)=>renderToStaticMarkup(React.createElement(mod.exports.default,{
-   connected:true,onRefresh(){},alerts:snapshot([event(1,{at:Date.now()/1000-age,sender:'Gracz',text:'Test'})],{unread,paused})}));
+ const render=(age,unread=1,paused=false,automation_paused=false)=>renderToStaticMarkup(React.createElement(mod.exports.default,{
+   connected:true,onRefresh(){},alerts:snapshot([event(1,{at:Date.now()/1000-age,sender:'Gracz',text:'Test'})],{unread,paused,automation_paused})}));
  assert.doesNotMatch(render(0,1,true),/class="alert-peek"|class="alert-count"/);
  assert.match(render(0,1,true),/aria-label="Wznów alerty"/);
+ const globalPause=render(0,1,true,true);
+ assert.match(globalPause,/aria-label="Alerty wstrzymane przez pauzę automatyki"[^>]*disabled/);
+ assert.doesNotMatch(globalPause,/class="alert-peek"|class="alert-count"/);
  assert.match(render(0),/class="alert-peek"/);
  const after=render(5);
  assert.match(after,/class="alert-peek"/);

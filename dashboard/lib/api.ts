@@ -236,7 +236,7 @@ export interface ProxySequence {
 export type AlertKind = "private" | "default" | "player" | "ki_loss";
 export type AlertConfig = Record<AlertKind, {enabled:boolean;sound:boolean;scope:"always"|"cavebot"}>;
 export interface AlertState {
-  paused?:boolean;silenced_through?:number;
+  paused?:boolean;automation_paused?:boolean;silenced_through?:number;
   session:string;config:AlertConfig;latest_id:number;unread:number;cavebot_active:boolean;map_fresh:boolean;
   chat_received:number;last_chat_at:number|null;
   vitals_alarm_id?:number|null;
