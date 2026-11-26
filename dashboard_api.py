@@ -924,6 +924,10 @@ def _build_state_json() -> str:
             "running": running, "description": desc,
             "completed": name in st._action_completed,
         }
+        if name == "auto_potions" and running and cfg.get("defer_senzu_ki"):
+            guard = st.potion_scheduler.deferral
+            if guard and guard.phase != "normal":
+                entry["senzu_deferral"] = guard.phase
         if action_config:
             entry["config"] = action_config
         if logs:

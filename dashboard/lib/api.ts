@@ -73,6 +73,7 @@ export interface ActionInfo {
   enabled: boolean;
   running: boolean;
   completed?: boolean;
+  senzu_deferral?: "waiting" | "used" | "watch" | "held";
   description: string;
   logs?: string[];
   config?: Record<string, any>;

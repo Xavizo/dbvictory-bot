@@ -6,15 +6,13 @@ import threading
 import time
 import uuid
 from client_player_state import FRESH_SECONDS
-from passive_map import WIDTH, HEIGHT
+from ki_loss import KI_DROP_WINDOW, KI_HIT_GRACE, KiDropDetector
 import json
 from pathlib import Path
 from collections import deque
 
 KINDS = ('private', 'default', 'player', 'ki_loss')
-KI_DROP_WINDOW = 1.5
 KI_ALARM_DURATION = 10
-KI_HIT_GRACE = 1.
 
 
 def default_config():
@@ -55,7 +53,7 @@ def cavebot_running(state):
 class AlertCenter:
     def __init__(self, config=None, clock=time.time, spells=None, monotonic=time.monotonic):
         self.monotonic = monotonic
-        self.last_high_ki = None
+        self.ki_detector = KiDropDetector()
         self.ki_alarm_id = None
         self.ki_alarm_until = 0.
         self.pending_ki = None
@@ -87,7 +85,7 @@ class AlertCenter:
         with self.lock:
             config = validate_config(config)
             if config['ki_loss'] != self.config['ki_loss']:
-                self.last_high_ki = self.pending_ki = self.ki_alarm_id = None
+                self.ki_detector.high = self.pending_ki = self.ki_alarm_id = None
             self.config = config
 
     def set_paused(self, paused):
@@ -142,7 +140,7 @@ class AlertCenter:
         connected = bool(online and gs.stats_updated_at and self.clock() - gs.stats_updated_at < 2)
         identity = (id(gs), gs.player_id, id(getattr(state, 'game_proxy', None))) if online else None
         if identity != self.identity:
-            self.last_high_ki = self.pending_ki = self.ki_alarm_id = None
+            self.ki_detector.high = self.pending_ki = self.ki_alarm_id = None
             self.last_vitals = self.vitals_alarm_id = None
             self.players.clear()
             self.known_players.clear()
@@ -215,7 +213,7 @@ class AlertCenter:
             if (not connected or not cfg['enabled'] or (cfg['scope'] == 'cavebot' and not self.active)
                     or not 0 <= now - stamp <= KI_DROP_WINDOW or gs.hp <= 0
                     or maximum <= 0 or not 0 <= mana <= maximum or len(position) != 3):
-                self.last_high_ki = self.pending_ki = None
+                self.ki_detector.high = self.pending_ki = None
                 return
             current = self.monotonic()
             last_hit = gs.last_incoming_hit
@@ -229,26 +227,13 @@ class AlertCenter:
                     self.ki_alarm_until = current + KI_ALARM_DURATION
                     self.pending_ki = None
 
-            previous = self.last_high_ki
-            if mana * 100 >= maximum * 90:
-                self.last_high_ki = (stamp, mana, maximum, position, gs.ki_revision)
+            drop = self.ki_detector.observe(gs, current, now)
+            if drop is None or (last_hit is not None and last_hit >= drop.at - KI_DROP_WINDOW):
                 return
-            self.last_high_ki = None
-            if previous is None or mana * 100 > maximum * 5:
-                return
-            before, high, old_max, origin, revision = previous
-            max_gap = FRESH_SECONDS if gs.client_state_required else KI_DROP_WINDOW
-            if (gs.ki_revision != revision + 1 or not 0 <= stamp - before <= max_gap
-                    or old_max != maximum or origin[2] != position[2]
-                    or abs(origin[0] - position[0]) > WIDTH // 2 or abs(origin[1] - position[1]) > HEIGHT // 2):
-                return
-            drop = current - (now - stamp)
-            if last_hit is not None and last_hit >= drop - KI_DROP_WINDOW:
-                return
-            text = (f'W jednym odczytanym spadku Ki zmalało z {high / maximum:.0%} do {mana / maximum:.0%} '
-                    f'w {stamp - before:.2f} s. Brak komunikatu o ataku na postać.')
+            text = (f'W jednym odczytanym spadku Ki zmalało z {drop.before:.0%} do {drop.after:.0%} '
+                    f'w {drop.elapsed:.2f} s. Brak komunikatu o ataku na postać.')
             if self.pending_ki is None:
-                self.pending_ki = (drop, text, position)
+                self.pending_ki = (drop.at, text, position)
 
     def observe_players(self, state):
         with self.lock:
