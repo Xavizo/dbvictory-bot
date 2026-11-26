@@ -58,9 +58,11 @@ def observations(deaths, credits, cells, name=NAME):
     return q
 
 
-@pytest.mark.parametrize("name", ["Gunso", "Chibi Gunso", "Fury Gunso"])
-def test_gunso_loot_and_death_identify_body_910(name):
-    corpse = tile(A, 910)
+@pytest.mark.parametrize(("name", "body_id"), [
+    ("Gunso", 910), ("Chibi Gunso", 910), ("Fury Gunso", 910), ("Mutant Wolf", 8550),
+])
+def test_personal_loot_and_death_identify_skinnable_body(name, body_id):
+    corpse = tile(A, body_id)
     queue = observations([A], 1, [corpse], name=name)
     assert queue.next_body(A, corpse["items"]) == ("skin", corpse["items"][-1])
 

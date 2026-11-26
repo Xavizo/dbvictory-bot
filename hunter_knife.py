@@ -11,12 +11,13 @@ KNIFE = 5908
 FRESH = 9068
 ROCO = 8548
 GUNSO = 910
-FRESH_BODIES = frozenset((FRESH, ROCO, GUNSO))
+MUTANT_WOLF = 8550
+FRESH_BODIES = frozenset((FRESH, ROCO, GUNSO, MUTANT_WOLF))
 SPENT = 8141
 SKINNABLE_SPECIES = frozenset({"fire elemental", "fire elementalis", "mutant fire elemental",
                         "fury mutant fire", "fury mutant fire elemental",
                         "roco", "chibi roco", "fury roco",
-                        "gunso", "chibi gunso", "fury gunso"})
+                        "gunso", "chibi gunso", "fury gunso", "mutant wolf"})
 LOOT_LINE = re.compile(
     r"(?:(?:[01][0-9]|2[0-3]):[0-5][0-9][ \t]+)?"
     r"\[([^\[\]\r\n]{1,64})\]: [^\r\n]+"
