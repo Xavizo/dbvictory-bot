@@ -87,6 +87,27 @@ def matches_floor_crossing(tile, edge):
                  else bool(edge.get('entry_items')) and set(edge['entry_items']) <= ids))
 
 
+# A transition tile the client reports but cannot be read consistently
+# (for example its object moved between reads). Unloaded tiles stay unknown.
+UNREADABLE_TILE = 'Odczyt pola niepełny'
+# Retry the live read this long before trusting the recorded transition.
+KNOWN_TRANSITION_GRACE = 2.0
+
+
+def unreadable(tile):
+    return bool(tile and tile.get('kind') == 'unknown'
+                and str(tile.get('reason') or '').startswith(UNREADABLE_TILE))
+
+
+def edge_object_present(tile, edge):
+    ids = {item['id'] for item in tile.get('items', ())}
+    if edge.get('door_closed_ids') or edge.get('open_item_id') is not None:
+        return False  # A door or gate state cannot be inferred from an old record.
+    if edge.get('item_id') is not None:
+        return edge['item_id'] in ids
+    return bool(edge.get('entry_items')) and set(edge['entry_items']) <= ids
+
+
 def web_passable(tile):
     return (walkable(tile) and not tile.get('navigation') and not tile.get('transitions')
             and not any(i['id'] in WEB_ITEM_IDS for i in tile['items']))
@@ -146,6 +167,7 @@ class AdaptiveCavebot:
         self._uncertain_walk_origin = None
         self._failed_origin = None
         self._failed_exits = {}
+        self._unreadable = {}
         self.combat_only=False;self.draft_id=None;self.combat=CombatRuntime(self,validate_combat())
         self.reporter = None
         self._resuming_report = False
@@ -823,6 +845,67 @@ class AdaptiveCavebot:
         self._pending_shortcut = None
         return True
 
+    def unreadable_for(self, origin, target):
+        """Seconds the live read of ``target`` has failed from ``origin``.
+
+        A gap longer than a second (the tile was readable, combat moved us, or
+        the route went elsewhere) starts the retry window again.
+        """
+        key = (tuple(origin), tuple(target));now = time.monotonic()
+        first, last = self._unreadable.get(key, (now, now))
+        if now - last > 1.0:
+            first = now
+        self._unreadable[key] = (first, now)
+        return now - first
+
+    def known_transition_tile(self, point):
+        """The atlas copy of a planned transition entrance whose object is recorded there.
+
+        Only an entrance of this route's own transitions qualifies, and only
+        when the atlas saw that entrance's object on it. Every other unreadable
+        tile still waits for a live read.
+        """
+        point = list(point)
+        edges = [e for e in self.edges if list(e.get('entry') or ()) == point
+                 and e.get('action') in {'step', 'use'}]
+        if not edges:
+            return None
+        atlas = getattr(getattr(self.state, 'passive_map_monitor', None), 'atlas', None)
+        if atlas is None:
+            return None
+        try:
+            stored = atlas.known_tile(point)
+        except Exception:
+            log.debug('Atlas tile %s unavailable for the known-transition fallback', point, exc_info=True)
+            return None
+        if not stored or stored.get('kind') not in ('clear', 'blocked'):
+            return None
+        if not any(edge_object_present(stored, e) for e in edges):
+            return None
+        # Occupancy is unknown here. The server still rejects an occupied tile
+        # and every step and use below waits for an acknowledged position.
+        return {**stored, 'occupants': 0, 'occupant_types': {}, 'from_atlas': True}
+
+    def use_known_transition(self, origin, point, tile):
+        """Return the recorded tile once the retry window for ``point`` has passed.
+
+        ``None`` means there is no recorded transition to fall back to, and
+        ``False`` means keep retrying the live read for now.
+        """
+        if not unreadable(tile) or tuple(point) in self.blocked:
+            return None
+        known = self.known_transition_tile(point)
+        if known is None:
+            return None
+        waited = self.unreadable_for(origin, point)
+        if waited < KNOWN_TRANSITION_GRACE:
+            return False
+        self.logs.append(f'Pole {tuple(point)}: odczyt niepełny od {waited:.1f} s; '
+                         'korzystam ze znanego przejścia z Atlasu.')
+        log.info('V2 known transition fallback: origin=%s target=%s unreadable_for=%.1fs reason=%s',
+                 list(origin), list(point), waited, tile.get('reason'))
+        return known
+
     def describe_blockage(self,sample,target,*,cancelled=False):
         pos=list(self.state.game_state.position)
         cell=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==target),None)
@@ -1296,12 +1379,22 @@ class AdaptiveCavebot:
             await asyncio.sleep(.01)
         return deadline_result
 
-    async def step(self,target,door=False,validate=None):
+    async def step(self,target,door=False,validate=None,known=False):
+        """Walk one tile. ``known`` also accepts a target whose live read still fails.
+
+        Used only for a planned transition tile the atlas recorded; any readable
+        target must still pass the ordinary checks.
+        """
         pos=list(self.state.game_state.position)
         if distance(pos,target)!=1:raise ValueError("Krok nie jest sąsiednim polem.")
         self.map_now()  # fail closed on missing/stale input before scheduling
+        def clear():
+            cells=self.map_now()['cells']
+            if step_clear(cells,pos,target,self.blocked,door=door):return True
+            return (known and tuple(target) not in self.blocked
+                    and unreadable(next((c for c in cells if [c['x'],c['y'],c['z']]==list(target)),None)))
         sent=await self.send(build_walk_packet(OFFSETS[target[0]-pos[0],target[1]-pos[1]]),
-                        lambda:list(self.state.game_state.position)==pos and step_clear(self.map_now()['cells'],pos,target,self.blocked,door=door) and (validate is None or validate()),defer_movement=not door,route_destination=target)
+                        lambda:list(self.state.game_state.position)==pos and clear() and (validate is None or validate()),defer_movement=not door,route_destination=target)
         if not sent:raise MovementDeferred('Pole zmieniło się — ponownie sprawdzam drogę; walka aktywna.')
         return await self._confirm_walk(target, pos, recover=not door)
 
@@ -1535,6 +1628,14 @@ class AdaptiveCavebot:
         origin=list(self.state.game_state.position);entry=edge['entry'];dest=edge['exit']
         tile=next((c for c in sample['cells'] if [c['x'],c['y'],c['z']]==entry),None)
         if not tile or distance(origin,entry)>1:raise ValueError("Brak świeżego odczytu wejścia przejścia.")
+        fallback=False
+        if unreadable(tile):
+            # The client holds the tile but its object is unreadable. Retry the
+            # read, then trust only the object the atlas recorded for this edge.
+            known=self.use_known_transition(origin,entry,tile)
+            if not known:
+                raise MovementDeferred(f"Wejście przejścia {tuple(entry)}: niepełny odczyt pola. Ponawiam odczyt.")
+            tile=known;fallback=True
         alternate = bool(edge.get('recorded_origin') or edge.get('alternate_approach'))
         if alternate and not matches_floor_crossing(tile, edge):
             raise MovementDeferred("Czekam na potwierdzenie tego samego wejścia i wyjścia przejścia.")
@@ -1556,6 +1657,8 @@ class AdaptiveCavebot:
             raise ValueError("Wejście przejścia jest zajęte.")
         def same_entry():
             fresh=next((c for c in self.map_now()['cells'] if [c['x'],c['y'],c['z']]==entry),None)
+            if fallback and unreadable(fresh):
+                return True  # Still unreadable: the recorded object stands.
             return bool(fresh and fresh['items']==tile['items']
                         and fresh.get('occupants',0)<=fresh.get('occupant_types',{}).get('self',0)
                         and (not alternate or matches_floor_crossing(fresh, edge)))
@@ -1852,6 +1955,7 @@ class AdaptiveCavebot:
                     continue
                 self.expire_movement_blocks()
                 tiles={(c['x'],c['y'],c['z']):c for c in sample['cells']}
+                known=None
                 if tuple(target) in delayed or not step_clear(sample['cells'],pos,target,self.blocked):
                     if self.reroute_floor_approach(sample, blocked_step=True):
                         continue
@@ -1875,6 +1979,14 @@ class AdaptiveCavebot:
                             self.reason = 'Brak potwierdzenia kroku. Czekam przed ponowieniem z tego pola.'
                             await asyncio.sleep(.1)
                             continue
+                        known=self.use_known_transition(pos,target,tiles.get(tuple(target)))
+                        if known is False:
+                            self.reason=f'Pole {tuple(target)}: niepełny odczyt znanego przejścia. Ponawiam odczyt.'
+                            await self.wait_for_navigation(self.reason, ("map", "position"), .1)
+                            continue
+                        if known is not None and not walkable(known):
+                            known=None
+                    if not found and known is None:
                         self.describe_blockage(sample,target)
                         awaiting_approach = self.blockage['tile_kind'] == 'unknown' and self.is_stair_approach(self.index+2)
                         if (not awaiting_approach and tuple(target) not in self.blocked and not self.combat.config['enabled']
@@ -1889,10 +2001,11 @@ class AdaptiveCavebot:
                     # The map can change after planning and before the walk is dispatched.
                     via = pos if shortcut else next((target for cp in self.checkpoints
                         if cp['index'] == self.index+1 and cp.get('exact_point')), None)
+                    fallback = {'known': True} if known is not None else {}
                     if via is None:
-                        arrived = await self.step(target)
+                        arrived = await self.step(target, **fallback)
                     else:
-                        arrived = await self.step(target, validate=lambda: self.waypoint_pass_still_clear(via))
+                        arrived = await self.step(target, validate=lambda: self.waypoint_pass_still_clear(via), **fallback)
                 except MovementDeferred as exc:
                     self.reason=str(exc);await asyncio.sleep(.05);continue
                 finally:self._route_command=False;self._route_boundary=False

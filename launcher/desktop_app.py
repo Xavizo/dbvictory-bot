@@ -141,6 +141,42 @@ def tidy(root, hide=None):
     return hidden
 
 
+def release_files(root):
+    """Paths of the release's own files, from its manifest; [] for a source checkout."""
+    try:
+        files = json.loads((Path(root) / "release-manifest.json").read_text(encoding="utf-8"))["files"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    return [Path(root, *name.split("/")) for name in files if name and ":" not in name and "\\" not in name]
+
+
+BINARIES = {".dll", ".exe", ".pyd", ".node"}
+
+
+def unblock(root, remove=os.remove):
+    """Drop Windows' "downloaded from the internet" mark from the release's binaries.
+
+    Explorer copies the zip's mark (the Zone.Identifier stream) onto every file it
+    extracts, and .NET Framework then refuses to load pythonnet's and WebView2's
+    DLLs: the window never opened. Same as ticking "Unblock" in the file's
+    properties. Only binaries, so the first start stays quick (about 130 of
+    3000 files). Runs at every start before pywebview is imported; returns the
+    files it unblocked.
+    """
+    if os.name != "nt" and remove is os.remove:
+        return []
+    unblocked = []
+    for path in release_files(root):
+        if path.suffix.lower() not in BINARIES:
+            continue
+        try:
+            remove(f"{path}:Zone.Identifier")
+            unblocked.append(path)
+        except OSError:
+            pass  # not marked (the usual case), or a drive without streams
+    return unblocked
+
+
 def pid_alive(pid):
     if os.name != "nt":
         try:
@@ -760,6 +796,14 @@ def main(argv=None):
     read_only = "--check" in argv
     if not _single_instance():
         return 0
+    try:
+        unblocked = unblock(Path.cwd())
+        if unblocked:
+            import logging
+            logging.getLogger("launcher").info("Unblocked %d downloaded files", len(unblocked))
+    except Exception:
+        import logging
+        logging.getLogger("launcher").exception("Could not unblock the downloaded files")
     try:
         tidy(Path.cwd())
     except Exception:
