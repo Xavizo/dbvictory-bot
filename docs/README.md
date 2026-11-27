@@ -13,15 +13,7 @@ tour of the panel.
 - [November 26 compatibility record](CLIENT_UPDATE.md): exact hashes, address
   evidence and test results for the current client build.
 
-## Running with an AI agent
+## Releases
 
-- [Codex on Windows](CODEX.md): setup, safe MCP checks, dashboard
-  authentication and the release process (partly in Polish).
-
-## Design notes
-
-- [Combat review and V2 direction](CAVEBOT_REVIEW.md) (Polish)
-- [OTClient source analysis](otclient_source_analysis.md)
-- vBot comparison (Polish): [architecture](vbot/architecture.md),
-  [modules](vbot/modules.md), [decisions](vbot/decisions.md). These are also
-  available as MCP resources under `dbvictory://knowledge/vbot/…`.
+- [Releases for maintainers](RELEASES.md): publishing a release, the package
+  and how the launcher updates.

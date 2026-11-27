@@ -45,9 +45,9 @@ local_data/
 # Local client spell catalogue and graphics
 /dashboard/public/local-spells/
 
-# Local build backups and newly recorded gameplay routes
+# Local build backups and the player's recorded routes
 /dashboard/.next-*/
-/recordings/atlas_*.json
+/recordings/
 
 # Release packaging output
 /build/

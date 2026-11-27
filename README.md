@@ -377,8 +377,7 @@ from a terminal with `venv\Scripts\python.exe mcp_clients.py connect codex`).
 Restart the agent afterwards.
 
 - Codex: `~/.codex/config.toml`. Developers can also use
-  `.\scripts\setup-codex.ps1` and `.\scripts\start-codex.ps1`; see
-  [Codex on Windows](docs/CODEX.md).
+  `.\scripts\setup-codex.ps1` and `.\scripts\start-codex.ps1`.
 - Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` (and the
   Microsoft Store app's own copy when it has one).
 - Claude Code: added with `claude mcp add --scope user`, so Claude Code must be
@@ -424,9 +423,6 @@ cd dashboard; npm test; npm run typecheck; npm run build
 - Commit messages drive the version number (`feat:` → minor, `fix:` → patch,
   `!` or `BREAKING CHANGE:` → major). User-visible changes go at the top of
   [`launcher/desktop/release-notes.json`](launcher/desktop/release-notes.json).
-- Design notes: [cavebot review](docs/CAVEBOT_REVIEW.md),
-  [OTClient analysis](docs/otclient_source_analysis.md),
-  [vBot comparison](docs/vbot/architecture.md) (Polish).
 
 ## Privacy and safety
 
