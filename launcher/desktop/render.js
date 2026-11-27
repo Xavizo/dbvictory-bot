@@ -11,6 +11,11 @@ const checkpoints = [
   {key:"engine", pending:"Silnik bota", active:"Uruchamianie silnika…", done:"Silnik gotowy"},
   {key:"panel", pending:"Główny panel", active:"Otwieranie głównego panelu…", done:"Panel gotowy"}
 ];
+const updateStages = [
+  {key:"download", pending:"Pobieranie", done:"Pobrano"},
+  {key:"extract", pending:"Rozpakowywanie", done:"Rozpakowano"},
+  {key:"apply", pending:"Instalowanie plików", done:"Zainstalowano"}
+];
 let lastNotes;
 
 function button(id,label,action,disabled=false) {
@@ -47,7 +52,23 @@ function drawHistory(releases) {
   }
 }
 
+function drawUpdateSteps(progress) {
+  const steps=$("#steps"), position=progress.step-1;
+  steps.replaceChildren();
+  for(const [i,item] of updateStages.entries()) {
+    const li=document.createElement("li"), icon=document.createElement("i");
+    icon.className="stepicon";icon.setAttribute("aria-hidden","true");
+    let label=item.pending;
+    if(i<position) {li.className="done";icon.textContent="✓";label=item.done;}
+    else if(i===position) {li.className="active update-label";label=progress.label;}
+    li.append(icon,document.createTextNode(label));
+    if(i===position){const pct=document.createElement("small");pct.textContent=[progress.rate,progress.percent+"%"].filter(Boolean).join(" · ");li.append(pct);}
+    steps.append(li);
+  }
+}
+
 function drawSteps(s) {
+  if(s.progress) return drawUpdateSteps(s.progress);
   const failed=checkpoints.findIndex(step=>step.key===s.failedStep);
   const position=failed>=0?failed:["prepared","connecting"].includes(s.phase)?1:["detecting","starting","panel","running"].indexOf(s.phase);
   const steps=$("#steps");
@@ -80,8 +101,8 @@ function update(s) {
   drawSteps(s);
   const progress=$("#progress");
   progress.hidden=!["preparing","checking","applying","detecting","starting","panel","connecting"].includes(stage);
-  progress.classList.toggle("indeterminate",!["starting","panel"].includes(stage));
-  $(".fill").style.width=stage==="starting"?"33%":stage==="panel"?"67%":"";
+  progress.classList.toggle("indeterminate",!s.progress&&!["starting","panel"].includes(stage));
+  $(".fill").style.width=s.progress?s.progress.percent+"%":stage==="starting"?"33%":stage==="panel"?"67%":"";
   $(".portrait").classList.toggle("charging",stage==="starting");
   const detail=$("#detail");
   detail.textContent=s.text;
@@ -106,37 +127,40 @@ function update(s) {
 const historyDialog=$("#history");
 $("#more").onclick=()=>historyDialog.showModal();
 $("#closeHistory").onclick=()=>historyDialog.close();
-historyDialog.addEventListener("click",event=>{
-  if(event.target!==historyDialog)return;
-  const rect=historyDialog.getBoundingClientRect();
-  if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom) historyDialog.close();
-});
 $("#folderEdit").onclick=()=>window.desktop.act("folder");
 
 const aiDialog=$("#ai");
 let aiBusy=false, aiReadOnly=false;
+const aiNotes={codex:"OpenAI Codex (aplikacja lub terminal)","claude-desktop":"Aplikacja Claude na komputer","claude-code":"Claude Code w terminalu"};
 function drawAi(result) {
   const status=result.status||{}, list=$("#aiTargets");
   list.replaceChildren();
   const on=Object.values(status).filter(t=>t.connected).map(t=>t.label);
-  $("#aiSummary").textContent=on.length?on.join(", "):"wyłączona";
+  $("#aiChip").hidden=!on.length;
+  $("#aiSummary").textContent=on.length?"Zintegrowane AI: "+on.join(", "):"";
+  $("#aiOpen").title=on.length?"Ustawienia · "+$("#aiSummary").textContent:"Ustawienia · integracja AI wyłączona";
   for (const [key,target] of Object.entries(status)) {
-    const li=document.createElement("li"), name=document.createElement("span"), state=document.createElement("span"), act=document.createElement("button");
-    name.textContent=target.label;
-    state.className="ai-state"+(target.connected?" on":"");
-    state.textContent=target.connected?"połączony":target.available?"niepołączony":"nie znaleziono programu";
-    act.className="edit";act.type="button";
+    const li=document.createElement("li"), logo=document.createElement("span"), text=document.createElement("span"),
+      name=document.createElement("strong"), note=document.createElement("small"), state=document.createElement("span"), act=document.createElement("button");
+    li.className=target.connected?"on":"";
+    logo.className="ai-logo"+(key.startsWith("claude")?" claude":"");logo.setAttribute("aria-hidden","true");
+    logo.textContent=key==="codex"?"Cx":key==="claude-code"?"CC":"C";
+    name.textContent=target.label;note.textContent=aiNotes[key]||"";
+    state.className="ai-state"+(target.connected?" on":target.available?"":" missing");
+    state.textContent=target.connected?"Połączony":target.available?"Niepołączony":"Nie znaleziono programu";
+    text.className="ai-text";text.append(name,note,state);
+    act.className="ai-act"+(target.connected?" off":"");act.type="button";
     act.textContent=target.connected?"Odłącz":"Połącz";
+    act.setAttribute("aria-label",act.textContent+" "+target.label);
     act.disabled=aiBusy||aiReadOnly||!target.available&&!target.connected;
     act.onclick=()=>changeAi(target.connected?"disconnect":"connect",key);
-    const left=document.createElement("span");left.append(name,document.createElement("br"),state);
-    li.append(left,act);list.append(li);
+    li.append(logo,text,act);list.append(li);
   }
   if (result.message!=null) $("#aiMessage").textContent=result.message;
 }
 async function refreshAi() {
   try { drawAi(await window.desktop.mcp("status")); }
-  catch (error) { $("#aiSummary").textContent="—"; $("#aiMessage").textContent=error.message; }
+  catch (error) { $("#aiChip").hidden=true; $("#aiMessage").textContent=error.message; }
 }
 async function changeAi(operation,target) {
   if (aiBusy) return;
@@ -147,6 +171,11 @@ async function changeAi(operation,target) {
 }
 $("#aiOpen").onclick=()=>{$("#aiMessage").textContent="";aiDialog.showModal();refreshAi();};
 $("#closeAi").onclick=()=>aiDialog.close();
+for (const dialog of [historyDialog,aiDialog]) dialog.addEventListener("click",event=>{
+  if(event.target!==dialog)return;
+  const rect=dialog.getBoundingClientRect();
+  if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom) dialog.close();
+});
 window.desktop.state().then(s=>{aiReadOnly=!!s.readOnly;refreshAi();});
 window.desktop.onState(update);
 window.desktop.state().then(update);

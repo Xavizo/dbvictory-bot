@@ -324,3 +324,44 @@ def test_a_changed_file_held_open_still_rolls_back(root, monkeypatch):
     with pytest.raises(PermissionError):
         gr.install(root, NEW, fetch=lambda repo: latest, opener=lambda req, timeout: Response(data))
     assert (root / "bot.py").read_bytes() == b"old" and (root / "app.pak").read_bytes() == b"pak"
+
+
+def test_install_reports_download_extract_and_swap_progress_then_clears_it(root, monkeypatch):
+    install_old(root, {"a.py": b"old-a"})
+    latest, data = package({"a.py": b"new-a", "b.py": b"new-b"})
+    seen = []
+    real = gr.Progress.__call__
+
+    def spy(self, stage, done, total, **kw):
+        seen.append((stage, done, total))
+        return real(self, stage, done, total, **kw)
+    monkeypatch.setattr(gr.Progress, "__call__", spy)
+    gr.install(root, NEW, fetch=lambda repo: latest, opener=lambda req, timeout: Response(data))
+    stages = [s for s, _, _ in seen]
+    assert stages.index("download") < stages.index("extract") < stages.index("apply")
+    assert ("download", len(data), len(data)) in seen
+    extract = [(d, t) for s, d, t in seen if s == "extract"]
+    assert extract[-1][0] == extract[-1][1]
+    assert not (root / ".codex" / "updates" / "github" / "progress.json").exists()
+
+
+def test_progress_is_throttled_but_always_writes_the_end(tmp_path):
+    clock = [100.0]
+    progress = gr.Progress(tmp_path / "progress.json", clock=lambda: clock[0])
+    progress("download", 1, 10, unit="bytes", kind="patch")
+    first = json.loads((tmp_path / "progress.json").read_text())
+    progress("download", 5, 10, unit="bytes", kind="patch")
+    assert json.loads((tmp_path / "progress.json").read_text()) == first  # within 0.25 s
+    progress("download", 10, 10, unit="bytes", kind="patch")
+    last = json.loads((tmp_path / "progress.json").read_text())
+    assert last == {"stage": "download", "done": 10, "total": 10, "unit": "bytes", "kind": "patch", "started": 100.0}
+
+
+def test_a_progress_file_that_cannot_be_removed_does_not_fail_the_install(tmp_path, monkeypatch):
+    progress = gr.Progress(tmp_path / "progress.json")
+    progress("apply", 1, 1)
+
+    def locked(self, missing_ok=False):
+        raise PermissionError("in use")
+    monkeypatch.setattr(type(tmp_path), "unlink", locked)
+    progress.clear()
