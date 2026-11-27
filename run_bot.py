@@ -57,7 +57,8 @@ def prepare_environment(game_port):
            'DBV_GAME_PORT':str(game_port), 'DBV_ALLOW_PACKET_CAPTURE':'0'}
     env.pop('DBV_DASHBOARD_TOKEN', None)
     # Prefer the already installed local runtime; don't download or install tools.
-    runtimes = sorted((ROOT/'.codex/runtime').glob('node-v*-win-x64'), reverse=True)
+    # A downloaded release ships Node.js in runtime/node.
+    runtimes = [ROOT/'runtime'/'node', *sorted((ROOT/'.codex/runtime').glob('node-v*-win-x64'), reverse=True)]
     for runtime in runtimes:
         if (runtime/'node.exe').is_file() and (runtime/'npm.cmd').is_file():
             env['PATH'] = str(runtime)+os.pathsep+env.get('PATH','')
@@ -83,6 +84,10 @@ async def call(session, name, args=None):
                 f"Ostatni waypoint {last} · następny {upcoming}\n"
                 f"Mikstury · {timers or 'brak użyć w próbce'}")
     print(text, flush=True)
+    failed = result.isError or text.startswith('ERROR:')
+    if failed and ('Wersja klienta zmieniła się' in text or 'Nieobsługiwana wersja klienta' in text):
+        from client_profiles import CLIENT_UPDATED_MESSAGE
+        raise RuntimeError(CLIENT_UPDATED_MESSAGE)
     if result.isError or text.startswith('ERROR:'):
         raise RuntimeError(f'Nie powiodło się: {name}. Sesja nie została uruchomiona ponownie.')
     return text

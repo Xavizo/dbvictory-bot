@@ -65,6 +65,26 @@ NOVEMBER_26 = ClientProfile(
 PROFILES = {p.sha256: p for p in (LEGACY, UPDATED, NOVEMBER_26)}
 
 
+CLIENT_UPDATED_MESSAGE = (
+    "Klient DBVictory został zaktualizowany, a ta wersja bota jeszcze go nie obsługuje. "
+    "Bot nie połączy się z grą, żeby niczego nie zepsuć. Możesz normalnie grać bez bota. "
+    "Gdy pojawi się wydanie bota dla nowego klienta, launcher zaproponuje je przy starcie."
+)
+
+
+def client_support(exe):
+    """Plain-language answer whether the client executable is a reviewed build."""
+    import hashlib
+    from pathlib import Path
+    path = Path(exe)
+    if path.stat().st_size > 64 * 1024 * 1024:
+        return {"supported": False, "message": CLIENT_UPDATED_MESSAGE}
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest in PROFILES:
+        return {"supported": True, "message": "Wersja klienta jest obsługiwana."}
+    return {"supported": False, "message": CLIENT_UPDATED_MESSAGE}
+
+
 def select_profile(digest):
     try:
         return PROFILES[digest]

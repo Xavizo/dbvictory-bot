@@ -96,6 +96,7 @@ async function launcherWithClient(initialPid) {
     characterListPid:async()=>{stub.captures++;throw Error("Screen capture must not be used");},
     openClient:async()=>{stub.opens++; stub.pid=20;},
     checkRelease:async()=>({state:"current"}), history:async()=>[],
+    clientSupport:async()=>stub.support ?? {supported:true},
     interactive:(_root,_id,_rev,onLine)=>{stub.onLine=onLine; return proc;}
   };
   let ready;
@@ -204,6 +205,32 @@ test("Connect preserves an actionable process error instead of silently discardi
   await client.connect();
   assert.deepEqual(client.writes,["prepare-login\n","connect\n"]);
   assert.equal(client.captures,0);
+});
+
+test("an updated game client is explained before the client is touched", async () => {
+  const client=await launcherWithClient(null);
+  client.support={supported:false,message:"Klient DBVictory został zaktualizowany"};
+  await client.start();
+  assert.equal(client.view.phase,"clientError");
+  assert.equal(client.view.clientOutdated,true);
+  assert.match(client.view.text,/zaktualizowany/);
+  assert.equal(client.opens,0);
+  assert.deepEqual(client.writes,[]);
+  delete client.support;
+  await client.start();
+  assert.deepEqual(client.writes,["prepare-login\n"]);
+});
+
+test("the renderer offers install and postpone for a GitHub release and a folder picker without a client", async () => {
+  const {env,nodes}=await launcherRenderer();
+  env.update({phase:"available",folder:"",text:"Dostępne wydanie",changes:[],canInstall:true,canDefer:true});
+  assert.equal(nodes.get("#primary").textContent,"Zainstaluj aktualizację");
+  assert.equal(nodes.get("#secondary").textContent,"Odłóż wydanie");
+  env.update({phase:"ready",folder:"",text:"",changes:[],installed:false});
+  assert.equal(nodes.get("#primary").textContent,"Wybierz folder klienta");
+  env.update({phase:"clientError",folder:"C:\\Gra",text:"",changes:[],installed:true,clientOutdated:true});
+  assert.equal(nodes.get("#primary").textContent,"Start");
+  assert.equal(nodes.get("#secondary").textContent,"Sprawdź aktualizacje");
 });
 
 test("closing the launcher while the game is opening cannot advance startup", async () => {

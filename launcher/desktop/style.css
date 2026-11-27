@@ -96,6 +96,14 @@ body{padding:0;display:block;background:#0b1222}
 .steps .failed,.hint.problem{color:#ffadaf}.failed .stepicon{border-color:#ff8c96;color:#ffb6bc}
 .steps li{min-height:30px}.actions .primary:disabled{cursor:progress}
 #history{box-sizing:border-box;width:min(540px,90vw);max-height:min(77vh,600px);overflow:auto;color:#e7f1ff;background:#111c30;border:1px solid #48607d;border-radius:16px;padding:0 22px 20px;box-shadow:0 16px 48px #0009}
+#ai{box-sizing:border-box;width:min(500px,90vw);color:#e7f1ff;background:#111c30;border:1px solid #48607d;border-radius:16px;padding:0 22px 18px;box-shadow:0 16px 48px #0009}
+#ai::backdrop{background:#050a14b8;backdrop-filter:blur(4px)}
+#closeAi{font-size:24px;color:#c6d6e8;line-height:1;padding:4px 8px}
+.ai-note{font-size:13px;line-height:1.5;color:#b8c7d9;margin:12px 0}
+#aiTargets{list-style:none;margin:0;padding:0}
+#aiTargets li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #ffffff17}
+#aiTargets .ai-state{font-size:12px;color:#9fb3c8}#aiTargets .ai-state.on{color:#8ff0c0}
+.ai-open{position:fixed;left:18px;bottom:12px;z-index:5}
 #history::backdrop{background:#050a14b8;backdrop-filter:blur(4px)}
 .history-head{position:sticky;top:0;background:#111c30;display:flex;align-items:center;justify-content:space-between;padding:16px 0 12px;border-bottom:1px solid #ffffff21}
 #closeHistory{font-size:24px;color:#c6d6e8;line-height:1;padding:4px 8px}

@@ -14,15 +14,16 @@ class ReleaseChanged(Exception):
 
 
 def main(root):
-    from dbv_revision import read_head_revision
+    from dbv_revision import installed_revision
     from run_bot import prepare_environment, run
 
     feed = root / ".codex" / "updates"
     with ExitStack() as session:
         def lock_reviewed_release():
             session.enter_context(launcher_lock(root / ".codex" / "standalone.lock"))
-            if (read_head_revision(root) != os.environ.get("DBV_LAUNCHER_REVISION")
-                    or any((feed / name).exists() for name in ("pending.json", "transaction.json"))):
+            if (installed_revision(root) != os.environ.get("DBV_LAUNCHER_REVISION")
+                    or any((feed / name).exists() for name in ("pending.json", "transaction.json"))
+                    or (feed / "github" / "transaction.json").exists()):
                 raise ReleaseChanged
 
         # The interactive prompt may wait for an arbitrary time. Only the user's

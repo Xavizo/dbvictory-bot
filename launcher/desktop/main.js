@@ -16,13 +16,13 @@ app.setPath("userData",path.join(app.getPath("appData"),"DBVictory Launcher"));
 const settings = path.join(app.getPath("userData"),"client.json");
 let win, child, oldPending, marker, clientPid, poll, deadline;
 let locked = false, checkingPanel = false, quitting = false, sessionError = "", awaitingStart = false;
-let awaitingConnection = false;
+let awaitingConnection = false, recheckOnClose = false;
 const waitingForList = "Zaloguj się na konto i pozostaw otwartą listę postaci. Gdy będziesz gotowy, kliknij „Połącz z grą”. Nie wchodź jeszcze na postać.";
 let view = {phase:"checking", text:"Sprawdzanie lokalnej kolejki wydań…",version:"",changes:[],
   folder:"",installed:false,clientOpen:false,canDefer:false,readOnly};
 
 function set(phase, text, extra={}) {
-  view = {...view,phase,text,canDefer:false,failedStep:null,...extra};
+  view = {...view,phase,text,canDefer:false,canInstall:false,clientOutdated:false,failedStep:null,...extra};
   if (win && !win.isDestroyed()) win.webContents.send("launcher:changed",view);
 }
 function reveal() {
@@ -50,20 +50,37 @@ function showStart(info={}) {
     : "Start otworzy klienta. Na liście postaci wybierz „Połącz z grą”.";
   set("ready",text,info);
 }
-async function check(defer) {
+async function check(defer, install) {
   set("checking","Sprawdzanie lokalnej kolejki wydań…");
   let report = await host.checkRelease(root,["preflight","--check"]);
+  const github = report.source==="github";
   if (!readOnly && defer && report.state==="available" && defer===report.pending && host.validSha(defer)) {
     set("applying","Odkładanie wybranego wydania…");
     report=await host.checkRelease(root,["defer",defer]);
-  } else if (!readOnly && ["available","recovery"].includes(report.state)) {
+  } else if (!readOnly && install && github && report.state==="available" && install===report.pending && host.validSha(install)) {
+    set("applying","Pobieranie i instalowanie aktualizacji z GitHuba… To może potrwać kilka minut.",{version:report.installed_label});
+    report=await host.checkRelease(root,["install",install]);
+    if (report.state==="updated" && report.restart) {
+      set("applying","Zainstalowano aktualizację. Ponowne uruchamianie launchera…");
+      await delay(900);
+      // The new launcher must load the new runtime; start it through the EXE after this process exits.
+      const exe=path.join(root,"DBVictory Launcher.exe");
+      app.relaunch(require("node:fs").existsSync(exe)?{execPath:exe,args:[]}:undefined);
+      quitting=true;app.exit(0);return;
+    }
+  } else if (!readOnly && github && report.state==="recovery") {
+    set("applying",report.message,{version:report.installed_label});
+    report=await host.checkRelease(root,["preflight"]);
+  } else if (!readOnly && !github && ["available","recovery"].includes(report.state)) {
     set("applying",report.message,{version:report.installed_label});
     report=await host.checkRelease(root,["preflight"]);
   }
   oldPending=report.pending;
   let changes=[], notesError=false;
   try { changes=await host.history(root,report.installed_label); } catch { notesError=true; }
-  const extra={revision:report.installed,version:report.installed_label||"",changes,notesError,canDefer:!!(report.can_defer&&oldPending)};
+  const extra={revision:report.installed,version:report.installed_label||"",changes,notesError,canDefer:!!(report.can_defer&&oldPending),
+    canInstall:report.source==="github"&&report.state==="available"&&!!oldPending&&!readOnly,
+    pendingLabel:report.pending_label||""};
   if (report.state==="updated"||report.state==="current") {
     if (readOnly) set("ready","Sprawdzenie zakończone.",extra);
     else {
@@ -147,6 +164,7 @@ async function preparePrompt() {
     const failedStep=checkingPanel?"panel":clientPid?"engine":null;
     stopMonitor();child=null;clientPid=null;awaitingStart=false;awaitingConnection=false;
     if (quitting || wasRunning && code===0) {app.quit();return;}
+    if (recheckOnClose) {recheckOnClose=false;action("retry");return;}
     reveal();
     if (code===75) set("problem","Pojawiło się nowsze wydanie. Sprawdź aktualizację ponownie.");
     else if (code || sessionError) set("problem",sessionError||"Proces sesji zakończył się błędem.",{failedStep});
@@ -188,9 +206,18 @@ async function action(name) {
   try {
     if (name==="retry" && !child) await check();
     else if (name==="defer" && !child && !readOnly && view.canDefer) await check(oldPending);
+    else if (name==="install" && !child && !readOnly && view.canInstall) await check(undefined, oldPending);
+    else if (name==="recheck" && child && awaitingStart && ["ready","clientError"].includes(view.phase) && !readOnly) {
+      // Close the idle session prompt; its close handler checks for a new release.
+      recheckOnClose=true;set("closing","Sprawdzanie aktualizacji…");child.stdin.end();
+    }
     else if (name==="start" && awaitingStart && ["ready","clientError"].includes(view.phase) && !readOnly) {
       const proc=child;
       try {
+        // A game client update needs a matching bot release: say so before touching the client.
+        const support=await host.clientSupport(root,view.folder);
+        if (quitting || proc!==child || !awaitingStart) return;
+        if (!support.supported) {set("clientError",support.message,{failedStep:"client",clientOutdated:!support.missing});return;}
         const pid=await findOrLaunchClient(proc);
         if (!pid || quitting || proc!==child || !awaitingStart) return;
         clientPid=pid;
@@ -257,6 +284,11 @@ else {
     const trusted=e=>e.sender===win.webContents && e.senderFrame===win.webContents.mainFrame && e.senderFrame.url===page;
     ipcMain.handle("launcher:state",e=>{if(!trusted(e))throw Error("Nieznane okno.");return view;});
     ipcMain.handle("launcher:act",(e,name)=>{if(!trusted(e))throw Error("Nieznane okno.");return action(name);});
+    ipcMain.handle("launcher:mcp",(e,operation,target)=>{
+      if(!trusted(e))throw Error("Nieznane okno.");
+      if(readOnly&&operation!=="status")throw Error("Tryb tylko do odczytu.");
+      return host.mcpClients(root,operation,target);
+    });
     win.on("close",e=>{
       if (quitting) return;
       if (locked && view.phase!=="detecting" || ["checking","applying"].includes(view.phase)) {e.preventDefault();return;}
@@ -269,7 +301,7 @@ else {
       try{folder=JSON.parse(await fs.readFile(settings,"utf8")).folder;}catch{}
       if (!folder) {
         const list=await host.clients().catch(()=>[]);
-        folder=list[0]?.Path ? path.dirname(list[0].Path) : "C:\\DBVClient_v5";
+        folder=list[0]?.Path ? path.dirname(list[0].Path) : await host.findClientFolder();
       }
       view={...view,...await clientInfo(folder)};
       await action("retry");

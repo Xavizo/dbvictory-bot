@@ -1072,6 +1072,11 @@ def _launch_dashboard() -> None:
         log.warning("Build the dashboard first: cd dashboard && npm ci && npm run build")
         return
     npm = shutil.which("npm.cmd")
+    bundled = Path(__file__).parent / "runtime" / "node"
+    if npm is None and (bundled / "npm.cmd").is_file() and (bundled / "node.exe").is_file():
+        # A downloaded release ships Node.js; Codex or Claude may start MCP without it on PATH.
+        npm = str(bundled / "npm.cmd")
+        os.environ["PATH"] = str(bundled) + os.pathsep + os.environ.get("PATH", "")
     if npm is None:
         log.warning("npm.cmd not found on PATH — cannot launch dashboard.")
         return
