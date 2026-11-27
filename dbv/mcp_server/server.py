@@ -571,6 +571,9 @@ async def _async_update_action_config(name: str, changes: dict) -> dict:
     if name == "speed_up":
         from dbv.brain.combat.speed_up import validate_config
         cfg = validate_config(cfg)
+    if name == "auto_hunter_knife":
+        from dbv.brain.combat.hunter_knife import validate_config as validate_knife_config
+        cfg = validate_knife_config(cfg)
     state.settings.setdefault("actions", {})[name] = cfg
     save_settings(state.settings)
     return cfg

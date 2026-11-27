@@ -12,12 +12,87 @@ FRESH = 9068
 ROCO = 8548
 GUNSO = 910
 MUTANT_WOLF = 8550
-FRESH_BODIES = frozenset((FRESH, ROCO, GUNSO, MUTANT_WOLF))
 SPENT = 8141
-SKINNABLE_SPECIES = frozenset({"fire elemental", "fire elementalis", "mutant fire elemental",
-                        "fury mutant fire", "fury mutant fire elemental",
-                        "roco", "chibi roco", "fury roco",
-                        "gunso", "chibi gunso", "fury gunso", "mutant wolf"})
+DEFAULT_CORPSES = tuple({"id": body_id, "skinned": SPENT} for body_id in (FRESH, ROCO, GUNSO, MUTANT_WOLF))
+DEFAULT_SPECIES = ("fire elemental", "fire elementalis", "mutant fire elemental",
+                   "fury mutant fire", "fury mutant fire elemental",
+                   "roco", "chibi roco", "fury roco",
+                   "gunso", "chibi gunso", "fury gunso", "mutant wolf")
+MAX_CORPSES = 64
+MAX_SPECIES = 128
+# Updated in place by apply_config, so modules that imported them see the player's list.
+FRESH_BODIES = {entry["id"] for entry in DEFAULT_CORPSES}
+SKINNED_BY = {entry["id"]: entry["skinned"] for entry in DEFAULT_CORPSES}
+SPENT_BODIES = set(SKINNED_BY.values())
+SKINNABLE_SPECIES = set(DEFAULT_SPECIES)
+
+
+def _item_id(value, label):
+    if type(value) is str and value.strip().isdigit():
+        value = int(value.strip())
+    if type(value) is not int or not 1 <= value <= 65535:
+        raise ValueError(f"{label} musi być liczbą od 1 do 65535.")
+    return value
+
+
+def validate_config(cfg):
+    """Normalise the corpse IDs and monster names the knife may be used on."""
+    cfg = dict(cfg)
+    corpses = cfg.get("corpses", DEFAULT_CORPSES)
+    species = cfg.get("species", DEFAULT_SPECIES)
+    if not isinstance(corpses, (list, tuple)) or not 1 <= len(corpses) <= MAX_CORPSES:
+        raise ValueError(f"Podaj od 1 do {MAX_CORPSES} ID ciał.")
+    clean = []
+    for entry in corpses:
+        if not isinstance(entry, dict):
+            entry = {"id": entry}
+        body_id = _item_id(entry.get("id"), "ID ciała")
+        after = _item_id(entry.get("skinned", SPENT), "ID ciała po oskórowaniu")
+        if body_id in (KNIFE, after):
+            raise ValueError(f"ID {body_id} nie może być ciałem do skórowania.")
+        if any(body_id == e["id"] for e in clean):
+            raise ValueError(f"ID ciała {body_id} jest na liście dwa razy.")
+        clean.append({"id": body_id, "skinned": after})
+    fresh = {e["id"] for e in clean}
+    overlap = fresh & {e["skinned"] for e in clean}
+    if overlap:
+        raise ValueError(f"ID {min(overlap)} nie może być jednocześnie świeżym i oskórowanym ciałem.")
+    if not isinstance(species, (list, tuple)) or not 1 <= len(species) <= MAX_SPECIES:
+        raise ValueError(f"Podaj od 1 do {MAX_SPECIES} nazw potworów.")
+    names = []
+    for name in species:
+        if type(name) is not str or not 1 <= len(name.strip()) <= 64 or "[" in name or "]" in name:
+            raise ValueError("Nazwa potwora musi mieć od 1 do 64 znaków, bez nawiasów kwadratowych.")
+        name = " ".join(name.split()).casefold()
+        if name not in names:
+            names.append(name)
+    cfg["corpses"], cfg["species"] = clean, names
+    return cfg
+
+
+def effective_config(cfg):
+    """The saved list, or the defaults when nothing valid has been saved."""
+    try:
+        return validate_config(cfg or {})
+    except ValueError:
+        return validate_config({})
+
+
+def apply_config(cfg):
+    """Make the knife recognise the configured corpses and monsters; return what was applied."""
+    cfg = effective_config(cfg)
+    skinned_by = {e["id"]: e["skinned"] for e in cfg["corpses"]}
+    FRESH_BODIES.clear()
+    FRESH_BODIES.update(skinned_by)
+    SKINNED_BY.clear()
+    SKINNED_BY.update(skinned_by)
+    SPENT_BODIES.clear()
+    SPENT_BODIES.update(skinned_by.values())
+    SKINNABLE_SPECIES.clear()
+    SKINNABLE_SPECIES.update(cfg["species"])
+    return tuple(sorted(skinned_by.items())), tuple(cfg["species"])
+
+
 LOOT_LINE = re.compile(
     r"(?:(?:[01][0-9]|2[0-3]):[0-5][0-9][ \t]+)?"
     r"\[([^\[\]\r\n]{1,64})\]: [^\r\n]+"
@@ -85,7 +160,7 @@ def manual_corpse_ids(frame, position):
 
 
 def body_counts(items):
-    return Counter(item["id"] for item in items if item["id"] in FRESH_BODIES or item["id"] == SPENT)
+    return Counter(item["id"] for item in items if item["id"] in FRESH_BODIES or item["id"] in SPENT_BODIES)
 
 
 def fresh_count(counts):
@@ -94,7 +169,7 @@ def fresh_count(counts):
 
 def skinned(before, after, body_id=FRESH):
     return (body_id in FRESH_BODIES and before - after == Counter({body_id: 1})
-            and after - before == Counter({SPENT: 1}))
+            and after - before == Counter({SKINNED_BY.get(body_id, SPENT): 1}))
 
 
 def exposed_body_action(items):
@@ -106,7 +181,7 @@ def exposed_body_action(items):
     if "container" in flags:
         if top["id"] in FRESH_BODIES:
             return "skin", top
-        if top["id"] in (SPENT, 8506) and "not_moveable" not in flags:
+        if (top["id"] in SPENT_BODIES or top["id"] == 8506) and "not_moveable" not in flags:
             return "uncover", top
     return None
 

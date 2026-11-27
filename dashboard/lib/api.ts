@@ -278,7 +278,7 @@ export interface BotState {
   automation_paused?: boolean;
   automation_pause_kind?: "manual"|"emergency"|null;
   potion_diagnostics?: PotionDiagnosticState;
-  hunter_knife?: {last_issue?:{position:[number,number,number];reason:string;action:"skin"|"uncover";spell?:string;since_spell_ms?:number}|null;unassigned_bodies?:number;status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number};
+  hunter_knife?: {last_issue?:{position:[number,number,number];reason:string;action:"skin"|"uncover";spell?:string;since_spell_ms?:number}|null;unassigned_bodies?:number;status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number;corpses?:KnifeCorpse[];species?:string[];default_corpses?:KnifeCorpse[];default_species?:string[]};
   barrier_band?: {status:string;equipped_id:number|null;stock:number|null;attempts:number};
   actions: ActionInfo[];
   packets_from_server: number;
@@ -327,6 +327,8 @@ export interface MapAnnotationInput {
 }
 export const saveMapAnnotation = (data:MapAnnotationInput) => control("/api/map/annotation",data);
 export const labelVisiblePet = (position:number[],ref:string,name:string|null) => control("/api/map/pet",{position,ref,name});
+
+export type KnifeCorpse = {id:number;skinned:number};
 
 export async function fetchState(signal?: AbortSignal): Promise<BotState> {
   const res = await authenticatedFetch(`${API_BASE}/api/state`, {signal});

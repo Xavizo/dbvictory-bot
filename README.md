@@ -188,7 +188,7 @@ explains why the bot did what it did and sums up each loop.
 ### Hunter Knife
 
 The Hunter Knife skins only corpses of monsters you killed and confirms the
-loot that drops. For now it recognises the corpses of these monsters only:
+loot that drops. Out of the box it recognises the corpses of these monsters:
 
 - Fire Elemental, Fire Elementalis, Mutant Fire Elemental, Fury Mutant Fire
   (Elemental)
@@ -196,8 +196,18 @@ loot that drops. For now it recognises the corpses of these monsters only:
 - Gunso, Chibi Gunso, Fury Gunso
 - Mutant Wolf
 
-Other corpses are left alone. More monsters can be added in
-[`dbv/brain/combat/hunter_knife.py`](dbv/brain/combat/hunter_knife.py) once their corpse is identified.
+Other corpses are left alone. To add or remove one, click **Konfiguruj**
+(Configure) next to the Hunter Knife switch. The window has two lists:
+
+- **ID ciał** (corpse IDs): the item ID of the fresh corpse and the ID it turns
+  into once skinned (8141 for the monsters above).
+- **Potwory** (monsters): the monster names as the game shows them. The knife
+  only claims a corpse after a kill of a listed monster.
+
+To find an ID, use **Identyfikacja przedmiotów** (item identification) in the
+**Diagnostyka** tab and Look at the corpse before and after skinning. The list is
+saved in `bot_settings.json`, takes effect without restarting the knife, and
+**Przywróć domyślne** brings back the list above.
 
 ### Diagnostics
 
