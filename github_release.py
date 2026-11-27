@@ -23,14 +23,18 @@ import urllib.request
 from uuid import uuid4
 import zipfile
 
-from dbv_revision import RELEASE_FILE, read_release, revision_label
+from dbv_revision import RELEASE_FILE, TEST_SUFFIX, read_release, revision_label
 
 MANIFEST_FILE = "release-manifest.json"
 DEFAULT_REPO = "Xavizo/dbvictory-bot"
 PACKAGE_ROOT = "DBVictory-Bot"
-ASSET_PATTERN = r"DBVictory-Bot-v\d+\.\d+\.\d+\.zip"
+STABLE_VERSION = r"v\d+\.\d+\.\d+"
+TEST_VERSION = STABLE_VERSION + TEST_SUFFIX
+ASSET_PATTERN = rf"DBVictory-Bot-v\d+\.\d+\.\d+(?:{TEST_SUFFIX})?\.zip"
 # Only the files that changed since the release named after "patch-".
-PATCH_PATTERN = r"DBVictory-Bot-v\d+\.\d+\.\d+-patch-v\d+\.\d+\.\d+\.zip"
+PATCH_PATTERN = rf"DBVictory-Bot-v\d+\.\d+\.\d+(?:{TEST_SUFFIX})?-patch-v\d+\.\d+\.\d+\.zip"
+# "stable" (default): only regular releases. "test": also the newest test build (a pre-release).
+CHANNELS = ("stable", "test")
 USER_AGENT = "DBVictory-Launcher"
 TIMEOUT = 10
 MAX_PACKAGE = 2 * 1024 ** 3
@@ -61,8 +65,32 @@ def _feed(root):
 
 
 def _version(label):
-    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", label or "")
-    return tuple(map(int, match.groups())) if match else None
+    """Sortable form of a version; a test build of vX.Y.Z sorts before vX.Y.Z itself."""
+    match = re.fullmatch(rf"v(\d+)\.(\d+)\.(\d+)({TEST_SUFFIX})?", label or "")
+    return (*map(int, match.groups()[:3]), 0 if match[4] else 1) if match else None
+
+
+def is_test_version(label):
+    return isinstance(label, str) and re.fullmatch(TEST_VERSION, label) is not None
+
+
+def read_channel(root):
+    try:
+        data = json.loads((_feed(root) / "channel.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "stable"
+    channel = data.get("channel") if isinstance(data, dict) else None
+    return channel if channel in CHANNELS else "stable"
+
+
+def set_channel(root, channel):
+    if channel not in CHANNELS:
+        raise ValueError("Nieznany kanał aktualizacji.")
+    root = _long(root)
+    if read_release(root) is None:
+        raise ValueError("To nie jest instalacja z paczki wydania.")
+    _write_json(_feed(root) / "channel.json", {"channel": channel})
+    return {"channel": channel}
 
 
 def _key(path):
@@ -153,16 +181,37 @@ def _download_prefix(repo):
 
 
 def fetch_latest(repo, get=_get):
-    """Describe the latest published release: its release.json plus the package URL."""
+    """Describe the latest published release: its release.json plus the package URL.
+
+    GitHub's "latest" release is never a pre-release, so test builds never show up here.
+    """
     info = json.loads(get(f"https://api.github.com/repos/{repo}/releases/latest", limit=4 * 1024 ** 2,
                           accept="application/vnd.github+json"))
+    return _describe(info, repo, get, STABLE_VERSION)
+
+
+def fetch_test(repo, get=_get):
+    """The most recently published test build (a pre-release named vX.Y.Z-test.abcdef0), or None."""
+    releases = json.loads(get(f"https://api.github.com/repos/{repo}/releases?per_page=30", limit=8 * 1024 ** 2,
+                              accept="application/vnd.github+json"))
+    builds = [r for r in releases if isinstance(r, dict) and r.get("prerelease") and not r.get("draft")
+              and is_test_version(r.get("tag_name")) and isinstance(r.get("published_at"), str)]
+    if not builds:
+        return None
+    return _describe(max(builds, key=lambda r: r["published_at"]), repo, get, TEST_VERSION)
+
+
+def _describe(info, repo, get, version_pattern):
+    if not isinstance(info, dict):
+        raise ValueError("Nieprawidłowa odpowiedź GitHuba.")
     assets = {a.get("name"): a.get("browser_download_url") for a in info.get("assets", [])
               if isinstance(a, dict)}
     meta_url = assets.get(RELEASE_FILE)
     if not isinstance(meta_url, str) or not meta_url.startswith(_download_prefix(repo)):
         raise ValueError("Najnowsze wydanie nie zawiera opisu wersji.")
     meta = json.loads(get(meta_url, limit=8192))
-    if (not isinstance(meta, dict) or meta.get("format") != 1 or not _version(meta.get("version"))
+    if (not isinstance(meta, dict) or meta.get("format") != 1 or not isinstance(meta.get("version"), str)
+            or not re.fullmatch(version_pattern, meta["version"])
             or not isinstance(meta.get("revision"), str) or not re.fullmatch(r"[0-9a-f]{40}", meta["revision"])
             or not isinstance(meta.get("asset"), str) or not re.fullmatch(ASSET_PATTERN, meta["asset"])
             or not isinstance(meta.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", meta["sha256"])
@@ -173,6 +222,8 @@ def fetch_latest(repo, get=_get):
         raise ValueError("Najnowsze wydanie nie zawiera paczki programu.")
     latest = {**meta, "url": url}
     latest.pop("patch", None)
+    published = info.get("published_at")
+    latest["published"] = published if isinstance(published, str) else ""
     patch = _patch(meta.get("patch"), assets, repo)
     if patch:
         latest["patch"] = patch
@@ -181,7 +232,8 @@ def fetch_latest(repo, get=_get):
 
 def _patch(patch, assets, repo):
     """The release's patch package, or None: a missing or odd patch only means a full download."""
-    if (not isinstance(patch, dict) or not _version(patch.get("from"))
+    if (not isinstance(patch, dict) or not isinstance(patch.get("from"), str)
+            or not re.fullmatch(STABLE_VERSION, patch["from"])
             or not isinstance(patch.get("asset"), str) or not re.fullmatch(PATCH_PATTERN, patch["asset"])
             or not isinstance(patch.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", patch["sha256"])
             or type(patch.get("size")) is not int or not 0 < patch["size"] <= MAX_PACKAGE):
@@ -225,7 +277,7 @@ def _result(root, state, message, *, latest=None, updated=False, can_defer=False
     release = read_release(root) or {}
     installed = release.get("revision")
     pending = latest["revision"] if latest and state == "available" else None
-    return dict(state=state, source="github", installed=installed, pending=pending,
+    return dict(state=state, source="github", channel=read_channel(root), installed=installed, pending=pending,
                 installed_label=revision_label(installed, release.get("version")),
                 pending_label=revision_label(pending, latest["version"]) if pending else None,
                 message=message, running=state == "busy", updated=updated, can_defer=can_defer,
@@ -242,7 +294,31 @@ def _lock(root):
     return _file_lock(Path(root) / ".codex" / "standalone.lock")
 
 
-def status(root, check_only=False, *, fetch=fetch_latest):
+def _offer(root, release, fetch, fetch_tests):
+    """The release to offer and whether any version other than the installed one counts as an update.
+
+    Default channel: the latest regular release when it is newer. Installed test builds are left
+    for any regular release, so turning the test channel off returns to the regular line.
+    Test channel: whichever of the latest regular release and the newest test build was
+    published last, so the build just published is the one offered.
+    """
+    repo = _repo(release)
+    latest = fetch(repo)
+    on_test = is_test_version(release["version"])
+    if read_channel(root) == "test":
+        test = fetch_tests(repo)
+        if test and test.get("published", "") > latest.get("published", ""):
+            return test, True
+    return latest, on_test
+
+
+def _is_update(release, latest, any_version):
+    if latest["revision"] == release["revision"] and latest["version"] == release["version"]:
+        return False
+    return any_version or _version(latest["version"]) > _version(release["version"])
+
+
+def status(root, check_only=False, *, fetch=fetch_latest, fetch_tests=fetch_test):
     root = _long(root)
     release = read_release(root)
     if release is None:
@@ -257,27 +333,28 @@ def status(root, check_only=False, *, fetch=fetch_latest):
     if not check_only:
         cleanup(root)
     try:
-        latest = fetch(_repo(release))
+        latest, any_version = _offer(root, release, fetch, fetch_tests)
     except (OSError, ValueError, urllib.error.URLError) as error:
         reason = getattr(error, "reason", None) or error
         if isinstance(error, urllib.error.HTTPError) and error.code == 404:
             reason = "na GitHubie nie ma jeszcze opublikowanego wydania"
         return _result(root, "current", f"Zainstalowana wersja {label}. "
                        f"Nie udało się sprawdzić aktualizacji ({reason}). Możesz grać na tej wersji.")
-    if _version(latest["version"]) <= _version(release["version"]):
+    if not _is_update(release, latest, any_version):
         return _result(root, "current", f"Zainstalowana wersja {label}. To najnowsze wydanie.")
     new_label = revision_label(latest["revision"], latest["version"])
     if _deferred(feed) == latest["revision"]:
         return _result(root, "current", f"Zainstalowana wersja {label}. Wydanie {new_label} odłożone.")
     download = (_usable_patch(root, latest) or latest)["size"]
     size = f"{max(download / 1024 ** 2, 1):.0f} MB"
-    return _result(root, "available", f"Dostępne wydanie {new_label} ({size}). "
+    kind = "wersja testowa" if is_test_version(latest["version"]) else "wydanie"
+    return _result(root, "available", f"Dostępne {kind} {new_label} ({size}). "
                    "Zainstaluj je teraz albo odłóż i graj na obecnej wersji.", latest=latest, can_defer=True)
 
 
-def defer(root, revision, *, fetch=fetch_latest):
+def defer(root, revision, *, fetch=fetch_latest, fetch_tests=fetch_test):
     root = _long(root)
-    report = status(root, check_only=True, fetch=fetch)
+    report = status(root, check_only=True, fetch=fetch, fetch_tests=fetch_tests)
     if report["state"] != "available" or report["pending"] != revision:
         raise ValueError("Oczekujące wydanie zmieniło się. Sprawdź aktualizacje ponownie.")
     _write_json(_feed(root) / "deferred.json", {"revision": revision})
@@ -631,7 +708,7 @@ def _prepare(root, feed, latest, opener):
     return _unpack(root, feed, latest, latest, opener, partial=False)
 
 
-def install(root, revision, *, fetch=fetch_latest, opener=_open):
+def install(root, revision, *, fetch=fetch_latest, fetch_tests=fetch_test, opener=_open):
     root = _long(root)
     release = read_release(root)
     if release is None:
@@ -646,10 +723,10 @@ def install(root, revision, *, fetch=fetch_latest, opener=_open):
             return _result(root, "busy", "Bot działa lub porty są zajęte. Aktualizacja poczeka.")
         if (feed / "transaction.json").exists():
             recover(root)
-        latest = fetch(_repo(release))
+        latest, any_version = _offer(root, release, fetch, fetch_tests)
         if latest["revision"] != revision:
             raise ValueError("Na GitHubie pojawiło się inne wydanie. Sprawdź aktualizacje ponownie.")
-        if _version(latest["version"]) <= _version(release["version"]):
+        if not _is_update(release, latest, any_version):
             return _result(root, "current", "Ta wersja jest już zainstalowana.")
         feed.mkdir(parents=True, exist_ok=True)
         global _report

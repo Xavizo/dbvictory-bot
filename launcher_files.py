@@ -85,8 +85,8 @@ def desktop_files(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("preflight", "window", "build-window", "defer", "install",
-                                              "client-check"))
-    parser.add_argument("revision", nargs="?")
+                                              "client-check", "channel"))
+    parser.add_argument("revision", nargs="?", help="Wydanie albo, dla channel, stable lub test.")
     parser.add_argument("--check", action="store_true", help="Pokaż wersje bez instalowania.")
     args = parser.parse_args()
     try:
@@ -101,6 +101,9 @@ def main():
             else:
                 from dbv_release import defer_pending
                 print(json.dumps(defer_pending(ROOT, args.revision), ensure_ascii=False))
+        elif args.operation == "channel":
+            import github_release
+            print(json.dumps(github_release.set_channel(ROOT, args.revision), ensure_ascii=False))
         elif args.operation == "client-check":
             from dbv.client_bridge.client_profiles import client_support
             print(json.dumps(client_support(Path(args.revision)), ensure_ascii=False))
@@ -110,6 +113,9 @@ def main():
         else:
             print(json.dumps(preflight(ROOT, args.check), ensure_ascii=False))
     except (OSError, RuntimeError, ValueError) as error:
+        if args.operation == "channel":
+            print(json.dumps({"error": str(error)}, ensure_ascii=False))
+            return 1
         if args.operation in ("preflight", "defer", "install"):
             info = {}
             may_defer = False

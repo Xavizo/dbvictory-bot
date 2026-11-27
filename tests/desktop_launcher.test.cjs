@@ -90,3 +90,16 @@ test("the settings chip names every connected AI and hides when none is", async 
   env.drawAi({status:{codex:target("Codex",false)}});
   assert.equal(nodes.get("#aiChip").hidden,true);
 });
+
+test("the test-build switch shows only for release installs and reflects the channel", async () => {
+  const {env,nodes}=await launcherRenderer();
+  const state={phase:"ready",folder:"",text:"",changes:[],installed:true};
+  env.update({...state,channel:null});
+  assert.equal(nodes.get("#channelRow").hidden,true);
+  env.update({...state,channel:"test"});
+  assert.equal(nodes.get("#channelRow").hidden,false);
+  assert.equal(nodes.get("#testChannel").checked,true);
+  env.update({...state,channel:"stable",readOnly:true});
+  assert.equal(nodes.get("#testChannel").checked,false);
+  assert.equal(nodes.get("#testChannel").disabled,true);
+});
