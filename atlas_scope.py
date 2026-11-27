@@ -57,6 +57,7 @@ def _inherit_files(directory, previous, scope):
                if p.is_file() and old in p.name and p.suffix in (".sqlite3", ".json")]
     # The atlas file marks a scope as present, so it is written last.
     sources.sort(key=lambda p: p.name == f"map_atlas-{old}.sqlite3")
+    atlas = f"map_atlas-{old}.sqlite3"
     copied = []
     for source in sources:
         target = directory / source.name.replace(old, new)
@@ -67,6 +68,12 @@ def _inherit_files(directory, previous, scope):
             (_copy_sqlite if source.suffix == ".sqlite3" else _copy_json)(source, partial, scope)
             os.replace(partial, target)
             copied.append(target.name)
+        except Exception:
+            if source.name == atlas:
+                raise
+            # A broken side file must not keep the atlas and routes from carrying over;
+            # the bot already skips such files when it loads them.
+            log.warning("Skipped %s while carrying atlas data over", source.name, exc_info=True)
         finally:
             partial.unlink(missing_ok=True)
     return copied

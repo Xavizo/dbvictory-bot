@@ -70,3 +70,18 @@ def test_unreadable_lineage_does_not_break_the_map(tmp_path):
     (tmp_path / LINEAGE).write_text("{not json", encoding="utf-8")
     assert inherit(tmp_path, NEW, SERVER) == []
     assert json.loads((tmp_path / LINEAGE).read_text())["servers"][SERVER] == NEW
+
+
+def test_corrupted_optional_file_does_not_block_the_atlas(tmp_path):
+    inherit(tmp_path, OLD, SERVER)
+    _seed_old(tmp_path)
+    (tmp_path / f"map_transitions-{OLD[:16]}.recovered.json").write_text("{broken", encoding="utf-8")
+
+    copied = inherit(tmp_path, NEW, SERVER)
+
+    assert copied[-1] == f"map_atlas-{NEW[:16]}.sqlite3"
+    assert f"map_transitions-{NEW[:16]}.recovered.json" not in copied
+    assert not list(tmp_path.glob("*.partial"))
+    assert [d["name"] for d in MapAtlas(tmp_path, NEW).drafts()] == ["Monars - Garlic castle"]
+    assert STAIR["id"] in TransitionLearner(tmp_path, NEW).records
+    assert json.loads((tmp_path / LINEAGE).read_text())["servers"][SERVER] == NEW
