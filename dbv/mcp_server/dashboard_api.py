@@ -826,6 +826,16 @@ def _action_catalog(directory, internal):
     return sorted(rows)
 
 
+def _knife_corpse_config(st, cfg):
+    from dbv.brain.combat.hunter_knife import DEFAULT_MONSTERS, effective_config
+    current = effective_config(cfg)
+    suggestions = getattr(st, "knife_suggestions", None)
+    return {"monsters": current["monsters"],
+            "default_monsters": [{"name": m["name"], "corpses": [dict(c) for c in m["corpses"]]} for m in DEFAULT_MONSTERS],
+            "ignored_suggestions": current["ignored_suggestions"],
+            "suggestions": suggestions.pending(cfg) if suggestions else []}
+
+
 def _build_state_json() -> str:
     """Build the full state JSON string. Thread-safe read of global state."""
     st = _state
@@ -980,6 +990,7 @@ def _build_state_json() -> str:
             "personal_loot": getattr(gs, "knife_loot_count", 0),
             "unclassified_loot": getattr(gs, "knife_candidate_count", 0),
             "denied": getattr(gs, "knife_denials", 0),
+            **_knife_corpse_config(st, st.settings.get("actions", {}).get("auto_hunter_knife")),
         },
         "barrier_band": st.band_scheduler.snapshot(),
         "barrier_spell": {"status": st.barrier_scheduler.status} if getattr(st, "barrier_scheduler", None) else None,

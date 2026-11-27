@@ -28,8 +28,8 @@ coding agent (Codex or Claude Code) through MCP.
 - Auto targeting with per-monster rules, attack spells and runes
 - Spell conditions (cast only when the required monsters, HP or Ki are present)
 - Area (wave) spells when several monsters are in range
-- Hunter Knife: skins your own corpses and confirms the loot (only some
-  monsters for now, see [Hunter Knife](#hunter-knife))
+- Hunter Knife: skins your own corpses and confirms the loot, for the monsters
+  on your list (see [Hunter Knife](#hunter-knife))
 
 **Cavebot and atlas**
 - Record and replay hunting routes, including stairs, ladders, ropes, doors and digging
@@ -202,7 +202,7 @@ Routes from another game server are refused, because their map does not match.
 ### Hunter Knife
 
 The Hunter Knife skins only corpses of monsters you killed and confirms the
-loot that drops. For now it recognises the corpses of these monsters only:
+loot that drops. Out of the box it recognises the corpses of these monsters:
 
 - Fire Elemental, Fire Elementalis, Mutant Fire Elemental, Fury Mutant Fire
   (Elemental)
@@ -210,8 +210,25 @@ loot that drops. For now it recognises the corpses of these monsters only:
 - Gunso, Chibi Gunso, Fury Gunso
 - Mutant Wolf
 
-Other corpses are left alone. More monsters can be added in
-[`dbv/brain/combat/hunter_knife.py`](dbv/brain/combat/hunter_knife.py) once their corpse is identified.
+Other corpses are left alone. To change the list, click **Konfiguruj**
+(Configure) next to the Hunter Knife switch. The window lists monsters by name,
+as the game shows them, and each monster has its corpse IDs: the fresh corpse
+and the ID it turns into once skinned (8141 for the monsters above). The knife
+is used only on corpses of monsters on the list, so removing a monster stops
+the knife on its corpses. A monster added without a corpse ID is skipped until
+it gets one.
+
+You rarely need to type IDs. When you skin a corpse that isn't on the list with
+the knife yourself, the bot notices the corpse change and the button shows
+**nowe ciało** (new corpse). The window then lists that corpse, with the name of
+the monster you last killed on that tile, and you can **Dodaj** (add) or
+**Ignoruj** (ignore) it. The default corpse IDs are a best guess and are marked
+**?**. An approved suggestion replaces the guessed IDs of that monster, so the
+list corrects itself as you play. You can also look IDs up with **Identyfikacja
+przedmiotów** (item identification) in the **Diagnostyka** tab.
+
+The list is saved in `bot_settings.json`, takes effect without restarting the
+knife, and **Przywróć domyślne** brings back the list above.
 
 ### Diagnostics
 

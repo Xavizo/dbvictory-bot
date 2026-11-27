@@ -6,7 +6,7 @@ import time
 
 from dbv.brain.cavebot.cavebot_walking import distance, walkable
 from dbv.brain.state.item_observations import observed_inputs, wait_for_inputs
-from dbv.brain.combat.hunter_knife import FRESH_BODIES, KNIFE, ROCO, SkinningQueue, body_counts, exposed_body_action, fresh_count, skinned
+from dbv.brain.combat.hunter_knife import FRESH_BODIES, KNIFE, ROCO, SkinningQueue, apply_config, body_counts, exposed_body_action, fresh_count, skinned
 from dbv.client_bridge.command_delivery import CommandReceipt, attempted, confirm
 from dbv.brain.cavebot.adaptive_cavebot import tool_location
 from dbv.client_bridge.protocol import build_move_item_packet, build_use_item_ex_packet
@@ -356,7 +356,17 @@ async def run_knife(bot):
                     and bot.state.game_proxy is proxy and getattr(proxy, 'session_generation', None) == generation
                     and not bot.state.automation_paused
                     and bot.state.settings.get("actions", {}).get(NAME, {}).get("enabled", False))
+        applied = apply_config(bot.state.settings.get("actions", {}).get(NAME))
         while enabled():
+            corpses = apply_config(bot.state.settings.get("actions", {}).get(NAME))
+            if corpses != applied:
+                # Claims and refused layers were made against the previous list.
+                applied = corpses
+                runtime.queue = SkinningQueue()
+                runtime.pending = None
+                runtime.attempted_layers.clear()
+                runtime.deferred_tiles.clear()
+                runtime.status = "Zastosowano nową listę ciał"
             cursor = observed_inputs(gs, INPUTS)
             now = time.monotonic()
             sample = fresh_sample(bot)

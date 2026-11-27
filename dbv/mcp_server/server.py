@@ -140,6 +140,8 @@ class BotState:
         self.speed_scheduler = SpeedScheduler()
         self.potion_scheduler = PotionScheduler()
         self.potion_diagnostics = PotionDiagnostics()
+        from dbv.brain.combat.hunter_knife import CorpseSuggestions
+        self.knife_suggestions = CorpseSuggestions()
         from dbv.brain.state.item_identification import ItemIdentification
         self.item_identification = ItemIdentification(self.settings.get("item_identification", True) is not False)
         self._action_tasks: dict[str, asyncio.Task] = {}
@@ -573,6 +575,9 @@ async def _async_update_action_config(name: str, changes: dict) -> dict:
     if name == "speed_up":
         from dbv.brain.combat.speed_up import validate_config
         cfg = validate_config(cfg)
+    if name == "auto_hunter_knife":
+        from dbv.brain.combat.hunter_knife import validate_config as validate_knife_config
+        cfg = validate_knife_config(cfg)
     state.settings.setdefault("actions", {})[name] = cfg
     save_settings(state.settings)
     return cfg
