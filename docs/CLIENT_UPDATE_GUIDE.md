@@ -87,7 +87,7 @@ client-update path; an update need only change the ones its evidence requires.
 | File | Responsibility / what to review |
 | --- | --- |
 | [dbv/mcp_server/server.py](../mcp_server.py) | `start_bot` preflight, address patching, proxy creation and login callbacks. Explicitly enables the native key reader for `NOVEMBER_26`; a new profile needs deliberate wiring. |
-| [dbv/client_bridge/patcher.py](../patcher.py) | Finds and patches the remote server address in client memory. A successful patch alone does not establish a session. |
+| [dbv/client_bridge/client_redirect.py](../dbv/client_bridge/client_redirect.py) | Finds the server address text in client memory and points it at the local relay. A successful patch alone does not establish a session. |
 | [dbv/client_bridge/constants.py](../constants.py) | Server host and environment-controlled network ports. Confirm actual endpoint changes; do not guess them from a client version. |
 | [dbv/client_bridge/proxy.py](../proxy.py) | Framing/forwarding, RSA fallback, native-key confirmation, exact known login envelope and connection cleanup. Never log keys or raw login bytes. |
 | [dbv/client_bridge/crypto.py](../crypto.py), [dbv/client_bridge/protocol.py](../protocol.py) | XTEA/checksums/RSA and packet opcodes/readers/builders. Change only if new protocol evidence requires it. |

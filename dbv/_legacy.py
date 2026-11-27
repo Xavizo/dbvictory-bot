@@ -67,7 +67,6 @@ ALIASES = {
     "packet_observer": "dbv.client_bridge.packet_observer",
     "passive_map": "dbv.brain.navigation.passive_map",
     "passive_map_win32": "dbv.client_bridge.passive_map_win32",
-    "patcher": "dbv.client_bridge.patcher",
     "pause_hotkey": "dbv.mcp_server.pause_hotkey",
     "pet_tracking": "dbv.brain.state.pet_tracking",
     "potions": "dbv.brain.combat.potions",

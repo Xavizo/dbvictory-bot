@@ -1377,12 +1377,12 @@ async def start_bot() -> str:
         log.info(f"Closed {closed} existing game connection(s) — client should return to login screen")
         await asyncio.sleep(2)  # Give the client time to process the disconnect
 
-    from dbv.client_bridge.patcher import find_server_address_in_memory, patch_memory
+    from dbv.client_bridge.client_redirect import ClientMemory, redirect_server_address
 
-    ip_locs = find_server_address_in_memory(pm)
-    localhost = b"127.0.0.1"
-    patched = sum(1 for addr, old in ip_locs if patch_memory(pm, addr, old, localhost))
-    pm.close_process()
+    try:
+        patched = redirect_server_address(ClientMemory(pm), SERVER_HOST)
+    finally:
+        pm.close_process()
 
     if patched == 0:
         # Client may already be patched from a previous session — continue anyway
