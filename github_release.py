@@ -17,6 +17,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import time
 import urllib.error
 import urllib.request
 from uuid import uuid4
@@ -294,6 +295,46 @@ def _hash_file(path):
     return digest.hexdigest()
 
 
+class Progress:
+    """What the installer is doing, for the launcher's progress bar.
+
+    Written to .codex/updates/github/progress.json at most four times a second:
+    {"stage": "download" | "extract" | "apply", "done": n, "total": n, "unit": "bytes" | "files",
+     "kind": "patch" | "full", "started": unix time of the stage}.
+    """
+
+    def __init__(self, path=None, clock=time.time):
+        self.path, self.clock = path, clock
+        self.stage, self.started, self.written = None, 0.0, 0.0
+
+    def __call__(self, stage, done, total, *, unit="files", kind=None):
+        now = self.clock()
+        if stage != self.stage:
+            self.stage, self.started, self.written = stage, now, 0.0
+        if self.path is None or (now - self.written < 0.25 and done < total):
+            return
+        self.written = now
+        try:
+            # Written in place: the launcher skips a half-written read, and this stays out of the swap journal.
+            self.path.write_text(json.dumps({"stage": stage, "done": done, "total": total, "unit": unit,
+                                             "kind": kind, "started": self.started}), encoding="utf-8")
+        except OSError:
+            pass  # progress is a courtesy; never fail an update over it
+
+    def clear(self):
+        if self.path is not None:
+            self.path.unlink(missing_ok=True)
+
+
+_report = Progress()
+
+
+def _finish_progress():
+    global _report
+    _report.clear()
+    _report = Progress()
+
+
 def _download(latest, target, opener=_open):
     if target.is_file() and target.stat().st_size == latest["size"] and _hash_file(target) == latest["sha256"]:
         return target
@@ -303,8 +344,11 @@ def _download(latest, target, opener=_open):
     digest, size = hashlib.sha256(), 0
     try:
         with opener(request, timeout=60) as response, part.open("wb") as out:
-            for chunk in iter(lambda: response.read(1024 * 1024), b""):
+            kind = "patch" if "from" in latest else "full"
+            _report("download", 0, latest["size"], unit="bytes", kind=kind)
+            for chunk in iter(lambda: response.read(256 * 1024), b""):
                 size += len(chunk)
+                _report("download", size, latest["size"], unit="bytes", kind=kind)
                 if size > latest["size"]:
                     raise ValueError("Pobrana paczka jest większa niż zapowiedziano.")
                 digest.update(chunk)
@@ -334,10 +378,14 @@ def _extract(package, stage, latest, *, partial=False):
             raise ValueError("W paczce brakuje listy plików.")
         raw = archive.read(manifest_info)
         files = parse_manifest(json.loads(raw))
+        total = sum(1 for path in files if path in members)
+        done = 0
         for path, (sha, size) in files.items():
             info = members.get(path)
             if info is None and partial:
                 continue
+            done += 1
+            _report("extract", done, total)
             if info is None or info.file_size != size:
                 raise ValueError(f"Paczka jest niekompletna: {path}")
             target = stage / path
@@ -395,7 +443,8 @@ def _apply(root, stage, write, remove, tx):
     journal = {"tx": tx, "ops": ops}
     _write_json(feed / "transaction.json", journal)
     stuck = []
-    for op in ops:
+    for done, op in enumerate(ops, 1):
+        _report("apply", done, len(ops))
         target = root / op["path"]
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
@@ -600,6 +649,9 @@ def install(root, revision, *, fetch=fetch_latest, opener=_open):
         if _version(latest["version"]) <= _version(release["version"]):
             return _result(root, "current", "Ta wersja jest już zainstalowana.")
         feed.mkdir(parents=True, exist_ok=True)
+        global _report
+        _report = Progress(feed / "progress.json")
+        stack.callback(_finish_progress)
         tx, stage, package, write, remove = _prepare(root, feed, latest, opener)
         try:
             try:

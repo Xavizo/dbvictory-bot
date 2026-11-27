@@ -66,3 +66,27 @@ test("the renderer offers install and postpone for a GitHub release and a folder
   assert.equal(nodes.get("#secondary").textContent,"Sprawdź aktualizacje");
 });
 
+
+test("an update shows its stage, size and estimate on a filled bar", async () => {
+  const {env,nodes}=await launcherRenderer();
+  const progress={stage:"extract",step:2,steps:3,percent:40,label:"Rozpakowywanie: 40 z 100 plików"};
+  env.update({phase:"applying",folder:"",text:"Aktualizacja do v2.4.0",changes:[],progress});
+  assert.equal(nodes.get(".fill").style.width,"40%");
+  const steps=nodes.get("#steps").children;
+  assert.deepEqual(steps.map(li=>li.className),["done","active update-label",undefined]);
+  assert.equal(steps[1].children[1].textContent,"Rozpakowywanie: 40 z 100 plików");
+  assert.equal(steps[1].children[2].textContent,"40%");
+  env.update({phase:"applying",folder:"",text:"Przygotowywanie…",changes:[],progress:null});
+  assert.equal(nodes.get(".fill").style.width,"");
+});
+
+test("the settings chip names every connected AI and hides when none is", async () => {
+  const {env,nodes}=await launcherRenderer();
+  const target=(label,connected)=>({label,connected,available:true});
+  env.drawAi({status:{codex:target("Codex",true),"claude-desktop":target("Claude Desktop",false),"claude-code":target("Claude Code",true)}});
+  assert.equal(nodes.get("#aiChip").hidden,false);
+  assert.equal(nodes.get("#aiSummary").textContent,"Zintegrowane AI: Codex, Claude Code");
+  assert.equal(nodes.get("#aiTargets").childElementCount,3);
+  env.drawAi({status:{codex:target("Codex",false)}});
+  assert.equal(nodes.get("#aiChip").hidden,true);
+});

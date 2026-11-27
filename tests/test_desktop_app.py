@@ -283,3 +283,55 @@ def test_the_api_refuses_other_pages_and_writes_in_check_mode(tmp_path):
     Owner.window = Frame(page.as_uri())
     with pytest.raises(PermissionError):
         api.mcp("connect", "codex")
+
+
+def test_download_progress_names_the_package_size_speed_and_remaining_time():
+    report = {"stage": "download", "done": 12_300_000, "total": 33_000_000, "unit": "bytes", "kind": "patch",
+              "started": 100.0}
+    shown = desktop_app.describe_progress(report, now=106.0)
+    assert shown["label"] == "Pobieranie łatki: 12,3 z 33,0 MB"
+    assert shown["rate"] == "2,0 MB/s · ok. 10 s"
+    assert (shown["step"], shown["percent"]) == (1, 37)
+    full = desktop_app.describe_progress({**report, "kind": "full", "done": 33_000_000}, now=106.0)
+    assert (full["label"], full["rate"]) == ("Pobieranie pełnego wydania: 33,0 z 33,0 MB", "5,5 MB/s")
+    slow = desktop_app.describe_progress({**report, "done": 1_000_000}, now=106.0)
+    assert slow["rate"] == "0,2 MB/s · ok. 3 min 12 s"
+
+
+def test_extract_and_install_progress_count_files_and_bad_reports_are_ignored(tmp_path):
+    shown = desktop_app.describe_progress({"stage": "apply", "done": 5, "total": 20, "started": 1}, now=2)
+    assert shown == {"stage": "apply", "step": 3, "steps": 3, "percent": 25, "label": "Instalowanie: 5 z 20 plików",
+                     "rate": ""}
+    for bad in ({}, {"stage": "x", "done": 1, "total": 2}, {"stage": "apply", "done": 1, "total": 0},
+                {"stage": "apply", "done": "?", "total": 2}):
+        assert desktop_app.describe_progress(bad, now=0) is None
+    path = tmp_path / "progress.json"
+    assert desktop_app.read_progress(path) is None
+    path.write_text('{"stage": "extract", "do', encoding="utf-8")  # caught mid-write
+    assert desktop_app.read_progress(path) is None
+    path.write_text(json.dumps({"stage": "extract", "done": 1, "total": 4, "started": 0}), encoding="utf-8")
+    assert desktop_app.read_progress(path, now=1)["label"] == "Rozpakowywanie: 1 z 4 plików"
+
+
+@run
+async def test_installing_shows_the_installers_progress_until_it_finishes(tmp_path):
+    launcher, host, session, window = await launcher_with_client(tmp_path, None)
+    feed = tmp_path / ".codex" / "updates" / "github"
+    feed.mkdir(parents=True)
+    watches = []
+    launcher.every = lambda seconds, callback: watches.append(callback) or Handle()
+    sha = "a" * 40
+
+    async def check_release(root, args):
+        if args[0] == "install":
+            (feed / "progress.json").write_text(json.dumps(
+                {"stage": "download", "done": 5, "total": 10, "kind": "full", "started": 0}), encoding="utf-8")
+            await watches[-1]()
+            assert launcher.view["progress"]["percent"] == 50
+            assert launcher.view["text"] == "Aktualizacja do v9.9.9"
+            return {"state": "current", "message": "", "installed": None}
+        return {"state": "available", "source": "github", "pending": sha, "pending_label": "v9.9.9", "message": ""}
+    host.check_release = check_release
+    host.valid_sha = lambda value: True
+    await launcher.check(install=sha)
+    assert launcher.view["progress"] is None

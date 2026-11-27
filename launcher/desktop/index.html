@@ -23,7 +23,9 @@
       <div class="surge"></div>
     </div>
   </div><div class="mist"></div><div class="sweep"></div><div class="sweep second"></div>
-  <header class="titlebar"><span class="appname"><i class="mark"></i>DBVictory Launcher</span></header>
+  <header class="titlebar"><span class="appname"><i class="mark"></i>DBVictory Launcher</span>
+    <div class="tools"><span class="ai-chip" id="aiChip" hidden><i aria-hidden="true"></i><span id="aiSummary"></span></span>
+      <button type="button" class="gear" id="aiOpen" aria-haspopup="dialog" aria-label="Ustawienia: integracja AI" title="Ustawienia"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4z"/><circle cx="12" cy="12" r="3"/></svg></button></div></header>
   <section class="hero"><h1 class="word">DBVICTORY</h1><span class="ver" id="version">Sprawdzanie wersji…</span></section>
   <div class="cards">
     <section class="glass notes-card"><h2>Ostatnie zmiany</h2><ul class="change-list" id="changes"></ul><p class="hint" id="emptyNotes">Wczytywanie historii…</p><button type="button" class="more" id="more" aria-haspopup="dialog" hidden>Więcej <span aria-hidden="true">↗</span></button></section>
@@ -32,12 +34,12 @@
       <div id="folderRow" class="pathrow" hidden><span class="folder" aria-hidden="true"></span><span id="folderPath"></span><button class="edit" id="folderEdit">Zmień</button></div>
       <div class="bar" id="progress" hidden><div class="fill"></div></div>
       <ul class="steps" id="steps"></ul>
-      <div class="launchzone"><p class="hint" id="detail"></p><div class="actions"><button class="edit" id="secondary" hidden></button><button class="primary" id="primary" hidden></button></div></div>
+      <div class="launchzone"><p class="hint" id="detail"></p><div class="actions"><button class="ghost" id="secondary" hidden></button><button class="primary" id="primary" hidden></button></div></div>
     </section>
   </div></main>
-  <button type="button" class="edit ai-open" id="aiOpen" aria-haspopup="dialog">Integracja AI: <span id="aiSummary">…</span></button>
-  <dialog id="ai" aria-labelledby="aiTitle"><div class="history-head"><h2 id="aiTitle">Integracja AI (MCP)</h2><button type="button" id="closeAi" aria-label="Zamknij ustawienia integracji">×</button></div>
-    <p class="ai-note">Opcjonalne. Bot działa bez tego. Połącz program tylko, jeśli chcesz sterować botem przez Codex lub Claude. Połączenie dopisuje wpis „dbvictory-bot” do konfiguracji tego programu, a odłączenie go usuwa.</p>
-    <ul id="aiTargets"></ul><p class="hint" id="aiMessage" aria-live="polite"></p></dialog>
-  <dialog id="history" aria-labelledby="historyTitle"><div class="history-head"><h2 id="historyTitle">Historia zmian</h2><button type="button" id="closeHistory" aria-label="Zamknij historię zmian" autofocus>×</button></div><div id="releases"></div></dialog>
+  <dialog id="ai" aria-labelledby="aiTitle"><div class="ai-head"><div><h2 id="aiTitle">Integracje AI</h2><p>Steruj botem rozmową z asystentem AI (MCP).</p></div><button type="button" class="close" id="closeAi" aria-label="Zamknij ustawienia integracji">×</button></div>
+    <ul id="aiTargets"></ul>
+    <p class="ai-note">Opcjonalne: bot działa bez tego. Możesz połączyć kilka programów naraz. Połączenie dopisuje wpis „dbvictory-bot” do konfiguracji wybranego programu, a odłączenie go usuwa.</p>
+    <p class="ai-message" id="aiMessage" aria-live="polite"></p></dialog>
+  <dialog id="history" aria-labelledby="historyTitle"><div class="history-head"><h2 id="historyTitle">Historia zmian</h2><button type="button" class="close" id="closeHistory" aria-label="Zamknij historię zmian" autofocus>×</button></div><div id="releases"></div></dialog>
   </body></html>

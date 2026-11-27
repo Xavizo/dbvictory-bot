@@ -31,6 +31,55 @@ def settings_file():
     return Path(base) / "DBVictory Launcher" / "client.json"  # the Electron launcher's file: choices carry over
 
 
+STAGES = {"download": "Pobieranie", "extract": "Rozpakowywanie", "apply": "Instalowanie"}
+
+
+def _megabytes(n):
+    return f"{n / 1e6:.1f}".replace(".", ",")
+
+
+def _duration(seconds):
+    seconds = max(1, round(seconds))
+    return f"{seconds} s" if seconds < 60 else f"{seconds // 60} min {seconds % 60:02d} s"
+
+
+def describe_progress(report, now):
+    """The bar and label for github_release's progress.json, or None for an unreadable report.
+
+    Downloads show megabytes, speed and an estimate; extracting and installing show files.
+    """
+    try:
+        stage, done, total = report["stage"], int(report["done"]), int(report["total"])
+        started = float(report.get("started") or now)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if stage not in STAGES or total <= 0:
+        return None
+    done = min(max(done, 0), total)
+    elapsed, rate = max(now - started, 0.0), ""
+    if stage == "download":
+        what = "łatki" if report.get("kind") == "patch" else "pełnego wydania"
+        label = f"Pobieranie {what}: {_megabytes(done)} z {_megabytes(total)} MB"
+        if elapsed >= 1 and done:
+            speed = done / elapsed
+            rate = f"{_megabytes(speed)} MB/s"
+            if done < total:
+                rate += f" · ok. {_duration((total - done) / speed)}"
+    else:
+        label = f"{STAGES[stage]}: {done} z {total} plików"
+    step = {"download": 1, "extract": 2, "apply": 3}[stage]
+    return {"stage": stage, "step": step, "steps": 3, "percent": round(100 * done / total), "label": label,
+            "rate": rate}
+
+
+def read_progress(path, now=None):
+    try:
+        report = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None  # missing, or caught mid-write
+    return describe_progress(report, time.time() if now is None else now) if isinstance(report, dict) else None
+
+
 def pid_alive(pid):
     if os.name != "nt":
         try:
@@ -92,7 +141,7 @@ class Launcher:
 
     def set(self, phase, text, **extra):
         self.view = {**self.view, "phase": phase, "text": text, "canDefer": False, "canInstall": False,
-                     "clientOutdated": False, "failedStep": None, **extra}
+                     "clientOutdated": False, "failedStep": None, "progress": None, **extra}
         self.window.send(self.view)
 
     def reveal(self):
@@ -143,9 +192,13 @@ class Launcher:
             report = await self.host.check_release(self.root, ["defer", defer])
         elif (not self.read_only and install and github and report["state"] == "available"
               and install == report.get("pending") and self.host.valid_sha(install)):
-            self.set("applying", "Pobieranie i instalowanie aktualizacji z GitHuba… To może potrwać kilka minut.",
-                     version=report.get("installed_label"))
-            report = await self.host.check_release(self.root, ["install", install])
+            label = report.get("pending_label") or "nowej wersji"
+            self.set("applying", f"Przygotowywanie aktualizacji do {label}…", version=report.get("installed_label"))
+            watch = self.every(0.5, lambda: self._show_install_progress(label))
+            try:
+                report = await self.host.check_release(self.root, ["install", install])
+            finally:
+                watch.cancel()
             if report["state"] == "updated" and report.get("restart"):
                 self.set("applying", "Zainstalowano aktualizację. Ponowne uruchamianie launchera…")
                 await asyncio.sleep(0.9)
@@ -182,6 +235,11 @@ class Launcher:
                       if report["state"] == "busy" and report.get("pending_label") else "")
             state = report["state"] if report["state"] in ("busy", "available", "recovery") else "problem"
             self.set(state, report["message"] + queued, **extra)
+
+    async def _show_install_progress(self, label):
+        progress = read_progress(self.root / ".codex" / "updates" / "github" / "progress.json")
+        if progress and self.view["phase"] == "applying" and progress != self.view.get("progress"):
+            self.set("applying", f"Aktualizacja do {label}", progress=progress)
 
     # ── engine session ────────────────────────────────────────────────
     def start_deadline(self, proc):
