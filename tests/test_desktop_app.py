@@ -385,3 +385,52 @@ def test_the_bot_runs_under_its_own_executables_when_the_release_ships_them(tmp_
     assert desktop_host.python_exe(tmp_path) == scripts / "python.exe"
     (scripts / "DBVictory Engine.exe").write_text("")
     assert desktop_host.python_exe(tmp_path) == scripts / "DBVictory Engine.exe"
+
+
+def test_a_test_build_still_gets_its_release_notes(tmp_path):
+    directory = tmp_path / "launcher" / "desktop"
+    directory.mkdir(parents=True)
+    notes = [{"version": v, "changes": [{"title": "Zmiana", "detail": "Opis"}]} for v in ("v1.10.0", "v1.9.0")]
+    (directory / "release-notes.json").write_text(json.dumps(notes), encoding="utf-8")
+    assert desktop_host.history(tmp_path, "v1.9.0-test.abcdef0 (abcdef0)") == notes[1:]
+
+
+class ChannelHost(FakeHost):
+    def __init__(self):
+        super().__init__(17)
+        self.channel, self.checks = "stable", 0
+
+    async def check_release(self, root, args):
+        self.checks += 1
+        return {"state": "current", "message": "", "installed": None, "source": "github", "channel": self.channel}
+
+    async def set_channel(self, root, channel):
+        self.channel = channel
+        return {"channel": channel}
+
+
+@run
+async def test_switching_to_test_builds_saves_the_channel_and_checks_again(tmp_path):
+    host, window = ChannelHost(), FakeWindow()
+    launcher = desktop_app.Launcher(tmp_path, host, window, settings=tmp_path / "client.json",
+                                    loop=asyncio.get_running_loop())
+    launcher.call_later = lambda seconds, callback: Handle()
+    launcher.prepare_prompt = lambda: asyncio.sleep(0)
+    await launcher.action("retry")
+    assert launcher.view["channel"] == "stable"
+    checks = host.checks
+    launcher.view = {**launcher.view, "phase": "ready"}
+    assert await launcher.set_channel("test") == {"channel": "test"}
+    assert host.channel == "test" and host.checks > checks and launcher.view["channel"] == "test"
+
+
+@run
+async def test_a_git_checkout_has_no_update_channel(tmp_path):
+    host, window = FakeHost(17), FakeWindow()
+    launcher = desktop_app.Launcher(tmp_path, host, window, settings=tmp_path / "client.json",
+                                    loop=asyncio.get_running_loop())
+    launcher.prepare_prompt = lambda: asyncio.sleep(0)
+    await launcher.action("retry")
+    assert launcher.view["channel"] is None
+    with pytest.raises(PermissionError):
+        await launcher.set_channel("test")

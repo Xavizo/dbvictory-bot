@@ -40,6 +40,9 @@
   <dialog id="ai" aria-labelledby="aiTitle"><div class="ai-head"><div><h2 id="aiTitle">Integracje AI</h2><p>Steruj botem rozmową z asystentem AI (MCP).</p></div><button type="button" class="close" id="closeAi" aria-label="Zamknij ustawienia integracji">×</button></div>
     <ul id="aiTargets"></ul>
     <p class="ai-note">Opcjonalne: bot działa bez tego. Możesz połączyć kilka programów naraz. Połączenie dopisuje wpis „dbvictory-bot” do konfiguracji wybranego programu, a odłączenie go usuwa.</p>
-    <p class="ai-message" id="aiMessage" aria-live="polite"></p></dialog>
+    <p class="ai-message" id="aiMessage" aria-live="polite"></p>
+    <section class="channel" id="channelRow" hidden><label><input type="checkbox" id="testChannel"> <strong>Wersje testowe</strong></label>
+      <p class="ai-note">Launcher zaproponuje też najnowszą wersję testową z GitHuba (niedokończone zmiany do sprawdzenia przed wydaniem). Po wyłączeniu wrócisz do zwykłego wydania przy następnej aktualizacji.</p>
+      <p class="ai-message" id="channelMessage" aria-live="polite"></p></section></dialog>
   <dialog id="history" aria-labelledby="historyTitle"><div class="history-head"><h2 id="historyTitle">Historia zmian</h2><button type="button" class="close" id="closeHistory" aria-label="Zamknij historię zmian" autofocus>×</button></div><div id="releases"></div></dialog>
   </body></html>

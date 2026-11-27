@@ -10,7 +10,10 @@ import subprocess
 
 # Commit of the published v1.0.0 tag. Local release bundles omit tag refs.
 V1_COMMIT = "c319808d8c260e240f6704fd2038c5340e8086ce"
-VERSION_PATTERN = r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+VERSION_PATTERN = r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-test\.[0-9a-f]{7})?"
+# A test build of a branch: its version plus "-test." and the commit's first seven hex digits.
+# Published only as a GitHub pre-release, which players on the default channel never see.
+TEST_SUFFIX = r"-test\.[0-9a-f]{7}"
 
 
 def git_executable():
