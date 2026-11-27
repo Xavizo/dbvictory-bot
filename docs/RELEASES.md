@@ -42,7 +42,8 @@ committed `HEAD`:
 | `venv\Scripts\` | relocatable CPython 3.12 with `requirements.txt` installed (laid out where a venv's interpreter would be, so every existing path works). It also runs the launcher's and the panel's windows: pywebview on Windows' own WebView2 |
 | `dashboard\.next` | the panel, prebuilt; the engine serves it on `127.0.0.1:4747` with [`dbv/mcp_server/panel_server.py`](../dbv/mcp_server/panel_server.py) |
 | `dll\*.dll` | observer DLLs for every reviewed client build (32-bit MinGW) |
-| `DBVictory Launcher.exe` | the launcher |
+| `DBVictory.exe` | the launcher players start; `DBVictory Launcher.exe` is the same program under its old name, for shortcuts and for older launchers, which restart under that name after an update |
+| `venv\Scripts\DBVictory.exe`, `venv\Scripts\DBVictory Engine.exe` | `pythonw.exe` and `python.exe` with the bot's icon ([`tools/brand_exe.py`](../tools/brand_exe.py)), so Task Manager and the taskbar show the bot: the launcher and panel windows run on the first, the engine on the second |
 | `release.json` | version, commit, repository |
 | `release-manifest.json` | SHA-256 and size of every file above |
 

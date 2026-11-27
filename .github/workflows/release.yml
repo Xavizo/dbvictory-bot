@@ -19,6 +19,7 @@ on:
       - "tools/release_package.py"
       - "tools/release_trim.py"
       - "tools/release_previous.py"
+      - "tools/brand_exe.py"
       - "dbv/mcp_server/panel_server.py"
       - "dbv/mcp_server/panel_window.py"
       - "dbv/mcp_server/panel_alerts.py"

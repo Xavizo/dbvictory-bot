@@ -60,7 +60,7 @@ def notes(stage, version):
     if entry:
         lines += [f"- **{c['title']}** {c['detail']}" for c in entry.get("changes", [])]
     lines += ["", "Pobierz `DBVictory-Bot-" + version + ".zip`, rozpakuj do krótkiej ścieżki (np. `C:\\DBVictory-Bot`) "
-              "i uruchom `DBVictory Launcher.exe`. Instrukcja: README → Instalacja dla graczy."]
+              "i uruchom `DBVictory.exe`. Instrukcja: README → Instalacja dla graczy."]
     return "\n".join(lines) + "\n"
 
 
@@ -104,7 +104,8 @@ def main():
         raise SystemExit("Bad version or revision")
     if os.name == "nt":
         stage = Path("\\\\?\\" + str(stage))  # long paths can pass 260 characters
-    for required in ("DBVictory Launcher.exe", "venv/Scripts/python.exe", "venv/Scripts/pythonw.exe",
+    for required in ("DBVictory.exe", "DBVictory Launcher.exe", "venv/Scripts/DBVictory.exe",
+                     "venv/Scripts/DBVictory Engine.exe", "venv/Scripts/python.exe", "venv/Scripts/pythonw.exe",
                      "launcher/desktop_app.py", "dbv/mcp_server/panel_server.py", "dbv/mcp_server/panel_window.py",
                      "dashboard/.next/BUILD_ID", "venv/Scripts/Lib/site-packages/webview/__init__.py"):
         if not (stage / required).is_file():

@@ -3,8 +3,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 
-// DBVictory Launcher.exe: starts the launcher window (launcher/desktop_app.py) with
-// the installation's own Python. The window is pywebview on Windows' WebView2.
+// DBVictory.exe (and DBVictory Launcher.exe, its old name, kept for shortcuts and for
+// launchers that restart under that name after an update): starts the launcher window
+// (launcher/desktop_app.py) with the installation's own Python, as venv\Scripts\DBVictory.exe,
+// pythonw with the bot's icon, so Task Manager and the taskbar show the bot.
 internal static class Desktop
 {
     [STAThread]
@@ -12,7 +14,8 @@ internal static class Desktop
     {
         if (args.Length > 1 || (args.Length == 1 && args[0] != "--check")) return 2;
         string root = AppDomain.CurrentDomain.BaseDirectory;
-        string python = Path.Combine(root, @"venv\Scripts\pythonw.exe");
+        string python = Path.Combine(root, @"venv\Scripts\DBVictory.exe");
+        if (!File.Exists(python)) python = Path.Combine(root, @"venv\Scripts\pythonw.exe");
         string entry = Path.Combine(root, @"launcher\desktop_app.py");
         try
         {

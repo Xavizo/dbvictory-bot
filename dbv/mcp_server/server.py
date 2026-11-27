@@ -863,8 +863,9 @@ def _panel_window_command() -> list[str] | None:
     if importlib.util.find_spec("webview") is None:
         return None
     python = Path(sys.executable)
-    windowed = python.with_name("pythonw.exe")
-    return [str(windowed if windowed.is_file() else python), "-B", "-m", "dbv.mcp_server.panel_window"]
+    # pythonw, as DBVictory.exe (the bot's name and icon) when the release ships it.
+    windowed = next((p for p in (python.with_name("DBVictory.exe"), python.with_name("pythonw.exe")) if p.is_file()), python)
+    return [str(windowed), "-B", "-m", "dbv.mcp_server.panel_window"]
 
 
 atexit.register(_stop_dashboard)
