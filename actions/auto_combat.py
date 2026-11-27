@@ -8,6 +8,7 @@ The target is the one chosen by target selection (``game_state.attack_target``)
 or, without it, the last monster the player clicked in the client. Nothing is
 cast while the cavebot is luring.
 """
+import itertools
 import time
 
 from dbv.client_bridge.constants import ITEM_RUNE_3165, MONSTER_ID_MIN
@@ -52,11 +53,11 @@ def choose(gs, clicked, now):
 
 async def run(bot):
     state = bot.state
-    proxy = state.game_proxy
+    proxy = state.game_proxy  # the relay this run listens on
     clicked = [None]  # last attack the player sent from the client
 
     def on_client_packet(opcode, reader):
-        if opcode == ClientOpcode.ATTACK:
+        if ClientOpcode.ATTACK == opcode:
             try:
                 clicked[0] = reader.read_u32() or None
             except Exception:
@@ -66,9 +67,9 @@ async def run(bot):
     bot.log("[COMBAT] Start: obszarowy > czar > runa")
     paused = False
     try:
-        while True:
+        for _ in itertools.count():   # until the action is stopped
             gs = state.game_state
-            if bot.is_connected and state.game_proxy:
+            if state.game_proxy and bot.is_connected:
                 if gs.lure_active != paused:
                     paused = gs.lure_active
                     bot.log("[COMBAT] Cavebot prowadzi potwory, walka wstrzymana" if paused

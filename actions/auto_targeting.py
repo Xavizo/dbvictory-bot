@@ -71,5 +71,5 @@ async def run(bot):
         proxy = state.game_proxy
         if now - sent_at >= REPEAT_EVERY and proxy is not None and proxy.logged_in:
             sent_at = now
-            await bot.inject_to_server(build_attack_packet(target))
+            await bot.inject_to_server(build_attack_packet(creature_id=target))
         _publish(gs, target)

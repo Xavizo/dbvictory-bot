@@ -17,7 +17,7 @@ _OTCLIENT_P = int(
 _OTCLIENT_Q = int(
     "76309791959704047218912018477920021255354012927791239372074475745966927885136471792353355293"
     "07251350570728407373705564708871762033017096809910315212884101")
-DEFAULT_RSA_E = 65537
+DEFAULT_RSA_E = 0x10001  # the usual public exponent
 DEFAULT_RSA_N = _OTCLIENT_P * _OTCLIENT_Q
 DEFAULT_RSA_D = pow(DEFAULT_RSA_E, -1, (_OTCLIENT_P - 1) * (_OTCLIENT_Q - 1))
 
@@ -28,13 +28,14 @@ _ROUNDS = 32
 _SUMS = [(_DELTA * i) & _MASK for i in range(_ROUNDS + 1)]
 
 
-def generate_proxy_rsa_keypair():
+def generate_proxy_rsa_keypair(bits=1024):
     """A fresh 1024-bit key; the patched client encrypts its login block to it."""
-    return RSA.generate(1024)
+    return RSA.generate(bits)
 
 
-def get_default_rsa_key():
-    return RSA.construct((DEFAULT_RSA_N, DEFAULT_RSA_E, DEFAULT_RSA_D))
+def get_default_rsa_key() -> RSA.RsaKey:
+    """The OTClient key pair; its private half is public knowledge."""
+    return RSA.construct(rsa_components=(DEFAULT_RSA_N, DEFAULT_RSA_E, DEFAULT_RSA_D))
 
 
 def _raw_rsa(block: bytes, exponent: int, modulus: int) -> bytes:
@@ -84,5 +85,6 @@ def xtea_decrypt(data: bytes, key) -> bytes:
     return bytes(out)
 
 
-def adler32_checksum(data: bytes) -> int:
+def adler32_checksum(data):
+    """The unsigned Adler-32 of a frame body (the first field of every game frame)."""
     return zlib.adler32(data) & _MASK
