@@ -10,7 +10,7 @@
 #   -MinGwBin   folder with 32-bit g++.exe for the DLLs
 param(
     [string]$OutDir = "build\release",
-    [string]$Repo = "Xavizo/tibia-ots-mcp-bot",
+    [string]$Repo = "Xavizo/dbvictory-bot",
     [string]$PythonVersion = "3.12",
     [string]$PythonDir,
     [string]$NodeDir,

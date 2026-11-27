@@ -25,7 +25,7 @@ import zipfile
 from dbv_revision import RELEASE_FILE, read_release, revision_label
 
 MANIFEST_FILE = "release-manifest.json"
-DEFAULT_REPO = "Xavizo/tibia-ots-mcp-bot"
+DEFAULT_REPO = "Xavizo/dbvictory-bot"
 PACKAGE_ROOT = "DBVictory-Bot"
 ASSET_PATTERN = r"DBVictory-Bot-v\d+\.\d+\.\d+\.zip"
 USER_AGENT = "DBVictory-Launcher"
