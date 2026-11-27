@@ -25,9 +25,9 @@ PYTHON_DROPPED = (
     "Lib/site-packages/PyWin32.chm", "Lib/site-packages/pythonwin",
     "Scripts/pip*.exe", "Scripts/idle*", "Scripts/pywin32_postinstall*", "Scripts/pywin32_testall*",
     "DLLs/_tkinter.pyd", "DLLs/tcl86t.dll", "DLLs/tk86t.dll", "tcl", "include", "libs",
-    # pywebview's Android bridge and the WebView2 loaders of other architectures.
-    "Lib/site-packages/webview/lib/pywebview-android.jar", "Lib/site-packages/webview/lib/WebBrowserInterop.x86.dll",
-    "Lib/site-packages/webview/lib/runtimes/win-arm64", "Lib/site-packages/webview/lib/runtimes/win-x86",
+    # pywebview's Android bridge. Its WebView2 loaders stay for every architecture:
+    # the EdgeChromium backend resolves all three on import.
+    "Lib/site-packages/webview/lib/pywebview-android.jar",
 )
 # Program files from `git archive` that only developers use. docs/vbot stays: MCP serves it.
 SOURCE_DROPPED = ("tests", "docs/screenshots", "requirements-dev.txt", "dashboard/electron/*.test.js",

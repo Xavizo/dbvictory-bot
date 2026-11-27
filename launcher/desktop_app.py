@@ -542,8 +542,9 @@ class WebviewWindow:
             self.window.show()
 
     def hide(self):
+        # Never wait here: the closing handler holds the UI thread, and hide() marshals onto it.
         if self.window is not None:
-            self.window.hide()
+            threading.Thread(target=self.window.hide, daemon=True).start()
 
     def current_url_is(self, page):
         return self.window is not None and is_page_url(self.window.get_current_url(), page)
@@ -557,6 +558,7 @@ class WebviewWindow:
 
     def relaunch(self, exe):
         import subprocess
+        _release_single_instance()  # the new launcher must not find this one still running
         if Path(exe).is_file():
             subprocess.Popen([str(exe)], cwd=str(Path(exe).parent),
                              creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
@@ -573,6 +575,8 @@ def _single_instance():
         return True
     import ctypes
     kernel, user = ctypes.windll.kernel32, ctypes.windll.user32
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
     _single_instance.mutex = kernel.CreateMutexW(None, False, "Local\\DBVictoryLauncher")
     if kernel.GetLastError() != 183:  # ERROR_ALREADY_EXISTS
         return True
@@ -581,6 +585,14 @@ def _single_instance():
         user.ShowWindow(hwnd, 9)  # SW_RESTORE
         user.SetForegroundWindow(hwnd)
     return False
+
+
+def _release_single_instance():
+    mutex = getattr(_single_instance, "mutex", None)
+    if mutex and os.name == "nt":
+        import ctypes
+        ctypes.windll.kernel32.CloseHandle(mutex)
+    _single_instance.mutex = None
 
 
 def main(argv=None):
@@ -602,7 +614,10 @@ def main(argv=None):
     frame.window = window
 
     def closing():
-        return asyncio.run_coroutine_threadsafe(_on_close(launcher), loop).result(5)
+        try:
+            return asyncio.run_coroutine_threadsafe(_on_close(launcher), loop).result(5)
+        except Exception:
+            return False  # undecided: keep the window and the session it supervises
 
     def loaded():
         if not is_page_url(window.get_current_url(), page):

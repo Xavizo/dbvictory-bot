@@ -108,7 +108,7 @@ Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_trim.py"), $S
 Invoke-Checked $Python @("-c", "import mcp, Crypto, websockets, pymem, ssl, sqlite3, ctypes, win32api, win32job; from mcp.os.win32 import utilities; print('Trimmed Python OK')")
 # The windows: pywebview drives WebView2 through pythonnet; the tray is a WinForms NotifyIcon.
 Push-Location $Stage  # imports the staged launcher and panel modules
-try { Invoke-Checked $Python @("-c", "import clr, webview, win32clipboard, pathlib; clr.AddReference('System.Windows.Forms'); assert (pathlib.Path(webview.__file__).parent / 'lib' / 'Microsoft.Web.WebView2.Core.dll').is_file(); import launcher.desktop_app, dbv.mcp_server.panel_window; print('Windows OK')") } finally { Pop-Location }
+try { Invoke-Checked $Python @("-c", "import clr, webview, win32clipboard, pathlib; clr.AddReference('System.Windows.Forms'); assert (pathlib.Path(webview.__file__).parent / 'lib' / 'Microsoft.Web.WebView2.Core.dll').is_file(); import webview.platforms.edgechromium, launcher.desktop_app, dbv.mcp_server.panel_window; print('Windows OK')") } finally { Pop-Location }
 # The engine serves the panel with dbv.mcp_server.panel_server; it only reads .next.
 $panel = Start-Process -FilePath $Python -ArgumentList "-m", "dbv.mcp_server.panel_server", (Join-Path $Stage "dashboard") -WorkingDirectory $Stage -PassThru -WindowStyle Hidden
 try {
