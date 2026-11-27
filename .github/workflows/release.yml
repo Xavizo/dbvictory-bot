@@ -9,9 +9,17 @@
 # players' launchers ignore it, master's version numbers are unaffected, and only a
 # launcher with "Wersje testowe" switched on offers it. A new test build of a branch
 # replaces that branch's previous one; "Delete test builds" removes them.
+#
+# develop: every push publishes a test build by itself, so what is merged into develop
+# can be tried from the launcher before develop is merged into master and released.
 name: Release
 
 on:
+  push:
+    branches: [develop]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   workflow_dispatch:
     inputs:
       publish:
@@ -40,7 +48,8 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer push to develop supersedes the build in progress; anything else runs to the end.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   build:
@@ -102,7 +111,7 @@ jobs:
 
   publish:
     needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    if: (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.ref == 'refs/heads/develop')
     runs-on: ubuntu-latest
     permissions:
       contents: write

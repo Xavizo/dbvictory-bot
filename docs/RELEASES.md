@@ -31,6 +31,30 @@ The repository must be **public** so players can download without a GitHub
 account. A fork publishes to its own Releases page: the workflow writes the
 fork's `owner/name` into `release.json`, and the fork's packages update from it.
 
+## Test builds and `develop`
+
+Day-to-day work lands on `develop`; `master` only receives what was tested.
+
+1. Open pull requests against `develop` and merge them there.
+2. Every push to `develop` builds and publishes a **test build**: a GitHub
+   pre-release `vX.Y.Z-test.<commit>` titled `Test build … (develop)`. It
+   replaces develop's previous test build. A newer push cancels a build still
+   running.
+3. To try it, tick **⚙ → Wersje testowe** in the launcher. The launcher then
+   offers whichever was published last, the latest release or the newest test
+   build. Players without the switch never see test builds: GitHub never marks
+   a pre-release "latest", and master's versions and patches ignore them.
+4. When `develop` is good, open a pull request from `develop` to `master`,
+   merge it (a normal merge, not squash, so the version history stays the same),
+   and publish a release as above.
+5. Untick **Wersje testowe** to go back to regular releases; a test build is
+   then replaced by the latest release even if its version number is lower.
+
+A single pull request can be tried before it reaches `develop`: run
+**Actions → Release → Run workflow** on its branch (the branch must contain
+this workflow). Test builds of a pull request's branch are deleted when it
+closes; **Actions → Delete test builds** removes others by hand.
+
 ## What the package contains
 
 Built by [`scripts/build-release.ps1`](../scripts/build-release.ps1) from the
