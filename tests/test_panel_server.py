@@ -92,3 +92,23 @@ def test_rebinding_hosts_and_writes_are_refused(served):
 def test_ready_needs_a_build(tmp_path, dashboard):
     assert panel_server.ready(dashboard)
     assert not panel_server.ready(tmp_path / "elsewhere")
+
+
+def test_the_shipped_spell_catalogue_stands_in_for_a_missing_local_export(dashboard):
+    (dashboard / "spells").mkdir()
+    (dashboard / "spells" / "catalog.json").write_text('{"spells": []}')
+    shipped = panel_server.resolve(dashboard, "/local-spells/catalog.json")
+    assert shipped[0] == (dashboard / "spells" / "catalog.json").resolve()
+    assert panel_server.resolve(dashboard, "/spells/catalog.json") is None  # only through the catalogue path
+    local = dashboard / "public" / "local-spells" / "catalog.json"
+    local.write_text('{"spells": [1]}')
+    assert panel_server.resolve(dashboard, "/local-spells/catalog.json")[0] == local.resolve()
+
+
+def test_the_repository_ships_a_valid_spell_catalogue():
+    from dbv import paths
+    rows = json.loads(paths.SHIPPED_SPELL_CATALOG.read_text(encoding="utf-8"))["spells"]
+    assert len(rows) > 200
+    words = {row["words"] for row in rows}
+    assert len(words) == len(rows) and "darkness blaster" in words
+    assert all(row["icon"] is None or row["icon"].startswith("/local-spells/icons/") for row in rows)

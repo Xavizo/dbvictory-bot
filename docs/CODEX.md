@@ -1671,7 +1671,9 @@ its catalogue value. Client metadata is a starting value, not verified server CD
 Selection edits configuration only; it does not save, enable combat or start V2.
 
 `dashboard/public/local-spells/catalog.json` and `icons/<item-id>.png` are local client
-assets ignored by Git. The catalogue has a `spells` array with id, name, words,
+assets ignored by Git. Without a local export, the engine and the panel use the
+text-only catalogue shipped in `dashboard/spells/catalog.json` (same format, no
+graphics; icons fall back to a symbol). The catalogue has a `spells` array with id, name, words,
 description, category, icon, cooldown_client_ms, level, ki, ki_percent, aggressive
 and unavailable fields. Icon URLs must be null or `/local-spells/icons/<item-id>.png`.
 Parameter-dependent spells and tool entries are visible but cannot be selected.

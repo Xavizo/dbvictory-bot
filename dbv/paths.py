@@ -16,7 +16,10 @@ RECORDINGS_DIR = INSTALL_ROOT / "recordings"
 CODEX_DIR = INSTALL_ROOT / ".codex"
 RUNTIME_DIR = CODEX_DIR / "runtime"
 JOURNAL_DIR = CODEX_DIR / "journal"
-SPELL_CATALOG = INSTALL_ROOT / "dashboard" / "public" / "local-spells" / "catalog.json"
+# A catalogue exported from the player's own client wins over the one shipped with the bot.
+LOCAL_SPELL_CATALOG = INSTALL_ROOT / "dashboard" / "public" / "local-spells" / "catalog.json"
+SHIPPED_SPELL_CATALOG = INSTALL_ROOT / "dashboard" / "spells" / "catalog.json"
+SPELL_CATALOG = LOCAL_SPELL_CATALOG if LOCAL_SPELL_CATALOG.is_file() else SHIPPED_SPELL_CATALOG
 
 # Program files that stay at the root.
 ACTIONS_DIR = INSTALL_ROOT / "actions"
