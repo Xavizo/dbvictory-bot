@@ -143,7 +143,9 @@ class ObserverPipe:
         newest = None
         for raw in reversed(lines):
             try:
-                message = json.loads(raw)
+                # Names come from the client's memory and need not be UTF-8; one odd
+                # byte must not hide the whole snapshot.
+                message = json.loads(raw.decode("utf-8", errors="replace"))
             except ValueError:
                 continue
             if isinstance(message, dict) and isinstance(message.get("creatures"), list):
