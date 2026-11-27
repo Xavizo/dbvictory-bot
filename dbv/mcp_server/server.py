@@ -7,6 +7,7 @@ same process runs the login and game proxies, the action scripts in
 import asyncio
 import atexit
 import collections
+import functools
 from datetime import datetime
 import importlib
 import importlib.util
@@ -94,41 +95,50 @@ class BotState:
     """Everything this process knows: proxies, the game session, actions and their settings."""
 
     def __init__(self):
-        self.local_transport = LocalTransportControl()
-        self.login_proxy = self.game_proxy = None
-        self.packet_observer = None
+        from dbv.brain.combat.hunter_knife import CorpseSuggestions
+        from dbv.brain.combat.speed_up import SpeedScheduler
+        from dbv.brain.profiles import ProfileStore
+        from dbv.brain.state.game_alerts import AlertCenter
+        from dbv.brain.state.item_identification import ItemIdentification
         from dbv.brain.state.session_journal import SessionJournal
+
+        # Services that live as long as this process.
+        self.local_transport = LocalTransportControl()
         self.packet_journal = SessionJournal()
         self.observer_bridge = None
-        self.ready = False           # a character is logged in through the game proxy
-        self._auto_task = None
+        self.packet_observer = None
         self.login_startup = LoginStartup()
         self._proxy_tasks = []
-        self.settings = load_settings()
-        self.automation_paused = bool(self.settings.get("automation_paused", False))
-        self.automation_pause_kind = self.settings.get("automation_pause_kind", "emergency") if self.automation_paused else None
-        self._stopping_tasks = []
         self._emergency_stopping = False
+        self._adaptive_prepare_token = None
         self.band_scheduler = BandScheduler()
         self.barrier_scheduler = None
-        from dbv.brain.combat.speed_up import SpeedScheduler
         self.speed_scheduler = SpeedScheduler()
         self.potion_scheduler = PotionScheduler()
         self.potion_diagnostics = PotionDiagnostics()
-        from dbv.brain.combat.hunter_knife import CorpseSuggestions
         self.knife_suggestions = CorpseSuggestions()
-        from dbv.brain.state.item_identification import ItemIdentification
-        self.item_identification = ItemIdentification(self.settings.get("item_identification", True) is not False)
-        self._action_tasks = {}         # name -> asyncio.Task
-        self._action_completed = set()  # actions whose run() returned normally
-        self._adaptive_prepare_token = None
-        self.game_state = GameState()
-        from dbv.brain.state.game_alerts import AlertCenter
-        self.alert_center = AlertCenter(self.settings.get("alerts"))
-        self.alert_center.set_automation_paused(self.automation_paused)
-        from dbv.brain.profiles import ProfileStore
         self.profile_store = ProfileStore()
+        self._action_completed = set()  # actions whose run() returned normally
         self.action_logs = {}           # name -> deque of "[HH:MM:SS] text"
+        self._action_tasks = {}         # name -> asyncio.Task
+        settings = load_settings()
+        self.alert_center = AlertCenter(settings.get("alerts"))
+        self.item_identification = ItemIdentification(settings.get("item_identification", True) is not False)
+        self.begin_session(GameState, settings)
+
+    def begin_session(self, game_state_class, settings: dict) -> None:
+        """Forget the previous game connection: proxies, parsed state, the recorder, the auto-walk."""
+        self.login_proxy = self.game_proxy = None
+        self.ready = False           # a character is logged in through the game proxy
+        self._auto_task = None
+        self._action_tasks.clear()
+        self._stopping_tasks = []
+        self.game_state = game_state_class()
+        self.settings = settings
+        paused = bool(settings.get("automation_paused", False))
+        self.automation_paused = paused
+        self.automation_pause_kind = settings.get("automation_pause_kind", "emergency") if paused else None
+        self.alert_center.set_automation_paused(paused)
         # Route recording (dbv.brain.cavebot.cavebot keeps the rest).
         self.recording_active, self.recording_name = False, ""
         self.recording_waypoints = []
@@ -137,7 +147,8 @@ class BotState:
 
     @property
     def connected(self) -> bool:
-        return bool(self.ready) and self.game_proxy is not None
+        """A character is in game and packets can be sent."""
+        return self.game_proxy is not None and bool(self.ready)
 
 
 state = BotState()
@@ -379,6 +390,10 @@ async def _run_action(name, module, ctx):
             state.settings.setdefault("actions", {}).setdefault(name, {})["enabled"] = False
 
 
+def _no_script(name: str) -> str:
+    return f"There is no actions/{name}.py."
+
+
 def _start_action(name: str) -> str | None:
     """Start actions/<name>.py's ``run(bot)`` as a task. Returns why not, or None once started."""
     if name == "adaptive_cavebot":
@@ -394,12 +409,12 @@ def _start_action(name: str) -> str | None:
             return str(exc)
     running = state._action_tasks.get(name)
     if running is not None and not running.done():
-        return f"'{name}' is already running."
+        return f"{name} is running already."
     module = _load_action_module(name)
     if module is None:
-        return f"actions/{name}.py not found."
+        return _no_script(name)
     if not asyncio.iscoroutinefunction(getattr(module, "run", None)):
-        return f"actions/{name}.py has no async def run(bot)."
+        return f"{name}: actions/{name}.py must define `async def run(bot)`."
     state._action_completed.discard(name)
     state._action_tasks[name] = asyncio.create_task(_run_action(name, module, BotContext(action_name=name)))
     return None
@@ -455,7 +470,7 @@ async def _async_toggle_action(name: str, enabled: bool) -> str:
     if enabled and name == "adaptive_cavebot":
         return "Error: V2 uruchamiaj przez Start zapisanej trasy."
     if name in INTERNAL_ACTIONS:
-        return f"Action '{name}' is an internal service and cannot be toggled."
+        return f"{name} is a built-in service; it always runs with the bot."
     if enabled:
         if state.automation_paused:
             return "Error: Emergency pause is active. Unlock it first."
@@ -465,14 +480,14 @@ async def _async_toggle_action(name: str, enabled: bool) -> str:
             except ValueError as exc:
                 return f"Error: {exc}"
     if not (ACTIONS_DIR / f"{name}.py").exists():
-        return f"actions/{name}.py not found."
+        return _no_script(name)
     state.settings.setdefault("actions", {}).setdefault(name, {})["enabled"] = enabled
     save_settings(state.settings)
     if not enabled:
         stopped = " and stopped" if _stop_action(name) else ""
         return f"Action '{name}' disabled{stopped}."
     if not state.connected:
-        return f"Action '{name}' enabled. It will auto-start when the bot connects."
+        return f"{name} is on and starts as soon as a character is in game."
     refusal = _start_action(name)
     return f"Enabled but failed to start: {refusal}" if refusal else f"Action '{name}' enabled and started."
 
@@ -742,7 +757,7 @@ async def _async_restart_action(name: str) -> str:
         except ValueError as exc:
             return f"Error: {exc}"
     if not (ACTIONS_DIR / f"{name}.py").exists():
-        return f"actions/{name}.py not found."
+        return _no_script(name)
     _stop_action(name)
     await asyncio.sleep(0.1)  # let the cancelled task unwind first
     refusal = _start_action(name)
@@ -1030,7 +1045,7 @@ async def _reset_bot() -> str:
     """Stop everything for this connection, reload the parser and recorder, and start clean."""
     from dbv.brain.state import game_state as _gs_mod
 
-    log.info("=== RESETTING BOT ===")
+    log.info("Resetting: stopping actions, proxies and the panel")
     pending_start = state.login_startup.cancel()
     if pending_start is not None:
         await asyncio.gather(pending_start, return_exceptions=True)
@@ -1059,23 +1074,10 @@ async def _reset_bot() -> str:
     globals().update(scan_packet=_gs_mod.scan_packet, parse_server_packet=_gs_mod.parse_server_packet)
     from dbv.brain.state.game_state import GameState
 
-    state.login_proxy = state.game_proxy = None
-    state.ready = False
-    state._auto_task = None
-    state._action_tasks.clear()
-    state.game_state = GameState()
-    state.settings = load_settings()
-    state.automation_paused = bool(state.settings.get("automation_paused", False))
-    state.alert_center.set_automation_paused(state.automation_paused)
-    state.automation_pause_kind = state.settings.get("automation_pause_kind","emergency") if state.automation_paused else None
-    state._stopping_tasks = []
-    state.recording_active, state.recording_name = False, ""
-    state.recording_waypoints = []
-    state.recording_start_pos, state.recording_start_time = (0, 0, 0), 0
-    state._recording_callback = None
+    state.begin_session(GameState, load_settings())
 
-    log.info("Bot reset complete.")
-    return "Bot reset. Call start_bot to reconnect."
+    log.info("Reset finished; the next start_bot connects again.")
+    return "Everything from the last connection is stopped. Call start_bot to connect again."
 
 
 def _close_game_connections(pid: int) -> int:
@@ -1112,7 +1114,7 @@ async def _redirect_client():
     try:
         import pymem
     except ImportError:
-        return "ERROR: pymem is not installed. Run: pip install pymem"
+        return "ERROR: the pymem package is missing from this installation (pip install pymem)."
     try:
         pm = pymem.Pymem("dbvStart.exe")
     except Exception as exc:
@@ -1131,7 +1133,7 @@ async def _redirect_client():
     finally:
         pm.close_process()
     if not patched:
-        log.warning("No IPs patched (client may already be patched). Continuing...")
+        log.warning("No server address was rewritten; the client probably points at the proxies already")
     return pid, patched
 
 
@@ -1201,7 +1203,7 @@ async def start_bot() -> str:
     client_profile, observer = compatible
 
     if state.ready or state.game_proxy or state.login_proxy:
-        log.info("Bot already running — auto-resetting...")
+        log.info("start_bot while running: resetting first")
         await _reset_bot()
     redirected = await _redirect_client()
     if isinstance(redirected, str):
@@ -1238,7 +1240,7 @@ async def start_bot() -> str:
             monitor.reset_learning_session()
         login_state.lure_active = False  # a lure never carries over a reconnect
         state.ready = True
-        log.info("=== BOT READY — game session established ===")
+        log.info("Game session established; actions may start")
         state.login_startup.schedule(state, _start_all_enabled_actions)
 
     # Only the owner loop can publish parser results or notify other domains.
@@ -1332,7 +1334,7 @@ async def start_bot() -> str:
     state.game_proxy.on_game_disconnected = on_disconnect
     state.game_proxy.on_encrypted_server_data = state.packet_observer.offer
     state._proxy_tasks = [asyncio.create_task(proxy.start()) for proxy in (state.login_proxy, state.game_proxy)]
-    log.info("Proxies started — waiting for player to log in via the game client...")
+    log.info("Proxies are listening; log in through the game client")
 
     # The panel API and window start now; they do not wait for the login.
     from dbv.mcp_server import dashboard_api
@@ -1341,24 +1343,32 @@ async def start_bot() -> str:
     _publish_observer_bridge()
     return (f"Bot launched. Patched {patched} IP(s). Proxies listening.\n"
             "Log in through the game client — actions will auto-start.\n\n"
-            f"=== Component Status ===\n{_build_status_report()}")
+            f"Components:\n{_build_status_report()}")
 
 
-NOT_CONNECTED = "Bot is not connected. Call start_bot first."
+NOT_CONNECTED = "No character is in game yet: call start_bot, then log in through the client."
 
 
 async def _send(packet):
     await state.game_proxy.inject_to_server(packet)
 
 
-@mcp.tool()
+def _game_tool(tool):
+    """Register an MCP tool that talks to the game server; it answers NOT_CONNECTED until a character is in game."""
+    @functools.wraps(tool)
+    async def when_in_game(*args, **kwargs):
+        if not state.connected:
+            return NOT_CONNECTED
+        return await tool(*args, **kwargs)
+    return mcp.tool()(when_in_game)
+
+
+@_game_tool
 async def walk(direction: str, steps: int = 1) -> str:
     """Take one or more steps. direction: n, e, s, w, ne, se, sw, nw or the full word."""
-    if not state.connected:
-        return NOT_CONNECTED
     heading = _resolve_direction(direction)
     if heading is None:
-        return f"Unknown direction: {direction}. Use n/s/e/w/ne/se/sw/nw."
+        return f"'{direction}' is not a direction; use n, e, s, w, ne, se, sw or nw."
     for _ in range(steps):
         await _send(wire.build_walk_packet(heading))
         if steps > 1:
@@ -1366,52 +1376,42 @@ async def walk(direction: str, steps: int = 1) -> str:
     return f"Walked {heading.name} {steps} step(s)."
 
 
-@mcp.tool()
+@_game_tool
 async def turn(direction: str) -> str:
     """Face north, east, south or west (n/e/s/w) without moving."""
-    if not state.connected:
-        return NOT_CONNECTED
     heading = _resolve_direction(direction, allow_diagonal=False)
     if heading is None:
-        return f"Unknown direction: {direction}. Turn only supports n/s/e/w."
+        return f"'{direction}' cannot be faced; use n, e, s or w."
     await _send(wire.build_turn_packet(heading))
     return f"Turned {heading.name}."
 
 
-@mcp.tool()
+@_game_tool
 async def say(text: str) -> str:
     """Say a line in the default chat channel (spells are said this way too)."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_say_packet(text))
-    return f"Said: {text}"
+    return f"Sent to chat: {text}"
 
 
-@mcp.tool()
+@_game_tool
 async def attack(creature_id: int) -> str:
     """Attack the creature with this id (ids come from the status and the observer)."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_attack_packet(creature_id))
-    return f"Attacking creature {creature_id}."
+    return f"Attack sent for creature {creature_id}."
 
 
-@mcp.tool()
+@_game_tool
 async def follow(creature_id: int) -> str:
     """Follow the creature with this id."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_follow_packet(creature_id))
-    return f"Following creature {creature_id}."
+    return f"Follow sent for creature {creature_id}."
 
 
-@mcp.tool()
+@_game_tool
 async def stop() -> str:
     """Stop walking."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_stop_walk_packet())
-    return "Stopped walking."
+    return "Stop sent."
 
 
 def _autowalk_refusal():
@@ -1432,7 +1432,7 @@ async def autowalk(direction: str, steps: int = 100, delay: float = 0.5) -> str:
         return refusal
     heading = _resolve_direction(direction)
     if heading is None:
-        return f"Unknown direction: {direction}."
+        return f"'{direction}' is not a direction; use n, e, s, w, ne, se, sw or nw."
     if _live(state._auto_task):
         state._auto_task.cancel()
 
@@ -1451,41 +1451,35 @@ async def autowalk(direction: str, steps: int = 100, delay: float = 0.5) -> str:
 async def stop_autowalk() -> str:
     """Cancel the background walk started by autowalk."""
     if not _live(state._auto_task):
-        return "No auto-walk is running."
+        return "Nothing to cancel: auto-walk is not running."
     state._auto_task.cancel()
     state._auto_task = None
     if state.connected:
         await _send(wire.build_stop_walk_packet())
-    return "Auto-walk cancelled."
+    return "Auto-walk stopped."
 
 
-@mcp.tool()
+@_game_tool
 async def use_item(x: int, y: int, z: int, item_id: int, stack_pos: int = 0, index: int = 0) -> str:
     """Use the item `item_id` on map tile (x, y, z): a door, stairs, a lever... stack_pos is its place in the tile's stack."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_use_item_packet(x, y, z, item_id, stack_pos, index))
-    return f"Used item {item_id} at ({x}, {y}, {z})."
+    return f"Use sent for item {item_id} on ({x}, {y}, {z})."
 
 
-@mcp.tool()
+@_game_tool
 async def move_item(from_x: int, from_y: int, from_z: int, item_id: int, from_stack: int,
                     to_x: int, to_y: int, to_z: int, count: int = 1) -> str:
     """Drag `count` of item `item_id` from one tile (or container slot) to another."""
-    if not state.connected:
-        return NOT_CONNECTED
     source, target = (from_x, from_y, from_z), (to_x, to_y, to_z)
     await _send(wire.build_move_item_packet(source, item_id, from_stack, target, count))
-    return f"Moved {count}x item {item_id} from ({from_x},{from_y},{from_z}) to ({to_x},{to_y},{to_z})."
+    return f"Move sent: {count} of item {item_id}, {source} -> {target}."
 
 
-@mcp.tool()
+@_game_tool
 async def look_at(x: int, y: int, z: int, item_id: int, stack_pos: int = 0) -> str:
     """Look at item `item_id` on tile (x, y, z); the server answers with its description."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_look_packet(x, y, z, item_id, stack_pos))
-    return f"Looking at item {item_id} at ({x}, {y}, {z})."
+    return f"Look sent for item {item_id} on ({x}, {y}, {z}); the answer appears in the server log."
 
 
 def _action_summary(source: str) -> str:
@@ -1523,7 +1517,7 @@ async def list_actions() -> str:
     """
     names = [name for name in _discover_actions() if name not in INTERNAL_ACTIONS]
     if not names:
-        return "No actions found. Create a .py file in the actions/ folder with async def run(bot)."
+        return "The actions/ folder has no actions. Each action is a .py file defining `async def run(bot)`."
     sources = {}
     for name in names:
         try:
@@ -1550,9 +1544,9 @@ async def toggle_action(name: str, enabled: bool = True) -> str:
 async def remove_action(name: str) -> str:
     """Stop an action, delete its script and forget its settings."""
     if name in INTERNAL_ACTIONS:
-        return f"Action '{name}' is an internal service and cannot be removed."
+        return f"{name} is a built-in service and stays installed."
     if any(not (c.isalnum() or c == "_") for c in name):
-        return "Invalid action name. Only alphanumeric characters and underscores are allowed."
+        return "Action names may only use letters, digits and underscores."
     _stop_action(name)
     script = ACTIONS_DIR / f"{name}.py"
     had_script = script.exists()
@@ -1573,23 +1567,19 @@ async def restart_action(name: str) -> str:
 _FIGHT_MODE_NAMES = ({1: "offensive", 2: "balanced", 3: "defensive"}, {0: "stand", 1: "chase"}, {0: "PvP", 1: "safe"})
 
 
-@mcp.tool()
+@_game_tool
 async def set_fight_modes(fight_mode: int = 1, chase_mode: int = 0, safe_mode: int = 1) -> str:
     """Set the fight stance (1 offensive, 2 balanced, 3 defensive), chase (0 stand, 1 chase) and safe mode (1 no PvP)."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_set_fight_modes_packet(fight_mode, chase_mode, safe_mode))
     chosen = [names.get(value, value) for names, value in zip(_FIGHT_MODE_NAMES, (fight_mode, chase_mode, safe_mode))]
     return "Fight modes set: {}, {}, {}.".format(*chosen)
 
 
-@mcp.tool()
+@_game_tool
 async def send_ping() -> str:
     """Send a ping to the game server."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_ping_packet())
-    return "Ping sent."
+    return "Ping sent to the server."
 
 
 @mcp.tool()
@@ -1625,7 +1615,7 @@ async def get_status() -> str:
     if state.game_proxy and hasattr(state.game_proxy,'command_snapshot'):
         commands=state.game_proxy.command_snapshot()
         status += f"\nSession: {commands['session']} · queued commands: {commands['queued']}"
-    return f"=== Component Status ===\n{status}"
+    return f"Components:\n{status}"
 
 
 # ── Read-only observation, local or over the launcher's bridge ─────────
@@ -1810,36 +1800,32 @@ async def potion_diagnostics(enabled: bool | None = None) -> dict:
     return state.potion_diagnostics.snapshot()
 
 
-@mcp.tool()
+@_game_tool
 async def logout() -> str:
     """Log the character out."""
-    if not state.connected:
-        return NOT_CONNECTED
     await _send(wire.build_logout_packet())
-    return "Logout packet sent."
+    return "Logout requested."
 
 
 # ── route recording ─────────────────────────────────────────────────
 
-@mcp.tool()
+@_game_tool
 async def start_recording(name: str) -> str:
     """Start recording a route: walks, item uses, stairs and doors. name: letters, digits, - and _."""
-    if not state.connected:
-        return NOT_CONNECTED
     refusal = cavebot.start_recording(state, name)
     if refusal:
         return f"Error: {refusal}"
-    return f"Recording '{name}' started. Walk around, use doors/stairs/ladders. Call stop_recording when done."
+    return f"Recording {name}: walk the route in game, using doors, stairs and ladders as you go, then call stop_recording."
 
 
 @mcp.tool()
 async def stop_recording() -> str:
     """Stop recording and save the route."""
     if not state.recording_active:
-        return "No recording in progress."
+        return "Nothing is being recorded."
     recording = cavebot.stop_recording(state)
     if recording is None:
-        return "Recording stopped (no data saved)."
+        return "Recording ended with nothing to save."
     return f"Recording '{recording['name']}' saved with {len(recording.get('waypoints', []))} waypoint(s)."
 
 
@@ -1848,7 +1834,7 @@ async def list_recordings() -> str:
     """List the saved routes."""
     saved = cavebot.list_recordings()
     if not saved:
-        return "No recordings found. Use start_recording to create one."
+        return "There are no saved recordings yet; start_recording makes one."
     return "Saved recordings:\n" + "\n".join(
         f"  {row['name']}  ({row['count']} waypoints)  created: {row['created_at']}" for row in saved)
 
