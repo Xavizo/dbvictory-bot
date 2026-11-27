@@ -126,3 +126,35 @@ def test_the_panel_exports_and_imports_through_the_dashboard_api(author, http_ap
     assert [d["name"] for d in result["drafts"] if d["id"] in result["imported"]] == ["Fury cell chibi island"]
     status, _, data = request("POST", "/api/map/drafts/import", json.dumps({"scope": "c" * 64, "pack": shared["pack"]}), **headers)
     assert status == 400
+
+
+@pytest.mark.parametrize("tile", [
+    {"x": 1, "y": 2, "z": 7, "kind": "clear"},                                   # no items
+    {"x": 1, "y": 2, "z": 7, "kind": "lava", "items": []},                       # unknown kind
+    {"x": 1, "y": 2, "z": 7, "kind": "clear", "items": [{"stack": 0}]},          # item without an ID
+    {"x": 1, "y": 2, "z": 7, "kind": "clear", "items": [], "navigation": [1]},   # broken feature
+])
+def test_tiles_the_atlas_could_not_read_are_refused(author, tmp_path, tile):
+    pack = exported(author, "Fury cell chibi island")
+    pack["tiles"] = [*pack["tiles"], [1, 2, 7, json.dumps(tile), 1.0]]
+    atlas, learner = player(tmp_path)
+    with pytest.raises(ValueError, match="prawidłowy plik"):
+        route_pack.import_pack(atlas, learner, pack, author[2])
+    assert atlas.drafts() == [] and learner.records == {}
+
+
+def test_imports_and_live_observations_share_the_store_safely(author, tmp_path):
+    import threading
+    pack = exported(author, "Fury cell chibi island")
+    rows = [json.loads(raw) for _, raw in pack["observations"]]
+    learner = TransitionLearner(tmp_path, PLAYER)
+    live = rows[0]
+    threads = [threading.Thread(target=learner.add_shared, args=(rows[1:],)),
+               threading.Thread(target=learner._save, args=(live,))]
+    learner.records[live["id"]] = live
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert learner.storage_error is None
+    assert TransitionLearner(tmp_path, PLAYER).records.keys() == {r["id"] for r in rows}

@@ -164,6 +164,8 @@ class TransitionLearner:
         self._stamp = None
         self._queue = deque(maxlen=64)
         self._lock = threading.Lock()
+        # Live observations (map thread) and shared imports (panel thread) both write the store.
+        self._store_lock = threading.RLock()
         self._epoch = 0
         self._seen_epoch = 0
         self._last = None
@@ -298,6 +300,10 @@ class TransitionLearner:
 
     def add_shared(self, rows):
         """Add observations from a shared route pack. Known IDs keep the player's own record."""
+        with self._store_lock:
+            return self._add_shared(rows)
+
+    def _add_shared(self, rows):
         if self.storage_error:
             raise ValueError(self.storage_error)
         fresh = []
@@ -319,7 +325,8 @@ class TransitionLearner:
         return len(fresh)
 
     def _save(self, row):
-        self._write((row,))
+        with self._store_lock:
+            self._write((row,))
 
     def _write(self, changed):
         if self.storage_error:
@@ -402,6 +409,10 @@ class TransitionLearner:
                       "passive":True}
 
     def _record(self, record, wall):
+        with self._store_lock:
+            self._record_locked(record, wall)
+
+    def _record_locked(self, record, wall):
         record = {"item_id":None,"tool_id":None,"entry_items":[],**record}
         record["id"] = self._key(record)
         old = self.records.get(record["id"])

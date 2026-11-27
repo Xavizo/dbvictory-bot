@@ -17,7 +17,7 @@ import uuid
 from contextlib import closing
 
 from dbv.brain.cavebot.cavebot_combat import validate_combat
-from dbv.brain.navigation.map_atlas import MAX_ANCHORS, validate_links, validate_tags
+from dbv.brain.navigation.map_atlas import MAX_ANCHORS, decode_tile, validate_links, validate_tags
 from dbv.brain.navigation.transition_learning import position
 
 FORMAT = "dbvictory-route"
@@ -150,6 +150,29 @@ def _bad():
     return ValueError("To nie jest prawidłowy plik trasy DBVictory.")
 
 
+def _readable_tile(row, data):
+    """Only tiles the atlas reader and planner accept: a bad tile would break planning nearby."""
+    try:
+        decode_tile(tuple(row))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return False
+    for item in data["items"]:
+        if not isinstance(item, dict) or type(item.get("id")) is not int or not 0 <= item["id"] <= 65535:
+            return False
+        flags = item.get("flags", [])
+        if type(item.get("stack", 0)) is not int or not isinstance(flags, list) or not all(isinstance(f, str) for f in flags):
+            return False
+    for key in ("navigation", "transitions"):
+        features = data.get(key, [])
+        if not isinstance(features, list) or len(features) > 32:
+            return False
+        if key == "navigation" and not all(isinstance(f, dict) and isinstance(f.get("kind"), str) for f in features):
+            return False
+        if key == "transitions" and not all(isinstance(f, dict) for f in features):
+            return False
+    return type(data.get("minimap_color", 0)) is int and type(data.get("web_cut", False)) is bool
+
+
 def _checked_tiles(rows):
     if not isinstance(rows, list) or len(rows) > MAX_TILES:
         raise _bad()
@@ -162,8 +185,7 @@ def _checked_tiles(rows):
             data = json.loads(row[3])
         except ValueError:
             raise _bad() from None
-        if (not isinstance(data, dict) or not set(data) <= TILE_KEYS or [data.get(k) for k in "xyz"] != row[:3]
-                or not isinstance(data.get("kind"), str)):
+        if not isinstance(data, dict) or not set(data) <= TILE_KEYS or not _readable_tile(row, data):
             raise _bad()
         result.append((row[0], row[1], row[2], json.dumps(data, separators=(",", ":")), float(row[4])))
     return result
