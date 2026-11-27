@@ -64,3 +64,13 @@ def test_injection_refuses_a_missing_dll(tmp_path):
     from dbv.client_bridge import injector
     with pytest.raises(InjectionError, match="not found"):
         injector.inject(tmp_path / "missing.dll")
+
+
+def test_module_entry_matches_the_windows_layout():
+    import ctypes
+    from dbv.client_bridge.injector import _ModuleEntry
+    pointer = ctypes.sizeof(ctypes.c_void_p)
+    # MODULEENTRY32W: 1080 bytes on 64-bit Windows (wchar is 2 bytes there; 4 on Linux).
+    assert (_ModuleEntry.base.offset, _ModuleEntry.handle.offset, _ModuleEntry.name.offset) == (
+        (24, 40, 48) if pointer == 8 else (20, 28, 32))
+    assert ctypes.sizeof(_ModuleEntry) == _ModuleEntry.name.offset + 516 * ctypes.sizeof(ctypes.c_wchar)

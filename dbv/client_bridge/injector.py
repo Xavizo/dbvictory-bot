@@ -26,7 +26,8 @@ LOAD_TIMEOUT_MS = 15_000
 _CREATE_THREAD, _VM_OPERATION, _VM_READ, _VM_WRITE, _QUERY_INFO = 0x2, 0x8, 0x10, 0x20, 0x400
 _ACCESS = _CREATE_THREAD | _VM_OPERATION | _VM_READ | _VM_WRITE | _QUERY_INFO
 _COMMIT_RESERVE, _RELEASE, _READWRITE = 0x3000, 0x8000, 0x04
-_LIST_MODULES_32BIT = 0x01
+_SNAP_MODULES = 0x08 | 0x10   # TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32 (the WOW64 modules)
+_SNAPSHOT_RETRIES = 5        # a snapshot can fail while the client is loading modules
 _WAIT_OBJECT_0 = 0
 
 
@@ -52,7 +53,7 @@ def export_rva(image: bytes, name: str) -> int:
         directories = optional + {0x10B: 96, 0x20B: 112}.get(u16(optional), -1)
         if directories < optional:
             raise InjectionError("unknown PE optional header")
-        exports = u32(directories)  # data directory 0 is the export table
+        exports, exports_size = u32(directories), u32(directories + 4)  # data directory 0: exports
         table = optional + optional_size
         spans = [(u32(s + 12), max(u32(s + 8), u32(s + 16)), u32(s + 20))
                  for s in range(table, table + 40 * sections, 40)]
@@ -69,7 +70,11 @@ def export_rva(image: bytes, name: str) -> int:
         for i in range(count):
             start = at(u32(at(names) + 4 * i))
             if image[start:image.index(b"\0", start)] == wanted:
-                return u32(at(functions) + 4 * u16(at(ordinals) + 2 * i))
+                rva = u32(at(functions) + 4 * u16(at(ordinals) + 2 * i))
+                if exports <= rva < exports + exports_size:
+                    # A forwarder names another DLL's function; calling it would crash the client.
+                    raise InjectionError(f"{name} is forwarded to another DLL")
+                return rva
     except (struct.error, ValueError, IndexError) as exc:
         raise InjectionError(f"malformed PE file: {exc}") from None
     raise InjectionError(f"{name} is not exported")
@@ -82,7 +87,6 @@ def _win32():
         raise InjectionError("DLL injection needs Windows")
     from ctypes import wintypes as w
     k = ctypes.WinDLL("kernel32", use_last_error=True)
-    p = ctypes.WinDLL("psapi", use_last_error=True)
     sig = {
         k.OpenProcess: ([w.DWORD, w.BOOL, w.DWORD], w.HANDLE),
         k.CloseHandle: ([w.HANDLE], w.BOOL),
@@ -97,12 +101,13 @@ def _win32():
         k.GetExitCodeThread: ([w.HANDLE, ctypes.POINTER(w.DWORD)], w.BOOL),
         k.GetModuleHandleW: ([w.LPCWSTR], w.HMODULE),
         k.GetProcAddress: ([w.HMODULE, w.LPCSTR], ctypes.c_void_p),
-        p.EnumProcessModulesEx: ([w.HANDLE, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD), w.DWORD], w.BOOL),
-        p.GetModuleBaseNameW: ([w.HANDLE, ctypes.c_void_p, w.LPWSTR, w.DWORD], w.DWORD),
+        k.CreateToolhelp32Snapshot: ([w.DWORD, w.DWORD], w.HANDLE),
+        k.Module32FirstW: ([w.HANDLE, ctypes.c_void_p], w.BOOL),
+        k.Module32NextW: ([w.HANDLE, ctypes.c_void_p], w.BOOL),
     }
     for fn, (args, result) in sig.items():
         fn.argtypes, fn.restype = args, result
-    return k, p
+    return k
 
 
 def _fail(what):
@@ -118,28 +123,48 @@ def find_client_pid() -> int:
     return found[0]
 
 
-def _module_base_32(psapi, process, name: str) -> int:
-    from ctypes import wintypes as w
-    slots = (ctypes.c_void_p * 1024)()
-    needed = w.DWORD()
-    if not psapi.EnumProcessModulesEx(process, slots, ctypes.sizeof(slots), ctypes.byref(needed),
-                                      _LIST_MODULES_32BIT):
-        _fail("EnumProcessModulesEx")
-    label = ctypes.create_unicode_buffer(260)
-    for base in slots[:needed.value // ctypes.sizeof(ctypes.c_void_p)]:
-        if base and psapi.GetModuleBaseNameW(process, base, label, 260) and label.value.lower() == name:
-            return base
+class _ModuleEntry(ctypes.Structure):
+    """MODULEENTRY32W."""
+    _fields_ = [("size", ctypes.c_uint32), ("module_id", ctypes.c_uint32), ("pid", ctypes.c_uint32),
+                ("global_usage", ctypes.c_uint32), ("process_usage", ctypes.c_uint32),
+                ("base", ctypes.c_void_p), ("base_size", ctypes.c_uint32), ("handle", ctypes.c_void_p),
+                ("name", ctypes.c_wchar * 256), ("path", ctypes.c_wchar * 260)]
+
+
+def _module_base_32(k, pid: int, name: str) -> int:
+    """Load address of a 32-bit module in the client.
+
+    A Toolhelp module snapshot lists a WOW64 process's 32-bit modules to a
+    64-bit caller; psapi's name lookups only see the 64-bit loader list.
+    """
+    invalid = ctypes.c_void_p(-1).value
+    for _ in range(_SNAPSHOT_RETRIES):
+        snapshot = k.CreateToolhelp32Snapshot(_SNAP_MODULES, pid)
+        if snapshot and snapshot != invalid:
+            break
+    else:
+        _fail("CreateToolhelp32Snapshot")
+    try:
+        entry = _ModuleEntry()
+        entry.size = ctypes.sizeof(entry)
+        found = k.Module32FirstW(snapshot, ctypes.byref(entry))
+        while found:
+            if entry.name.lower() == name:
+                return entry.base
+            found = k.Module32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        k.CloseHandle(snapshot)
     raise InjectionError(f"{name} is not loaded in the client yet")
 
 
-def _load_library_address(k, psapi, process) -> int:
+def _load_library_address(k, process, pid) -> int:
     from ctypes import wintypes as w
     wow64 = w.BOOL()
     if not k.IsWow64Process(process, ctypes.byref(wow64)):
         _fail("IsWow64Process")
     if wow64.value and sys.maxsize > 2**32:
         system = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "SysWOW64" / "kernel32.dll"
-        return _module_base_32(psapi, process, "kernel32.dll") + export_rva(system.read_bytes(), "LoadLibraryW")
+        return _module_base_32(k, pid, "kernel32.dll") + export_rva(system.read_bytes(), "LoadLibraryW")
     address = k.GetProcAddress(k.GetModuleHandleW("kernel32.dll"), b"LoadLibraryW")
     if not address:
         _fail("GetProcAddress")
@@ -151,13 +176,13 @@ def inject(dll_path, *, pid: int | None = None) -> int:
     path = Path(dll_path).resolve()
     if not path.is_file():
         raise InjectionError(f"DLL not found: {path}")
-    k, psapi = _win32()
+    k = _win32()
     pid = find_client_pid() if pid is None else pid
     process = k.OpenProcess(_ACCESS, False, pid)
     if not process:
         _fail("OpenProcess")
     try:
-        entry = _load_library_address(k, psapi, process)
+        entry = _load_library_address(k, process, pid)
         text = (str(path) + "\0").encode("utf-16-le")
         remote = k.VirtualAllocEx(process, None, len(text), _COMMIT_RESERVE, _READWRITE)
         if not remote:
