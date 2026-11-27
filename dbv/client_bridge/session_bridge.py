@@ -15,12 +15,18 @@ import secrets
 import threading
 import time
 from multiprocessing.connection import Client, Listener
-from dbv.paths import INSTALL_ROOT, RUNTIME_DIR, state_dir
+from dbv.paths import INSTALL_ROOT, state_dir
 
 log = logging.getLogger(__name__)
 
 ROOT = INSTALL_ROOT
-INFO_PATH = RUNTIME_DIR / "observer.json"
+
+
+def default_info_path():
+    """Looked up at each use: the launcher may move .codex to .dbvictory after this process started."""
+    return state_dir(ROOT) / "runtime" / "observer.json"
+
+
 MAX_REQUEST = 4096
 CALL_TIMEOUT = 15.
 
@@ -37,13 +43,19 @@ class ObserverBridge:
     def __init__(self, loop, handlers, info_path=None):
         self.loop = loop
         self.handlers = dict(handlers)
-        self.info_path = Path(info_path or INFO_PATH)
+        self._info_path = Path(info_path) if info_path else None
         self.listener = None
         self.address = None
         self.closed = False
 
+    @property
+    def info_path(self):
+        return self._info_path or default_info_path()
+
     def start(self):
         """Publish only if no other live owner already answers on the same file."""
+        if self._info_path is None:
+            self._info_path = default_info_path()  # fixed from here on, so stop() removes what start() wrote
         if self.info_path.exists():
             try:
                 info = call("ping", info_path=self.info_path, timeout=2)
@@ -130,10 +142,7 @@ class ObserverBridge:
 
 
 def read_info(info_path=None):
-    path = Path(info_path or INFO_PATH)
-    if info_path is None and not path.exists():
-        # This process started before the launcher moved .codex to .dbvictory.
-        path = state_dir(ROOT) / "runtime" / "observer.json"
+    path = Path(info_path) if info_path else default_info_path()
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
