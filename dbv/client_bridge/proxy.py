@@ -1,121 +1,161 @@
-"""
-OT Protocol Proxy - Sits between the game client and server.
+"""Local relay between the game client and the DBVictory servers.
 
-Handles TWO phases:
-1. LOGIN phase (port 7171): Intercepts login, extracts XTEA keys,
-   modifies character list response to redirect game server to our proxy.
-2. GAME phase (port 7172): Intercepts game traffic, allows packet injection.
-"""
+Two instances run per bot session:
 
+* the **login relay** (port 7171) sees one exchange per login. It learns the
+  session's XTEA keys from the client's RSA block and rewrites the character
+  list so the client then connects to the game relay instead of the server;
+* the **game relay** (port 7172) forwards every frame unchanged in both
+  directions, lets the bot observe traffic, and is the only place where bot
+  commands enter the connection (``inject_to_server``).
+
+On the wire a frame is ``u16 length`` + body. A body is ``u32 adler32`` +
+XTEA data whose plain text is ``u16 inner length`` + packet + padding.
+Server frames are always forwarded before anything inspects them.
+"""
 import asyncio
-import struct
 import logging
+import struct
 import time
 from collections import deque
+
 from dbv.client_bridge.command_delivery import CommandReceipt, QueuedCommand
-from dbv.client_bridge.packet_observer import decrypt_game_packet
-from dbv.client_bridge.crypto import (
-    rsa_decrypt, rsa_encrypt, xtea_decrypt, xtea_encrypt,
-    adler32_checksum, generate_proxy_rsa_keypair, get_default_rsa_key,
-    DEFAULT_RSA_N, DEFAULT_RSA_E
-)
-from dbv.client_bridge.protocol import PacketReader, PacketWriter, ServerOpcode, ClientOpcode
 from dbv.client_bridge.constants import SERVER_IP_BYTES, SERVER_IP_STR
+from dbv.client_bridge.crypto import (
+    DEFAULT_RSA_E, DEFAULT_RSA_N, adler32_checksum, generate_proxy_rsa_keypair,
+    get_default_rsa_key, rsa_decrypt, xtea_decrypt, xtea_encrypt,
+)
+from dbv.client_bridge.packet_observer import decrypt_game_packet
+from dbv.client_bridge.protocol import ClientOpcode, PacketReader, ServerOpcode
 
 log = logging.getLogger("proxy")
 
+RSA_BLOCK = 128
+# The 26 Nov client's game login: checksum + opcode 0x0A, OS 10, version 372.
+NOVEMBER_26_LOGIN = (137, struct.pack("<BHH", 10, 10, 372))
+KEY_CHECK_ATTEMPTS = 8
+LOCALHOST_PACKED = bytes((127, 0, 0, 1))
+_CANCEL_ATTACK = bytes((ClientOpcode.ATTACK, 0, 0, 0, 0))
+
+
+# ── frame helpers (pure) ────────────────────────────────────────────
+
+def _checksummed(body: bytes) -> bool:
+    return len(body) > 4 and struct.unpack_from("<I", body)[0] == adler32_checksum(body[4:])
+
+
+def find_session_keys(body: bytes, rsa_keys) -> tuple | None:
+    """XTEA keys from a login packet's RSA block, or None.
+
+    The block is normally the last 128 bytes; other offsets are tried after
+    it. A block decrypted with the right key starts with a zero byte,
+    followed by the four XTEA key words.
+    """
+    start = 4 if _checksummed(body) else 0
+    last = len(body) - RSA_BLOCK
+    if last < start + 5:
+        return None
+    offsets = [last] + [o for o in range(start + 1, last) if o != last]
+    for key in rsa_keys:
+        for at in offsets:
+            try:
+                plain = rsa_decrypt(body[at:at + RSA_BLOCK], key)
+            except Exception:
+                continue
+            if plain[0] == 0:
+                log.info("RSA block found at offset %d", at)
+                return struct.unpack_from("<4I", plain, 1)
+    return None
+
+
+def point_character_list_at_proxy(body: bytes, keys) -> bytes | None:
+    """Rewrite the login reply so every game world address is 127.0.0.1.
+
+    Both the packed form (4 bytes) and the text form are replaced; text is
+    padded with zero bytes to keep the packet length. Returns the
+    re-encrypted body, or None if it could not be decrypted.
+    """
+    checksum = _checksummed(body)
+    sealed = body[4:] if checksum else body
+    if not sealed or len(sealed) % 8:
+        log.warning("[LOGIN] Reply is not whole XTEA blocks")
+        return None
+    plain = bytearray(xtea_decrypt(sealed, keys))
+    size = struct.unpack_from("<H", plain)[0]
+    packet = plain[2:2 + size]
+    text_ip = b"127.0.0.1".ljust(len(SERVER_IP_STR), b"\0")[:len(SERVER_IP_STR)]
+    replaced = packet.count(SERVER_IP_BYTES) + packet.count(SERVER_IP_STR)
+    packet = packet.replace(SERVER_IP_BYTES, LOCALHOST_PACKED).replace(SERVER_IP_STR, text_ip)
+    if not replaced:
+        log.warning("[LOGIN] The character list names no known server address")
+    plain[2:2 + size] = packet  # same length: only equal-sized replacements
+    resealed = xtea_encrypt(bytes(plain), keys)
+    return struct.pack("<I", adler32_checksum(resealed)) + resealed if checksum else resealed
+
 
 class OTProxy:
-    """
-    TCP proxy for Open Tibia protocol.
-
-    Handles both login and game connections.
-    """
+    """One relay: listens on ``listen_port`` and connects each client to the server."""
 
     def __init__(self, server_host: str, server_port: int, listen_port: int,
                  is_login_proxy: bool = False, shared_rsa_key=None, *, client_key_reader=None):
-        self.server_host = server_host
-        self.server_port = server_port
-        self.listen_port = listen_port
+        self.server_host, self.server_port, self.listen_port = server_host, server_port, listen_port
         self.is_login_proxy = is_login_proxy
-
-        # Use the default OTClient RSA key - we know the private key!
-        # No need to patch the client, just decrypt with the known key.
+        # The client encrypts its login to the public OTClient key, whose private half is known,
+        # so the relay reads the keys without patching the client's RSA key.
         self.default_rsa_key = get_default_rsa_key()
-
-        # Lazy-init proxy RSA key only if needed (keygen is expensive)
         self._shared_rsa_key = shared_rsa_key
-        self._proxy_rsa_key = None
-        self.server_rsa_n = DEFAULT_RSA_N
-        self.server_rsa_e = DEFAULT_RSA_E
-
-        # Session state
+        self._proxy_rsa_key = None            # generated only when first needed
+        self.server_rsa_n, self.server_rsa_e = DEFAULT_RSA_N, DEFAULT_RSA_E
+        # 26 Nov client: keys are read from client memory and confirmed on server frames.
+        self.client_key_reader = client_key_reader
         self.xtea_keys = None
         self.logged_in = False
-        self.client_key_reader = client_key_reader
         self._reset_client_key()
-
-        # Connection handles
-        self.client_reader = None
-        self.client_writer = None
-        self.server_reader = None
-        self.server_writer = None
-
-        # Callbacks for bot
-        self.on_server_packet = None          # optional per-opcode callback
-        self._client_packet_callbacks = []    # list of (opcode, reader) callables
+        self.client_reader = self.client_writer = None
+        self.server_reader = self.server_writer = None
+        # Hooks for the bot.
+        self._client_packet_callbacks = []    # callables (opcode, reader) for client packets
+        self.on_server_packet = None          # (opcode, reader) for server packets
+        self.on_raw_server_data = None        # (decrypted bytes)
+        self.on_encrypted_server_data = None  # (frame, keys, session) passive tap, after forwarding
         self.on_login_success = None
         self.on_game_disconnected = None
-        self.on_raw_server_data = None  # Called with full decrypted bytes
-        self.on_encrypted_server_data = None  # Nonblocking passive tap after forwarding.
+        # Bot commands.
         self._inject_queue = asyncio.Queue(maxsize=256)
         self.command_delivery = True
-        self.session_generation = 0
         self.command_sequence = 0
         self.command_history = deque(maxlen=100)
+        self.session_generation = 0
         self.injections_paused = False
-
-        # Stats
+        # Counters and timestamps for status and diagnostics.
+        self.packets_from_server = self.packets_from_client = 0
         self.last_server_read = self.last_client_forward = None
-        self.packets_from_server = 0
-        self.packets_from_client = 0
-
-        # Track the active connection handler task for clean shutdown
-        self._connection_task: asyncio.Task | None = None
-        self._server: asyncio.AbstractServer | None = None
-
-        # Timestamps for proxy sequence debugging
+        self._connection_task = None
+        self._server = None
         self._ts_created = time.time()
-        self._ts_listening = None
-        self._ts_client_connected = None
-        self._ts_server_connected = None
-        self._ts_xtea_captured = None
-        self._ts_logged_in = None
+        self._ts_listening = self._ts_client_connected = self._ts_server_connected = None
+        self._ts_xtea_captured = self._ts_logged_in = None
 
-
-    # ── Client packet callback registry ────────────────────────────
+    # ── hooks ────────────────────────────────────────────────────────
     def register_client_packet_callback(self, callback):
         if callback not in self._client_packet_callbacks:
             self._client_packet_callbacks.append(callback)
 
     def unregister_client_packet_callback(self, callback):
-        try:
+        if callback in self._client_packet_callbacks:
             self._client_packet_callbacks.remove(callback)
-        except ValueError:
-            pass
 
     @property
     def on_client_packet(self):
-        return self._client_packet_callbacks[0] if self._client_packet_callbacks else None
+        """The first client callback; assigning replaces it, None removes all."""
+        return next(iter(self._client_packet_callbacks), None)
 
     @on_client_packet.setter
     def on_client_packet(self, callback):
         if callback is None:
             self._client_packet_callbacks.clear()
-        elif self._client_packet_callbacks:
-            self._client_packet_callbacks[0] = callback
         else:
-            self._client_packet_callbacks.append(callback)
+            self._client_packet_callbacks[:1] = [callback]
 
     @property
     def proxy_rsa_key(self):
@@ -123,205 +163,91 @@ class OTProxy:
             self._proxy_rsa_key = self._shared_rsa_key or generate_proxy_rsa_keypair()
         return self._proxy_rsa_key
 
-    async def start(self):
-        """Start the proxy server."""
-        server = await asyncio.start_server(
-            self._handle_client_connection,
-            '127.0.0.1',
-            self.listen_port
-        )
-        self._server = server
-        self._ts_listening = time.time()
-        addr = server.sockets[0].getsockname()
-        mode = "LOGIN" if self.is_login_proxy else "GAME"
-        log.info(f"[{mode}] Proxy listening on {addr[0]}:{addr[1]} -> {self.server_host}:{self.server_port}")
+    def _rsa_keys(self):
+        yield self.default_rsa_key
+        yield self.proxy_rsa_key  # generated only if the OTClient key did not fit
 
-        async with server:
-            await server.serve_forever()
+    def get_proxy_rsa_public_key(self) -> str:
+        return str(self.proxy_rsa_key.n)
+
+    # ── listening ────────────────────────────────────────────────────
+    async def start(self):
+        self._server = await asyncio.start_server(self._handle_client_connection, "127.0.0.1", self.listen_port)
+        self._ts_listening = time.time()
+        host, port = self._server.sockets[0].getsockname()[:2]
+        log.info("[%s] relay on %s:%s -> %s:%s", "LOGIN" if self.is_login_proxy else "GAME",
+                 host, port, self.server_host, self.server_port)
+        async with self._server:
+            await self._server.serve_forever()
 
     def close_server(self):
-        """Explicitly close the listening server socket (for clean reset)."""
-        if self._server:
+        server, self._server = self._server, None
+        if server:
             try:
-                self._server.close()
+                server.close()
             except Exception:
                 pass
-            self._server = None
 
     async def _handle_client_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Serialize ownership changes; an old handler cannot clear a newer session."""
-        if not hasattr(self,'_handover_lock'):self._handover_lock=asyncio.Lock()
-        generation=None
+        if not hasattr(self, '_handover_lock'):
+            self._handover_lock = asyncio.Lock()
+        generation = None
         try:
             async with self._handover_lock:
-                previous=self._connection_task
+                previous = self._connection_task
                 if previous and previous is not asyncio.current_task() and not previous.done():
                     previous.cancel()
-                    await asyncio.gather(previous,return_exceptions=True)
-                self._connection_task=asyncio.current_task()
-                self.session_generation+=1;generation=self.session_generation
+                    await asyncio.gather(previous, return_exceptions=True)
+                self._connection_task = asyncio.current_task()
+                self.session_generation += 1
+                generation = self.session_generation
                 self.discard_commands('session_changed')
-                self.client_reader=reader;self.client_writer=writer
-                self.server_reader=None;self.server_writer=None
-                self.logged_in=False;self.xtea_keys=None
+                self.client_reader, self.client_writer = reader, writer
+                self.server_reader = self.server_writer = None
+                self.logged_in, self.xtea_keys = False, None
                 self._reset_client_key()
                 self.last_server_read = self.last_client_forward = None
-                self._ts_client_connected=time.time()
-            self.server_reader,self.server_writer=await asyncio.open_connection(self.server_host,self.server_port)
-            self._ts_server_connected=time.time()
-            if self.is_login_proxy:await self._handle_login_session()
-            else:await self._run_relay_loop()
+                self._ts_client_connected = time.time()
+            self.server_reader, self.server_writer = await asyncio.open_connection(self.server_host, self.server_port)
+            self._ts_server_connected = time.time()
+            if self.is_login_proxy:
+                await self._handle_login_session()
+            else:
+                await self._run_relay_loop()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.error('Proxy connection ended: %s',type(exc).__name__)
+            log.error('Proxy connection ended: %s', type(exc).__name__)
         finally:
             writer.close()
-            if generation is not None and self.session_generation==generation:
-                self.discard_commands('disconnected');self.logged_in=False;self.xtea_keys=None
+            if generation is not None and self.session_generation == generation:
+                self.discard_commands('disconnected')
+                self.logged_in, self.xtea_keys = False, None
                 self._reset_client_key()
-                server_writer=self.server_writer
-                self.client_writer=None;self.server_writer=None
-                if server_writer:server_writer.close()
+                server_writer = self.server_writer
+                self.client_writer = self.server_writer = None
+                if server_writer:
+                    server_writer.close()
                 if self.on_game_disconnected:
-                    try:self.on_game_disconnected()
-                    except Exception:log.exception('Game disconnect callback failed')
-                for stream in (writer,server_writer):
+                    try:
+                        self.on_game_disconnected()
+                    except Exception:
+                        log.exception('Game disconnect callback failed')
+                for stream in (writer, server_writer):
                     if stream:
-                        try:await asyncio.wait_for(stream.wait_closed(),timeout=1)
-                        except (Exception,asyncio.CancelledError):pass
+                        try:
+                            await asyncio.wait_for(stream.wait_closed(), timeout=1)
+                        except (Exception, asyncio.CancelledError):
+                            pass
 
-    async def _handle_login_session(self):
-        """
-        Handle a login session:
-        1. Client sends login packet -> we intercept RSA, extract XTEA, re-encrypt, forward
-        2. Server sends character list -> we decrypt, modify game server IP, re-encrypt, forward
-        """
-        # Step 1: Client login packet
-        raw = await self._read_packet(self.client_reader)
-        if raw is None:
-            log.error("[LOGIN] No login packet received")
-            return
+    # ── framing ──────────────────────────────────────────────────────
+    def _wrap_packet(self, data: bytes) -> bytes:
+        return struct.pack("<H", len(data)) + data
 
-        log.info(f"[LOGIN] Received login packet ({len(raw)} bytes)")
-
-        processed = self._process_login_packet(raw)
-        if processed is not None:
-            self.server_writer.write(self._wrap_packet(processed))
-            await self.server_writer.drain()
-            log.info("[LOGIN] Forwarded login packet to server")
-        else:
-            self.server_writer.write(self._wrap_packet(raw))
-            await self.server_writer.drain()
-            log.warning("[LOGIN] Could not process login packet, forwarded as-is")
-
-        # Step 2: Server response (character list)
-        response = await self._read_packet(self.server_reader)
-        if response is None:
-            log.error("[LOGIN] No response from server")
-            return
-
-        log.info(f"[LOGIN] Received server response ({len(response)} bytes)")
-
-        if self.xtea_keys:
-            modified = self._modify_login_response(response)
-            if modified:
-                self.client_writer.write(self._wrap_packet(modified))
-                await self.client_writer.drain()
-                log.info("[LOGIN] Forwarded modified character list (game IP -> 127.0.0.1)")
-                return
-
-        # Forward as-is if we couldn't modify
-        self.client_writer.write(self._wrap_packet(response))
-        await self.client_writer.drain()
-        log.info("[LOGIN] Forwarded response as-is")
-
-    def _modify_login_response(self, data: bytes) -> bytes | None:
-        """
-        Decrypt the login response, modify game server IP to localhost,
-        re-encrypt and return.
-        """
-        try:
-            # Detect checksum
-            has_checksum = False
-            offset = 0
-            if len(data) > 4:
-                checksum = struct.unpack_from('<I', data, 0)[0]
-                computed = adler32_checksum(data[4:])
-                if checksum == computed:
-                    has_checksum = True
-                    offset = 4
-
-            encrypted = data[offset:]
-            if len(encrypted) % 8 != 0:
-                log.warning("[LOGIN] Response not aligned to 8 bytes")
-                return None
-
-            decrypted = xtea_decrypt(encrypted, self.xtea_keys)
-            inner_len = struct.unpack_from('<H', decrypted, 0)[0]
-            payload = decrypted[2:2 + inner_len]
-
-            log.info(f"[LOGIN] Decrypted response: {inner_len} bytes, first byte=0x{payload[0]:02X}")
-
-            # Replace server IP in the response
-            # The character list contains IP addresses as 4-byte values (packed IP)
-            # and also as strings in some protocol versions
-            server_ip_bytes = SERVER_IP_BYTES
-            localhost_bytes = bytes([127, 0, 0, 1])
-
-            # Also try string replacement
-            server_ip_str = SERVER_IP_STR
-            localhost_str = b"127.0.0.1" + b"\x00" * max(0, len(SERVER_IP_STR) - 9)
-
-            modified_payload = bytearray(payload)
-            replaced = False
-
-            # Replace packed IP (4 bytes)
-            idx = 0
-            while True:
-                idx = modified_payload.find(server_ip_bytes, idx)
-                if idx == -1:
-                    break
-                modified_payload[idx:idx + 4] = localhost_bytes
-                log.info(f"[LOGIN] Replaced packed IP at offset {idx}")
-                replaced = True
-                idx += 4
-
-            # Replace string IP
-            idx = 0
-            while True:
-                idx = modified_payload.find(server_ip_str, idx)
-                if idx == -1:
-                    break
-                modified_payload[idx:idx + len(server_ip_str)] = localhost_str[:len(server_ip_str)]
-                log.info(f"[LOGIN] Replaced string IP at offset {idx}")
-                replaced = True
-                idx += len(server_ip_str)
-
-            if not replaced:
-                log.warning("[LOGIN] No server IP found in character list to replace!")
-                log.warning("[LOGIN] The response may use a different IP format.")
-                # Try to log the raw payload for debugging
-                log.debug(f"[LOGIN] Payload hex: {payload.hex()}")
-
-            # Re-encrypt
-            new_inner = struct.pack('<H', len(modified_payload)) + bytes(modified_payload)
-            # Pad to match original
-            if len(new_inner) < len(decrypted):
-                new_inner = new_inner + decrypted[len(new_inner):]
-
-            re_encrypted = xtea_encrypt(new_inner, self.xtea_keys)
-
-            if has_checksum:
-                new_checksum = adler32_checksum(re_encrypted)
-                return struct.pack('<I', new_checksum) + re_encrypted
-            else:
-                return re_encrypted
-
-        except Exception as e:
-            log.error(f"[LOGIN] Error modifying response: {e}")
-            log.debug("Login response modification traceback:", exc_info=True)
-            return None
+    async def _send(self, writer, body: bytes):
+        writer.write(self._wrap_packet(body))
+        await writer.drain()
 
     def _log_stream_end(self, side, stage, reason, exc=None):
         now = time.monotonic()
@@ -333,156 +259,161 @@ class OTProxy:
                  age(getattr(self, 'last_server_read', None)), age(getattr(self, 'last_client_forward', None)))
 
     async def _read_packet(self, reader: asyncio.StreamReader) -> bytes | None:
-        """Read one complete frame. Record only reason and timing on stream loss."""
+        """One frame body, or None when the stream ends (only the reason is logged)."""
         side = 'server' if reader is self.server_reader else 'client'
         stage = 'header'
         try:
-            header = await reader.readexactly(2)
-            length = struct.unpack('<H', header)[0]
-            if length == 0:
+            (size,) = struct.unpack("<H", await reader.readexactly(2))
+            if not size:
                 self._log_stream_end(side, stage, 'empty_frame')
                 return None
             stage = 'body'
-            return await reader.readexactly(length)
+            return await reader.readexactly(size)
         except asyncio.IncompleteReadError as exc:
             self._log_stream_end(side, stage, 'eof' if stage == 'header' and not exc.partial else 'truncated')
         except OSError as exc:
             self._log_stream_end(side, stage, type(exc).__name__, exc)
         return None
 
-    def _wrap_packet(self, data: bytes) -> bytes:
-        """Wrap data with length header."""
-        return struct.pack('<H', len(data)) + data
+    def _decrypt_game_packet(self, data: bytes) -> bytes | None:
+        return decrypt_game_packet(data, self.xtea_keys)
 
+    def _encrypt_game_packet(self, payload: bytes) -> bytes:
+        sealed = xtea_encrypt(struct.pack("<H", len(payload)) + payload, self.xtea_keys)
+        return struct.pack("<I", adler32_checksum(sealed)) + sealed
+
+    # ── login relay ──────────────────────────────────────────────────
+    async def _handle_login_session(self):
+        """Forward the login, then the character list rewritten to point at the game relay."""
+        request = await self._read_packet(self.client_reader)
+        if request is None:
+            log.error("[LOGIN] The client sent no login")
+            return
+        await self._send(self.server_writer, self._process_login_packet(request) or request)
+        reply = await self._read_packet(self.server_reader)
+        if reply is None:
+            log.error("[LOGIN] The server did not answer")
+            return
+        rewritten = self._modify_login_response(reply) if self.xtea_keys else None
+        await self._send(self.client_writer, rewritten or reply)
+        log.info("[LOGIN] Character list %s", "now points at the game relay" if rewritten else "forwarded unchanged")
+
+    def _modify_login_response(self, data: bytes) -> bytes | None:
+        try:
+            return point_character_list_at_proxy(data, self.xtea_keys)
+        except Exception as exc:
+            log.error("[LOGIN] Could not rewrite the character list: %s", type(exc).__name__)
+            return None
+
+    def _process_login_packet(self, data: bytes) -> bytes:
+        """Learn the session keys from a login packet; the packet itself is forwarded unchanged."""
+        try:
+            if not data:
+                return data
+            if self.client_key_reader is not None:
+                # 26 Nov client: only note the exact game login; keys come from client memory.
+                size, head = NOVEMBER_26_LOGIN
+                if len(data) == size and data[4:9] == head and _checksummed(data):
+                    self._client_login_seen = True
+                return data
+            keys = find_session_keys(data, self._rsa_keys()) if len(data) >= RSA_BLOCK + 5 else None
+            if keys is None:
+                if len(data) >= RSA_BLOCK + 5:
+                    log.warning("No RSA block found in the login packet")
+                return data
+            self.xtea_keys = keys
+            self._ts_xtea_captured = time.time()
+            log.info("XTEA session keys captured (redacted)")
+            return data
+        except Exception as exc:
+            log.error('Error processing login packet: %s', type(exc).__name__)
+            return data
+
+    # ── game relay ───────────────────────────────────────────────────
     async def _run_relay_loop(self):
-        """Supervised relay loop. Creates 3 relay tasks and monitors them."""
-        while True:
-            client_task = asyncio.create_task(self._relay_client_to_server())
-            server_task = asyncio.create_task(self._relay_server_to_client())
-            inject_task = asyncio.create_task(self._process_inject_queue())
-            tasks = {client_task, server_task, inject_task}
-
-            try:
-                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            except asyncio.CancelledError:
-                for t in tasks:
-                    t.cancel()
-                for t in tasks:
-                    try:
-                        await t
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                raise
-
+        """Run both directions and the command worker until one of them stops."""
+        workers = {
+            asyncio.create_task(self._relay_client_to_server()): 'towards_server',
+            asyncio.create_task(self._relay_server_to_client()): 'towards_client',
+            asyncio.create_task(self._process_inject_queue()): 'command_worker',
+        }
+        try:
+            done, _ = await asyncio.wait(workers, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
-                if not task.cancelled() and (error := task.exception()) is not None:
-                    direction = ('towards_client' if task is server_task else
-                                 'towards_server' if task is client_task else 'command_worker')
-                    self._log_stream_end(direction, 'relay', type(error).__name__, error)
-            for t in pending:
-                t.cancel()
-            for t in pending:
-                try:
-                    await t
-                except (asyncio.CancelledError, Exception):
-                    pass
-            break
+                error = None if task.cancelled() else task.exception()
+                if error is not None:
+                    self._log_stream_end(workers[task], 'relay', type(error).__name__, error)
+        finally:
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
 
     async def _relay_client_to_server(self):
-        """Relay packets from client to server, intercepting login."""
-        while True:
-            raw = await self._read_packet(self.client_reader)
-            if raw is None:
-                log.info("Client disconnected")
-                break
-
+        while (body := await self._read_packet(self.client_reader)) is not None:
             self.packets_from_client += 1
-
             if self.server_writer is None:
-                log.warning("Server writer gone, stopping client relay")
-                break
-
-            if not self.logged_in:
-                # Login phase: extract XTEA keys
-                processed = self._process_login_packet(raw)
-                if processed is not None:
-                    self.server_writer.write(self._wrap_packet(processed))
-                    await self.server_writer.drain()
-                else:
-                    self.server_writer.write(self._wrap_packet(raw))
-                    await self.server_writer.drain()
+                log.warning("Server connection gone; client relay stops")
+                return
+            if self.logged_in:
+                body = self._process_client_game_packet(body)
             else:
-                processed = self._process_client_game_packet(raw)
-                self.server_writer.write(self._wrap_packet(processed))
-                await self.server_writer.drain()
+                body = self._process_login_packet(body) or body
+            await self._send(self.server_writer, body)
+        log.info("Client disconnected")
 
     async def _relay_server_to_client(self):
-        """Relay packets from server to client."""
-        while True:
-            raw = await self._read_packet(self.server_reader)
-            if raw is None:
-                log.info("Server disconnected")
-                break
-
+        while (body := await self._read_packet(self.server_reader)) is not None:
             self.last_server_read = time.monotonic()
             self.packets_from_server += 1
-
             if not self.logged_in and self.xtea_keys is not None:
                 self._establish_session()
-
-            # Forward to game client FIRST — minimize client-side latency.
-            # Decrypt + scan callbacks run AFTER the client already has the data.
             if self.client_writer is None:
-                log.warning("Client writer gone, stopping server relay")
-                break
-            self.client_writer.write(self._wrap_packet(raw))
-            await self.client_writer.drain()
+                log.warning("Client connection gone; server relay stops")
+                return
+            await self._send(self.client_writer, body)   # the client first, inspection after
             self.last_client_forward = time.monotonic()
-
-            frames = [raw]
+            frames = [body]
             if not self.logged_in and getattr(self, 'client_key_reader', None) is not None:
-                frames = self._confirm_client_key(raw)
+                frames = self._confirm_client_key(body)
                 if not frames:
                     continue
                 self._establish_session()
+            if self.logged_in:
+                self._observe_server_frames(frames)
+        log.info("Server disconnected")
 
-            # The MCP observer owns bounded asynchronous analysis. Never decrypt
-            # a large server frame on the socket-forwarding path in this mode.
-            tap = getattr(self, "on_encrypted_server_data", None)
-            if self.logged_in and tap:
-                try:
-                    for frame in frames:
-                        tap(frame, self.xtea_keys, self.session_generation)
-                except Exception:
-                    log.warning("Passive observer unavailable; relay continues")
+    def _observe_server_frames(self, frames):
+        tap = getattr(self, "on_encrypted_server_data", None)
+        if tap:
+            # The observer decrypts in its own worker, never on the forwarding path.
+            try:
+                for frame in frames:
+                    tap(frame, self.xtea_keys, self.session_generation)
+            except Exception:
+                log.warning("Passive observer unavailable; relay continues")
+            return
+        if not (self.on_server_packet or self.on_raw_server_data):
+            return
+        for frame in frames:
+            plain = self._decrypt_game_packet(frame)
+            if not plain:
                 continue
-
-            # Optional per-opcode and raw callbacks, used when no observer tap is set.
-            for raw in frames if self.logged_in and (self.on_server_packet or self.on_raw_server_data) else []:
+            if self.on_raw_server_data:
                 try:
-                    decrypted = self._decrypt_game_packet(raw)
-                    if decrypted:
-                        if self.on_raw_server_data:
-                            try:
-                                self.on_raw_server_data(decrypted)
-                            except Exception:
-                                pass
-                        if self.on_server_packet:
-                            pr = PacketReader(decrypted)
-                            if pr.remaining > 0:
-                                opcode = pr.read_u8()
-                                try:
-                                    self.on_server_packet(opcode, pr)
-                                except Exception as e:
-                                    log.debug(f"Server packet callback error: {e}")
+                    self.on_raw_server_data(plain)
                 except Exception:
                     pass
+            if self.on_server_packet:
+                reader = PacketReader(plain)
+                try:
+                    self.on_server_packet(reader.read_u8(), reader)
+                except Exception as exc:
+                    log.debug("Server packet callback error: %s", exc)
 
     def _establish_session(self):
         self.logged_in = True
         self._ts_logged_in = time.time()
-        log.info("=== GAME SESSION ESTABLISHED ===")
-        log.info("XTEA session keys captured (redacted)")
+        log.info("=== GAME SESSION ESTABLISHED === (keys redacted)")
         if self.on_login_success:
             self.on_login_success(self.xtea_keys)
 
@@ -494,7 +425,7 @@ class OTProxy:
 
     def _confirm_client_key(self, raw):
         """Confirm two frames before publishing a pinned native key. Forwarding is already complete."""
-        if not self._client_login_seen or self._key_attempts >= 8:
+        if not self._client_login_seen or self._key_attempts >= KEY_CHECK_ATTEMPTS:
             return []
         self._key_attempts += 1
         try:
@@ -527,132 +458,33 @@ class OTProxy:
             return frames
         except Exception:
             self._candidate_keys, self._key_frames = None, []
-            if self._key_attempts == 8:
+            if self._key_attempts == KEY_CHECK_ATTEMPTS:
                 log.warning('Client protocol key could not be confirmed; relay continues without automation')
             return []
 
-    def _process_login_packet(self, data: bytes) -> bytes | None:
-        """
-        Process a login packet from the client.
-        Extract XTEA keys from the RSA-encrypted block.
-
-        Since the client uses the default OTClient RSA key and we know the
-        private key, we just decrypt to extract XTEA keys and forward as-is.
-        No re-encryption needed - the server has the same key.
-        """
-        try:
-            if not data:
-                return data
-            has_checksum = False
-            if len(data) > 4:
-                checksum = struct.unpack_from('<I', data, 0)[0]
-                computed = adler32_checksum(data[4:])
-                if checksum == computed:
-                    has_checksum = True
-
-            offset = 4 if has_checksum else 0
-
-            if self.client_key_reader is not None:
-                # Exact November 26 game-login envelope; never mistake later
-                # encrypted actions for another login or retry RSA on them.
-                if has_checksum and len(data) == 137 and data[4:9] == struct.pack('<BHH',10,10,372):
-                    self._client_login_seen = True
-                return data
-
-            proto_byte = data[offset]
-            log.info(f"Login packet: proto=0x{proto_byte:02X}, size={len(data)}, checksum={'yes' if has_checksum else 'no'}")
-
-            # Skip small packets (handshake/challenge packets, not login)
-            rsa_block_size = 128
-            if len(data) < rsa_block_size + offset + 5:
-                log.debug(f"Packet too small for RSA ({len(data)} bytes), forwarding as-is")
-                return data  # Forward as-is
-
-            # Try to find and decrypt the RSA block using the DEFAULT key
-            # (the client encrypted with the default OTClient RSA public key)
-            keys_to_try = [self.default_rsa_key, self.proxy_rsa_key]
-
-            for key in keys_to_try:
-                # Try the last 128 bytes first (most common RSA block position
-                # in OT login packets), then fall back to brute-force iteration
-                last_offset = len(data) - rsa_block_size
-                offsets_to_try = [last_offset] if last_offset > offset else []
-                offsets_to_try += [
-                    o for o in range(offset + 1, len(data) - rsa_block_size + 1)
-                    if o != last_offset
-                ]
-
-                for try_offset in offsets_to_try:
-                    rsa_block = data[try_offset:try_offset + rsa_block_size]
-                    try:
-                        decrypted = rsa_decrypt(rsa_block, key)
-                        if decrypted[0] == 0x00:
-                            key_name = "DEFAULT" if key == self.default_rsa_key else "PROXY"
-                            log.info(f"RSA block found at offset {try_offset} (using {key_name} key)")
-
-                            xtea_data = decrypted[1:17]
-                            self.xtea_keys = struct.unpack('<4I', xtea_data)
-                            self._ts_xtea_captured = time.time()
-                            log.info("XTEA session keys captured (redacted)")
-
-                            # Log additional info from the decrypted block
-                            try:
-                                pr = PacketReader(decrypted[17:])
-                                gm_flag = decrypted[17] if len(decrypted) > 17 else 0
-                                log.debug(f"GM flag: {gm_flag}")
-                            except Exception:
-                                pass
-
-                            # Forward the original packet as-is
-                            # (server can decrypt it with the same RSA private key)
-                            return data
-                    except Exception:
-                        continue
-
-            log.warning("Could not find RSA block in login packet!")
-            return data  # Forward as-is anyway
-
-        except Exception as e:
-            log.error('Error processing login packet: %s', type(e).__name__)
-            return data
-
-    def _decrypt_game_packet(self, data: bytes) -> bytes | None:
-        """Decrypt an XTEA-encrypted game packet."""
-        return decrypt_game_packet(data, self.xtea_keys)
-
-    def _encrypt_game_packet(self, payload: bytes) -> bytes:
-        """Encrypt a game packet with XTEA for sending to server."""
-        data = struct.pack('<H', len(payload)) + payload
-        encrypted = xtea_encrypt(data, self.xtea_keys)
-        checksum = adler32_checksum(encrypted)
-        return struct.pack('<I', checksum) + encrypted
-
     def _process_client_game_packet(self, data: bytes) -> bytes:
-        """Process a game packet from the client (inspect, forward)."""
-        if self._client_packet_callbacks and self.xtea_keys:
+        """Show a client packet to the bot's callbacks; the packet is forwarded unchanged."""
+        if not (self._client_packet_callbacks and self.xtea_keys):
+            return data
+        plain = self._decrypt_game_packet(data)
+        if not plain:
+            return data
+        if len(plain) == 5 and plain[0] == ClientOpcode.ATTACK:
+            # The player picked a target in the client: drop the bot's visual marker request.
+            self._notify_target_marker(_CANCEL_ATTACK)
+        for callback in list(self._client_packet_callbacks):
+            reader = PacketReader(plain)
             try:
-                decrypted = self._decrypt_game_packet(data)
-                if decrypted:
-                    if len(decrypted)==5 and decrypted[0]==0xA1:self._notify_target_marker(b'\xa1\0\0\0\0')
-                    for cb in list(self._client_packet_callbacks):
-                        try:
-                            pr = PacketReader(decrypted)
-                            if pr.remaining > 0:
-                                opcode = pr.read_u8()
-                                cb(opcode, pr)
-                        except Exception as e:
-                            log.debug(f"Client packet callback error: {e}")
-            except Exception:
-                pass
-
+                callback(reader.read_u8(), reader)
+            except Exception as exc:
+                log.debug("Client packet callback error: %s", exc)
         return data
 
+    # ── bot commands ─────────────────────────────────────────────────
     async def inject_to_server(self, payload: bytes, *, guard=None):
-        """Inject a packet to the game server."""
         return self.enqueue_command('server', payload, guard)
 
     async def inject_to_client(self, payload: bytes):
-        """Inject a packet to the client."""
         return self.enqueue_command('client', payload)
 
     def enqueue_command(self,target,payload,guard=None):
@@ -688,52 +520,59 @@ class OTProxy:
             try:callback(int.from_bytes(payload[1:],'little'))
             except Exception:log.warning('Visual marker unavailable; server attack unchanged.')
 
+    def _skip_reason(self, receipt, guard):
+        """Why a queued command must not be sent now, or None to send it."""
+        if self.injections_paused:
+            return 'cancelled', 'automation_paused'
+        if receipt and receipt.session != self.session_generation:
+            return 'cancelled', 'session_changed'
+        if receipt and time.monotonic() > receipt.expires:
+            return 'expired', 'deadline'
+        if guard is not None and not guard():
+            return 'rejected', 'conditions_changed'  # the command's owner is gone or changed its mind
+        return None
+
     async def _process_inject_queue(self):
-        """Process queued packet injections."""
+        """Send queued commands one by one, each with a receipt of what happened."""
         while True:
             queued = await self._inject_queue.get()
             target, payload = queued[:2]
-            receipt=getattr(queued,'receipt',None)
-            wrote=False
-            if receipt and receipt.status!='queued':continue
-            if self.injections_paused:
-                if receipt:receipt.finish('cancelled','automation_paused')
+            guard = queued[2] if len(queued) == 3 else None
+            receipt = getattr(queued, 'receipt', None)
+            if receipt and receipt.status != 'queued':
                 continue
-            if receipt and receipt.session!=self.session_generation:
-                receipt.finish('cancelled','session_changed');continue
-            if receipt and time.monotonic()>receipt.expires:
-                receipt.finish('expired','deadline');continue
+            wrote = False
             try:
-                if len(queued)==3 and queued[2] is not None and not queued[2]():
-                    if receipt:receipt.finish('rejected','conditions_changed')
-                    continue  # Cancelled/expired navigation must not outlive its owner.
-                encrypted = self._encrypt_game_packet(payload)
-                packet = self._wrap_packet(encrypted)
-
-                if target == 'server' and self.server_writer:
-                    if receipt:receipt.write_started=True
-                    self.server_writer.write(packet);wrote=True
-                    await asyncio.wait_for(self.server_writer.drain(),timeout=1)
-                    if receipt:receipt.finish('dispatched')
+                skip = self._skip_reason(receipt, guard)
+                if skip:
+                    if receipt:
+                        receipt.finish(*skip)
+                    continue
+                writer = self.server_writer if target == 'server' else self.client_writer if target == 'client' else None
+                if writer is None:
+                    if receipt:
+                        receipt.finish('rejected', 'writer_unavailable')
+                    log.warning("Command dropped: no %s connection", target)
+                    continue
+                frame = self._wrap_packet(self._encrypt_game_packet(payload))
+                if receipt:
+                    receipt.write_started = True
+                writer.write(frame)
+                wrote = True
+                await asyncio.wait_for(writer.drain(), timeout=1)
+                if receipt:
+                    receipt.finish('dispatched')
+                if target == 'server':
                     self._notify_target_marker(payload)
-                    log.info(f"Injected to server: opcode=0x{payload[0]:02X} len={len(payload)}B")
-                elif target == 'client' and self.client_writer:
-                    if receipt:receipt.write_started=True
-                    self.client_writer.write(packet);wrote=True
-                    await asyncio.wait_for(self.client_writer.drain(),timeout=1)
-                    if receipt:receipt.finish('dispatched')
-                    log.info(f"Injected to client: opcode=0x{payload[0]:02X} len={len(payload)}B")
-                else:
-                    if receipt:receipt.finish('rejected','writer_unavailable')
-                    log.warning(f"Inject DROPPED: target={target} "
-                                f"server_writer={self.server_writer is not None} "
-                                f"client_writer={self.client_writer is not None}")
+                log.info("Sent to %s: opcode=0x%02X len=%dB", target, payload[0], len(payload))
             except asyncio.CancelledError:
-                if receipt:receipt.finish('unknown' if wrote or receipt.write_started else 'cancelled','dispatcher_stopped')
+                if receipt:
+                    receipt.finish('unknown' if wrote or receipt.write_started else 'cancelled', 'dispatcher_stopped')
                 raise
-            except Exception as e:
-                if receipt:receipt.finish('unknown' if wrote or receipt.write_started else 'failed',type(e).__name__)
-                log.error(f"Injection error: {type(e).__name__}")
+            except Exception as exc:
+                if receipt:
+                    receipt.finish('unknown' if wrote or receipt.write_started else 'failed', type(exc).__name__)
+                log.error("Command failed: %s", type(exc).__name__)
 
     def pause_injections(self):
         """Latch off bot traffic without interrupting the user's relay connection."""
@@ -749,8 +588,3 @@ class OTProxy:
             for payload in (build_stop_walk_packet(), build_attack_packet(0), build_follow_packet(0)):
                 self.server_writer.write(self._wrap_packet(self._encrypt_game_packet(payload)))
             await asyncio.wait_for(self.server_writer.drain(), timeout=1)
-
-    def get_proxy_rsa_public_key(self) -> str:
-        """Get the proxy's RSA public key as a decimal string."""
-        return str(self.proxy_rsa_key.n)
-
