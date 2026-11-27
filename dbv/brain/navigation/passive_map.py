@@ -431,6 +431,9 @@ class PassiveMapMonitor:
                 # A client update changes the scope; start it from the same server's previous data.
                 from dbv.brain.navigation.atlas_scope import inherit
                 inherit(paths.LOCAL_DATA_DIR, scope, server)
+                # Example routes with the map they need, once per scope of their server.
+                from dbv.brain.navigation.starter_map import apply as add_starter_map
+                add_starter_map(paths.LOCAL_DATA_DIR, scope, server)
                 self._inherited_scope = scope
             if self.learner is None or self.learner.scope != scope:
                 self.learner = TransitionLearner(paths.LOCAL_DATA_DIR,scope)

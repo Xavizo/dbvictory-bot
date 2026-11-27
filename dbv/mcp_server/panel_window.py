@@ -138,7 +138,7 @@ class PanelApp:
     def create_main(self):
         window = self.webview.create_window(f"DBVictory Bot — {self.label}", html=LOADING_HTML,
                                             js_api=PanelApi(self, "main"), width=1000, height=740,
-                                            min_size=(720, 540), background_color="#111827")
+                                            min_size=(720, 540), background_color="#111827", text_select=True)
         self.windows["main"] = window
         window.events.closing += self._closing_main
         window.events.loaded += lambda: self._loaded("main")
@@ -153,7 +153,7 @@ class PanelApp:
         editor = self.webview.create_window("DBVictory — Edytor trasy",
                                             f"{PANEL_URL}/route-editor?draft={draft_id}",
                                             js_api=PanelApi(self, "editor"), width=1200, height=850,
-                                            min_size=(820, 600), background_color="#111827")
+                                            min_size=(820, 600), background_color="#111827", text_select=True)
         self.windows["editor"] = editor
         editor.events.closed += lambda: self.windows.get("editor") is editor and self.windows.pop("editor", None)
         editor.events.loaded += lambda: self._loaded("editor")
