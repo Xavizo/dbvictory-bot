@@ -33,7 +33,8 @@ $Version = (& $HostPython -I -c "import sys; sys.path.insert(0, r'$Root'); from 
 if ($Version -notmatch '^v\d+\.\d+\.\d+$') { throw "Cannot derive the version of $Revision (needs full Git history)." }
 Write-Host "Building DBVictory Bot $Version ($($Revision.Substring(0,7)))"
 
-$Out = [IO.Path]::GetFullPath((Join-Path $Root $OutDir))
+if (-not [IO.Path]::IsPathRooted($OutDir)) { $OutDir = Join-Path $Root $OutDir }
+$Out = [IO.Path]::GetFullPath($OutDir)
 $Work = Join-Path $Out "work"
 $Stage = Join-Path $Out "DBVictory-Bot"
 foreach ($dir in $Stage, $Work) { if (Test-Path $dir) { Remove-Item -Recurse -Force $dir } }

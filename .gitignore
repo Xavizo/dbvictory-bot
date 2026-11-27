@@ -48,3 +48,6 @@ local_data/
 # Local build backups and newly recorded gameplay routes
 /dashboard/.next-*/
 /recordings/atlas_*.json
+
+# Release packaging output
+/build/
