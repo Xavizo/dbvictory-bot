@@ -128,3 +128,14 @@ def test_broken_pipe_closes_the_connection(api, monkeypatch):
 
 def test_there_is_no_generic_command_channel():
     assert not any(hasattr(ObserverPipe, name) for name in ("send_command", "write", "send"))
+
+
+def test_a_snapshot_with_non_utf8_name_bytes_is_still_read():
+    from dbv.client_bridge import observer_pipe
+    from dbv.client_bridge.client_profiles import NOVEMBER_26
+    pipe = observer_pipe.ObserverPipe(NOVEMBER_26)
+    pipe._handle = object()
+    line = b'{"creatures":[{"id":1073741825,"name":"Kr\xb3l","hp":50,"x":1,"y":2,"z":7}]}\n'
+    pipe._read_available = lambda: line
+    creatures = pipe.poll()
+    assert creatures and creatures[0]["id"] == 1073741825 and creatures[0]["hp"] == 50
