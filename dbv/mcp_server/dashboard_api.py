@@ -246,6 +246,11 @@ class _Handler(BaseHTTPRequestHandler):
             if type(body.get("enabled")) is not bool:
                 return self._json_response({"error": "enabled must be boolean"}, 400)
             return self._run_control("_async_potion_diagnostics", body["enabled"])
+        if self.path == "/api/diagnostics/item-identification":
+            body = self._read_body()
+            if not isinstance(body, dict) or type(body.get("enabled")) is not bool:
+                return self._json_response({"error": "enabled must be boolean"}, 400)
+            return self._run_control("_async_item_identification", body["enabled"])
         if self.path == "/api/map/pet":
             try:
                 from dbv.brain.navigation.transition_learning import position
@@ -916,6 +921,7 @@ def _build_state_json() -> str:
         "automation_paused": st.automation_paused,
         "automation_pause_kind": st.automation_pause_kind,
         "potion_diagnostics": st.potion_diagnostics.snapshot(),
+        "item_identification": st.item_identification.snapshot() if getattr(st, "item_identification", None) else None,
         "senzu_usage": gs.senzu_usage.snapshot() if getattr(gs, "senzu_usage", None) else None,
         "hunter_knife": {
             "status": knife.panel_status() if knife else "Wyłączony",
