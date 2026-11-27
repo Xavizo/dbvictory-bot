@@ -595,8 +595,24 @@ def _release_single_instance():
     _single_instance.mutex = None
 
 
+def _log_to_file(root):
+    """pythonw has no console: keep start-up failures in .codex/launcher.log."""
+    import logging
+    try:
+        folder = Path(root) / ".codex"
+        folder.mkdir(exist_ok=True)
+        log_file = folder / "launcher.log"
+        if log_file.exists() and log_file.stat().st_size > 1_000_000:
+            log_file.unlink()
+        logging.basicConfig(filename=str(log_file), level=logging.INFO, encoding="utf-8",
+                            format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    except OSError:
+        pass
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    _log_to_file(Path.cwd())
     read_only = "--check" in argv
     if not _single_instance():
         return 0
@@ -609,7 +625,7 @@ def main(argv=None):
     launcher = Launcher(root, host_module, frame, read_only=read_only, loop=loop)
     started = []
     api = LauncherApi(launcher, page)
-    window = webview.create_window(TITLE, str(page), js_api=api, width=1060, height=670, resizable=False,
+    window = webview.create_window(TITLE, str(page), js_api=api, width=1060, height=670, resizable=False, text_select=True,
                                    background_color="#0b1222", hidden=True)
     frame.window = window
 
@@ -639,4 +655,9 @@ async def _on_close(launcher):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        import logging
+        logging.getLogger("launcher").exception("The launcher stopped")
+        raise
