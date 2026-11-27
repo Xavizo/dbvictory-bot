@@ -51,3 +51,10 @@ export function plural(key: string, count: number, params?: Params): string {
 export function num(value: number, options?: Intl.NumberFormatOptions): string {
   return value.toLocaleString(locales[current], options);
 }
+
+/** A record whose values are read in the current language on every access: labels("x", ["a"]).a is t("x.a"). */
+export function labels<K extends string>(prefix: string, keys: readonly K[]): Readonly<Record<K, string>> {
+  const record = {} as Record<K, string>;
+  for (const key of keys) Object.defineProperty(record, key, { get: () => t(`${prefix}.${key}` as TextKey), enumerable: true });
+  return record;
+}

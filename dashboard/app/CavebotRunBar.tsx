@@ -28,7 +28,7 @@ export default function CavebotRunBar({state,connected,onRefresh}:{state:BotStat
       {target&&<span className="combat-target" title={targetStatus}>{t("run.target")} · {targetStatus}</span>}
       {(running||paused)&&bot.combat?.lure&&<LureStatus progress={bot.combat.lure} paused={paused}/>}
     </div>
-      <span title={bot.name}>{bot.mode==="combat"?t("run.combatNote"):t("run.routeNote",{name:bot.name,current:bot.waypoint?.current!=null?bot.waypoint.current+1:"–",total:bot.waypoint?.total??"–",loops:bot.loops??0})}</span>
+      <span title={bot.name}>{bot.mode==="combat"?t("run.combatNote"):t("run.routeNote",{name:bot.name??"",current:bot.waypoint?.current!=null?bot.waypoint.current+1:"–",total:bot.waypoint?.total??"–",loops:bot.loops??0})}</span>
       {bot.domains&&<small title={[bot.domains.movement.reason,bot.domains.combat.reason].filter(Boolean).join(" · ")}>
         {t("run.movement")}: {bot.mode==="combat"?t("run.manual"):domainLabel(bot.domains.movement.status)} · {t("run.combat")}: {domainLabel(bot.domains.combat.status)} · {t("run.potions")}: {t(state?.actions.some(a=>a.name==="auto_potions"&&a.running)&&!state?.automation_paused?"run.domain.running":"run.potionsOff")}
       </small>}

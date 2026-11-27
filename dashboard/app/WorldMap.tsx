@@ -1,4 +1,5 @@
 "use client";
+import { t } from "@/lib/i18n";
 import {memo, useEffect, useMemo, useRef, useState} from "react";
 import type {PointerEvent as ReactPointerEvent, ReactNode} from "react";
 import {stepFloor} from "@/lib/atlasModel";
@@ -46,19 +47,19 @@ function RouteLine({path,floor,color,dashed=false}:{path?:Position[];floor:numbe
 
 function ConnectorLayer({proposed,accepted,passages,side,floor}:{proposed?:AtlasConnector;accepted?:Position[];passages?:AtlasPassage[];side:number;floor:number}){
   const arrows=new Map<string,AtlasPassage>();
-  for(const t of [...(passages??[]),...(proposed?.passages??[])])
-    if(t.entry[2]===floor&&t.exit[2]!==floor)arrows.set(t.entry.join(",")+"|"+t.exit.join(","),t);
-  return <g aria-label="Łączniki pętli">
+  for(const link of [...(passages??[]),...(proposed?.passages??[])])
+    if(link.entry[2]===floor&&link.exit[2]!==floor)arrows.set(link.entry.join(",")+"|"+link.exit.join(","),link);
+  return <g aria-label={t("worldMap.connectors")}>
     {[{cells:accepted,dashed:false},{cells:proposed?.sectors,dashed:true}].map(({cells,dashed})=>
       <g key={String(dashed)} fill="#40cfdb" fillOpacity={dashed ? .14 : .29} stroke="#93faff"
         strokeWidth="2" strokeDasharray={dashed?"5 3":undefined}>
         {cells?.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y}
-          width={side} height={side} vectorEffect="non-scaling-stroke"><title>{dashed?"Proponowany":"Dodany"} łącznik · {x}, {y}, {floor}</title></rect>)}
+          width={side} height={side} vectorEffect="non-scaling-stroke"><title>{t(dashed?"worldMap.proposed":"worldMap.added")} · {x}, {y}, {floor}</title></rect>)}
       </g>)}
-    {[...arrows].map(([key,t])=><g key={key} transform={`translate(${t.entry[0]+.5} ${t.entry[1]+.5})`}>
-      <title>Przejście ({t.entry.join(", ")}) → ({t.exit.join(", ")})</title>
+    {[...arrows].map(([key,link])=><g key={key} transform={`translate(${link.entry[0]+.5} ${link.entry[1]+.5})`}>
+      <title>{t("worldMap.passage")} ({link.entry.join(", ")}) → ({link.exit.join(", ")})</title>
       <circle r="1.4" fill="#163b45" stroke="#93faff" strokeWidth=".2"/>
-      <text y=".47" textAnchor="middle" fontSize="1.4" fontWeight="bold" fill="#e0ffff">{t.exit[2]>floor?"↓":"↑"}{t.exit[2]}</text>
+      <text y=".47" textAnchor="middle" fontSize="1.4" fontWeight="bold" fill="#e0ffff">{link.exit[2]>floor?"↓":"↑"}{link.exit[2]}</text>
     </g>)}
   </g>;
 }
@@ -109,11 +110,11 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
         const url="http://127.0.0.1:8089/api/map/world?z="+floor+"&since="+encodeURIComponent(revision);
         const r=await authenticatedFetch(url,{signal:controller.signal});
         const data=await r.json();
-        if(!r.ok)throw Error(data.error || "Nie udało się wczytać minimapy.");
+        if(!r.ok)throw Error(data.error || t("worldMap.loadFailed"));
         if(controller.signal.aborted)return;
         if(data.sectors){setResult(data);revision=data.revision;}
         setError("");
-      }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:"Nie udało się odświeżyć mapy.");}
+      }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:t("worldMap.refreshFailed"));}
       finally{loading=false;}
     }
     void refresh();
@@ -191,23 +192,23 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
   return <section ref={surface} className="world-atlas" aria-busy={!!loadingLabel||(!result&&!error)}>
     <div className="world-atlas-tools">
       {toolbar}
-      {habitatName&&!!habitats?.length&&<button className="habitat-key" onClick={showHabitat} title={"Pokaż sektory: "+habitatName}>Sektory · {habitats.length}</button>}
+      {habitatName&&!!habitats?.length&&<button className="habitat-key" onClick={showHabitat} title={t("worldMap.showSectors",{name:habitatName})}>{t("worldMap.sectors")} · {habitats.length}</button>}
       <div className="world-map-navigation">
-        <label>Piętro <select aria-label="Piętro mapy" title="Ctrl + kółko zmienia piętro" value={floor} onChange={e=>changeFloor(Number(e.target.value))}>{Array.from({length:16},(_,z)=><option key={z}>{z}</option>)}</select></label>
-        <div className="map-zoom"><button disabled={!view} aria-label="Oddal mapę świata" onClick={()=>zoom(2)}>−</button>
-          <button disabled={!view} aria-label="Przybliż mapę świata" onClick={()=>zoom(.5)}>+</button></div>
-        <button disabled={!player} aria-pressed={following&&!!player} title={player?"Wyśrodkuj i śledź · "+player.join(", "):"Brak aktualnej pozycji"} onClick={()=>{if(player){setFloor(player[2]);setCamera(nearbyCamera(player[0],player[1]));follow(true);}}}>◎ Moja pozycja</button>
+        <label>{t("worldMap.floor")} <select aria-label={t("worldMap.floorAria")} title={t("worldMap.floorTitle")} value={floor} onChange={e=>changeFloor(Number(e.target.value))}>{Array.from({length:16},(_,z)=><option key={z}>{z}</option>)}</select></label>
+        <div className="map-zoom"><button disabled={!view} aria-label={t("worldMap.zoomOut")} onClick={()=>zoom(2)}>−</button>
+          <button disabled={!view} aria-label={t("worldMap.zoomIn")} onClick={()=>zoom(.5)}>+</button></div>
+        <button disabled={!player} aria-pressed={following&&!!player} title={player?t("worldMap.follow")+" · "+player.join(", "):t("worldMap.noPosition")} onClick={()=>{if(player){setFloor(player[2]);setCamera(nearbyCamera(player[0],player[1]));follow(true);}}}>◎ {t("worldMap.myPosition")}</button>
         <div className="map-layer-menu" ref={layerMenu} onKeyDown={e=>{if(e.key==="Escape"&&layers){e.stopPropagation();setLayers(false);layerMenu.current?.querySelector("button")?.focus();}}}>
-          <button aria-expanded={layers} onClick={()=>setLayers(!layers)}>Warstwy</button>
+          <button aria-expanded={layers} onClick={()=>setLayers(!layers)}>{t("worldMap.layers")}</button>
           {layers&&<div><label><input type="checkbox" checked={overlay} onChange={e=>setOverlay(e.target.checked)}/> Zbadane pola</label>
-            <label><input type="checkbox" checked={grid} onChange={e=>setGrid(e.target.checked)}/> Siatka 64 × 64</label>
-            <button onClick={()=>{follow(false);setCamera(null);setLayers(false);}}>Pokaż całe piętro</button></div>}
+            <label><input type="checkbox" checked={grid} onChange={e=>setGrid(e.target.checked)}/> {t("worldMap.grid")}</label>
+            <button onClick={()=>{follow(false);setCamera(null);setLayers(false);}}>{t("worldMap.wholeFloor")}</button></div>}
         </div>
       </div>
     </div>
-    {error&&<div role="status">{error} <button onClick={()=>setRetry(v=>v+1)}>Ponów</button></div>}
-    {!result?(error?null:<p role="status" className="atlas-loading"><i className="atlas-spinner"/>Wczytywanie piętra…</p>):!view?<p>Brak zapisanych pól na tym piętrze.</p>:
-    <svg ref={svg} className={ground?.selecting?"select-sectors":undefined} aria-label="Mapa świata DBVictory" viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
+    {error&&<div role="status">{error} <button onClick={()=>setRetry(v=>v+1)}>{t("common.retry")}</button></div>}
+    {!result?(error?null:<p role="status" className="atlas-loading"><i className="atlas-spinner"/>{t("worldMap.loadingFloor")}</p>):!view?<p>{t("worldMap.emptyFloor")}</p>:
+    <svg ref={svg} className={ground?.selecting?"select-sectors":undefined} aria-label={t("worldMap.aria")} viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
       onPointerDown={e=>{const m=svg.current?.getScreenCTM();if(!m||(e.button!==0&&e.button!==1)||!e.isPrimary)return;
         const panOnly=e.button===1||e.altKey||e.ctrlKey;
         e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);
@@ -223,13 +224,13 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
       <defs><pattern id="world-sector-grid" x={0} y={0} width={64} height={64} patternUnits="userSpaceOnUse">
         <path d="M64 0H0V64" fill="none" stroke="white" strokeOpacity={.55} vectorEffect="non-scaling-stroke"/></pattern></defs>
       <Sectors sectors={result.sectors} overlay={overlay}/>
-      {zoneLayer&&<g aria-label="Odkryte strefy expienia" pointerEvents="none">
+      {zoneLayer&&<g aria-label={t("worldMap.zones")} pointerEvents="none">
         <path d={zoneLayer.fill} fill="#ffbc61" fillOpacity=".20" stroke={view.width<=256?"#ffd497":"none"} strokeWidth=".6" vectorEffect="non-scaling-stroke"/>
         <path d={zoneLayer.outline} fill="none" stroke="#ffcf88" strokeWidth="1.5" vectorEffect="non-scaling-stroke"/>
       </g>}
       {ground&&!zones&&<g fill="#ffbc61" fillOpacity=".31" stroke="#ffd497" strokeWidth=".2">{ground.cells.filter(p=>p[2]===floor).map(([x,y])=>
         <rect key={x+','+y} x={x} y={y} width={side} height={side}/>)}</g>}
-      {ground?.selected&&<g aria-label="Wybrany teren" fill="#29b86a" fillOpacity=".54" stroke="#a4ffc3" strokeWidth=".38" pointerEvents="none">
+      {ground?.selected&&<g aria-label={t("worldMap.selectedGround")} fill="#29b86a" fillOpacity=".54" stroke="#a4ffc3" strokeWidth=".38" pointerEvents="none">
         {ground.selected.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}/>)}</g>}
       {habitats&&<g fill="#ad85f2" fillOpacity=".35" stroke="#e8cbff" strokeWidth=".56">{habitats.filter(h=>h.position[2]===floor).map(h=>
         <rect key={h.position.join(",")} x={h.position[0]} y={h.position[1]} width={habitatSide} height={habitatSide}><title>{h.species.map(([n,k])=>n+" · wykrycia: "+k).join("\n")}</title></rect>)}</g>}
@@ -240,32 +241,32 @@ export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player
           <circle r={m.radius!==undefined ? .66 : m.exact ? 1 : side/4} fill={m.live?"#5df0bd":"#eee6ff"} stroke={m.live?"#144937":"#4f2872"} strokeWidth=".4"/>
           {m.minimum&&<text x=".95" y="-.5" fontSize="1.7" fill="white" stroke="#30203c" strokeWidth=".32" paintOrder="stroke">{m.minimum}+</text>}
         </g>)}</g>}
-      {!!spawnMarks.length&&<g aria-label="Przybliżone spawny z pierwszych wykryć">
+      {!!spawnMarks.length&&<g aria-label={t("worldMap.spawns")}>
         {spawnMarks.map(s=>
           <circle key={s.point.join(",")} cx={s.point[0]+.5} cy={s.point[1]+.5} r=".68" fill="#efdcff" stroke="#563678" strokeWidth=".26">
-            <title>{["Przybliżony spawn",...s.lines].join("\n")}</title>
+            <title>{[t("worldMap.spawn"),...s.lines].join("\n")}</title>
           </circle>)}
       </g>}
       {ground?.missing?.filter(p=>p[2]===floor).map(([x,y])=><rect key={x+","+y} x={x} y={y} width={side} height={side}
-        fill="#242734" fillOpacity=".28" stroke="#c0b7c6" strokeOpacity=".7" strokeDasharray="1 1" strokeWidth=".3" pointerEvents="none"><title>Sektor poza wyznaczoną pętlą</title></rect>)}
+        fill="#242734" fillOpacity=".28" stroke="#c0b7c6" strokeOpacity=".7" strokeDasharray="1 1" strokeWidth=".3" pointerEvents="none"><title>{t("worldMap.outside")}</title></rect>)}
       <RouteLine path={ground?.route} floor={floor} color="#effff7"/>
       <RouteLine path={ground?.approach} floor={floor} color="#73bfff" dashed/>
       {ground?.route?.[0]?.[2]===floor&&<circle cx={ground.route[0][0]+.5} cy={ground.route[0][1]+.5} r="1.2"
-        fill="#173a34" stroke="#59f1bc" strokeWidth=".4"><title>Początek pętli expienia</title></circle>}
+        fill="#173a34" stroke="#59f1bc" strokeWidth=".4"><title>{t("worldMap.loopStart")}</title></circle>}
       {ground&&<ConnectorLayer proposed={ground.connector} accepted={ground.via} passages={ground.passages} floor={floor} side={side}/>}
       {grid&&<rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#world-sector-grid)" pointerEvents="none"/>}
       {box&&<rect {...box} fill="#29b86a" fillOpacity=".25" stroke="#a4ffc3" strokeWidth="2" vectorEffect="non-scaling-stroke" pointerEvents="none"/>}
       {selection&&<circle cx={selection[0]+.5} cy={selection[1]+.5} r={Math.max(.8,view.width/190)} fill="none" stroke="white" strokeWidth={2} vectorEffect="non-scaling-stroke"/>}
-      {player&&player[2]===floor&&<g aria-label={"Twoja postać: "+player.join(", ")} transform={`translate(${player[0]+.5} ${player[1]+.5})`}>
-        <title>Twoja postać · {player.join(", ")}</title>
+      {player&&player[2]===floor&&<g aria-label={t("worldMap.you")+": "+player.join(", ")} transform={`translate(${player[0]+.5} ${player[1]+.5})`}>
+        <title>{t("worldMap.you")} · {player.join(", ")}</title>
         {([["#10252b",17],["#4af0d4",13],["#153b43",8],["#fff",4]] as const).map(([color,width])=>
           <path key={color} d="M0 0h.0001" fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" vectorEffect="non-scaling-stroke"/>)}</g>}
     </svg>}
     {loadingLabel&&<div role="status" className="atlas-loading map-work-indicator"><i className="atlas-spinner"/>{loadingLabel}</div>}
     {selection&&!ground?.editing&&!ground?.selecting&&<div className="map-selection">
-      <span>{selection.join(", ")}</span>{zones&&zoneLayer?.cells.has(Math.floor(selection[0]/zones.side)*zones.side+","+Math.floor(selection[1]/zones.side)*zones.side)&&<span>Odkryta strefa</span>}{here&&<span className="habitat-key">{here.species.map(([n])=>n).join(" · ")}</span>}
-      <button onClick={()=>onOpen(selection)}>Otwórz pole</button>
-      {ground?.planApproach&&<button onClick={()=>ground.planApproach?.(selection)}>Dojście stąd</button>}
-      <button aria-label="Zamknij dane pola" onClick={()=>select(null)}>×</button></div>}
+      <span>{selection.join(", ")}</span>{zones&&zoneLayer?.cells.has(Math.floor(selection[0]/zones.side)*zones.side+","+Math.floor(selection[1]/zones.side)*zones.side)&&<span>{t("worldMap.discovered")}</span>}{here&&<span className="habitat-key">{here.species.map(([n])=>n).join(" · ")}</span>}
+      <button onClick={()=>onOpen(selection)}>{t("worldMap.openTile")}</button>
+      {ground?.planApproach&&<button onClick={()=>ground.planApproach?.(selection)}>{t("worldMap.approach")}</button>}
+      <button aria-label={t("worldMap.closeTile")} onClick={()=>select(null)}>×</button></div>}
   </section>;
 });

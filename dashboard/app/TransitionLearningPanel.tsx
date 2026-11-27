@@ -1,22 +1,15 @@
 "use client";
 
+import { t, labels, locale, plural } from "@/lib/i18n";
 import { useState } from "react";
 import type { TransitionAction, PassiveMapState, TransitionObservation } from "@/lib/api";
 
-export const transitionActions: Record<TransitionAction, string> = {
-  clear_web: "Przetnij pajęczynę AiO i przejdź", step: "Wejście na pole", use: "Użycie obiektu", use_with: "Użycie narzędzia na polu",
-  use_then_step: "Użycie obiektu → przejście", use_with_then_step: "Narzędzie → wejście na pole", fly_up: "Czar fly up", unknown: "Nieustalona",
-};
-const objectBehaviors = {open_then_step:"Otwarcie bez ruchu → potem krok", use_enters:"Użycie przenosi na pole", manual_close:"Ręczne zamknięcie", closes_after_exit:"Zamknięcie po wyjściu", stays_open:"Otwarte przez ≥2 s po wyjściu"};
-const statuses = { waiting: "Czeka na grę", learning: "Obserwuje Twoją grę", suspended: "Wstrzymane podczas automatycznego ruchu lub śmierci", error: "Odczyt chwilowo niedostępny" };
-const reasons: Record<string,string> = {
-  matched_command: "Polecenie zgodne ze zmianą pozycji", door_crossing: "Zaobserwowane przejście przez drzwi",
-  no_command: "Brak pasującego polecenia", multiple_commands: "Kilka poleceń między odczytami",
-  incomplete_entry: "Brak pełnych danych pola wejścia", multiple_steps: "Nieznana lub wieloetapowa trasa",
-  sample_gap: "Postać ruszyła przed potwierdzeniem wyjścia", long_jump: "Skok pozycji",
-};
-const coords = (p: number[] | null) => p ? `(${p.join(", ")})` : "Nieustalone";
-const tiles=(n:number)=>`${n} ${n===1 ? "pole" : n%10>=2 && n%10<=4 && !(n%100>=12 && n%100<=14) ? "pola" : "pól"}`;
+export const transitionActions: Readonly<Record<TransitionAction, string>> = labels("transition.action", ["clear_web", "step", "use", "use_with", "use_then_step", "use_with_then_step", "fly_up", "unknown"] as const);
+const objectBehaviors = labels("transition.behavior", ["open_then_step", "use_enters", "manual_close", "closes_after_exit", "stays_open"] as const);
+const statuses = labels("transition.status", ["waiting", "learning", "suspended", "error"] as const);
+const reasons: Readonly<Record<string,string>> = labels("transition.reason", ["matched_command", "door_crossing", "no_command", "multiple_commands", "incomplete_entry", "multiple_steps", "sample_gap", "long_jump"] as const);
+const coords = (p: number[] | null) => p ? `(${p.join(", ")})` : t("transition.unknownPlace");
+const tiles=(n:number)=>plural("transition.tiles",n);
 
 export default function TransitionLearningPanel({ map, onInspect }: { map?: PassiveMapState; onInspect?:(pos:[number,number,number])=>void }) {
   const learning=map?.learning, center=map?.center;
@@ -27,63 +20,63 @@ export default function TransitionLearningPanel({ map, onInspect }: { map?: Pass
     return distance(a)-distance(b) || b.last_seen-a.last_seen;
   });
   const rows=order==="nearby" ? learning?.nearby_records ?? fallback : learning?.records ?? [];
-  return <section aria-label="Uczenie przejść" className="transition-panel">
+  return <section aria-label={t("transition.aria")} className="transition-panel">
     <div className="transition-summary">
-      <div><span>ZAPISANE WARIANTY</span><strong>{learning?.total ?? 0}</strong><small>Wszystkie obserwacje w tym profilu</small></div>
-      <div><span>POWIĄZANE</span><strong className="text-emerald-300">{learning?.observed ?? 0}</strong><small>Czynność zgodna ze zmianą obiektu lub pozycji</small></div>
-      <div><span>DO SPRAWDZENIA</span><strong className="text-amber-300">{(learning?.total ?? 0)-(learning?.observed ?? 0)}</strong><small>Niepełne lub niejednoznaczne dane</small></div>
+      <div><span>{t("transition.saved")}</span><strong>{learning?.total ?? 0}</strong><small>{t("transition.savedNote")}</small></div>
+      <div><span>{t("transition.linked")}</span><strong className="text-emerald-300">{learning?.observed ?? 0}</strong><small>{t("transition.linkedNote")}</small></div>
+      <div><span>{t("transition.toCheck")}</span><strong className="text-amber-300">{(learning?.total ?? 0)-(learning?.observed ?? 0)}</strong><small>{t("transition.toCheckNote")}</small></div>
     </div>
     <div className="transition-toolbar">
-      <div><h2>Baza przejść</h2><span className={learning?.status === "learning" ? "text-emerald-300" : "text-amber-300"}>
+      <div><h2>{t("transition.base")}</h2><span className={learning?.status === "learning" ? "text-emerald-300" : "text-amber-300"}>
         {statuses[learning?.status ?? "waiting"]}
       </span></div>
-    <label>Sortowanie
+    <label>{t("transition.sort")}
       <select value={order} onChange={e=>setOrder(e.target.value as "nearby"|"recent")}>
-        <option value="nearby">Najbliższe wejścia</option><option value="recent">Ostatnio widziane</option>
+        <option value="nearby">{t("transition.nearby")}</option><option value="recent">{t("transition.recent")}</option>
       </select>
     </label>
     </div>
-    {order==="nearby" && <p className="transition-context">Najpierw bieżące piętro · odległość bez uwzględnienia przeszkód · nieustalone wejścia na końcu</p>}
+    {order==="nearby" && <p className="transition-context">{t("transition.context")}</p>}
     {learning?.storage_error && <p role="alert" className="mt-2 rounded border border-amber-700 p-2 text-sm text-amber-200">{learning.storage_error}</p>}
-    {learning?.limit_reached && <p className="mt-2 text-xs text-amber-300">Osiągnięto limit 2000 wariantów; nowe miejsca nie są dopisywane.</p>}
-    {!learning?.records.length ? <div className="empty-panel"><h2>Twoja baza zacznie rosnąć podczas gry</h2><p>Przejdź ręcznie schodami, drabiną lub teleportem. Krótki postój po przejściu ułatwi potwierdzenie miejsca wyjścia.</p></div> :
+    {learning?.limit_reached && <p className="mt-2 text-xs text-amber-300">{t("transition.limit")}</p>}
+    {!learning?.records.length ? <div className="empty-panel"><h2>{t("transition.emptyTitle")}</h2><p>{t("transition.emptyNote")}</p></div> :
       <div className="transition-table-wrap">
         <table className="transition-table">
           <thead><tr>
-            <th>Odległość</th><th>Wejście → wyjście</th><th>Czynność</th><th>Ocena</th><th>Powt.</th>
+            <th>{t("transition.col.distance")}</th><th>{t("transition.col.entryExit")}</th><th>{t("transition.col.action")}</th><th>{t("transition.col.rating")}</th><th>{t("transition.col.repeats")}</th>
           </tr></thead>
           <tbody>{rows.map(row => <tr key={row.id}>
-            <td><span className="distance-label">{!row.entry ? "—" : !center ? "—" : row.entry[2]!==center[2] ? `Z = ${row.entry[2]}` : distance(row)===0 ? "Tutaj" : tiles(distance(row))}</span>
-              <small className="distance-caption">{!row.entry ? "Nieustalone wejście" : !center ? "Brak pozycji" : row.entry[2]!==center[2] ? "Inne piętro" : "Bieżące piętro"}</small>
+            <td><span className="distance-label">{!row.entry ? "—" : !center ? "—" : row.entry[2]!==center[2] ? `Z = ${row.entry[2]}` : distance(row)===0 ? t("transition.here") : tiles(distance(row))}</span>
+              <small className="distance-caption">{t(!row.entry ? "transition.unknownEntry" : !center ? "transition.noPosition" : row.entry[2]!==center[2] ? "transition.otherFloor" : "transition.thisFloor")}</small>
             </td>
             <td className="font-mono whitespace-nowrap">
               <strong className="transition-entry">{coords(row.entry)}</strong> <span className="transition-exit">{row.object_change ? `· ${row.object_change.closed_id} ⇄ ${row.object_change.open_id}` : `→ ${coords(row.exit)}`}</span>
               <p className="mt-1 text-gray-400">#{row.id.slice(0,6)} · ID: {row.entry_items.join(", ") || "?"}</p>
               <div className="transition-row-tools">
               {row.entry && map?.cells.some(c=>c.x===row.entry![0] && c.y===row.entry![1] && c.z===row.entry![2]) && onInspect &&
-                <button className="text-sky-300" aria-label={`Pokaż wejście ${coords(row.entry)} na mapie`} onClick={()=>onInspect([...row.entry!] as [number,number,number])}>Mapa ↗</button>}
-              <details className="font-sans text-gray-400"><summary className="cursor-pointer">Szczegóły</summary>
-                <p>Pozycja przed: {coords(row.origin)}</p>
-                <p>{row.direction === "up" ? "W górę" : row.direction === "down" ? "W dół" : "To samo piętro"}</p>
-                <p>ID warstw wejścia: {row.entry_items.join(", ") || "nieustalone"}</p>
-                <p>Ostatnio: {new Date(row.last_seen*1000).toLocaleString("pl-PL")}</p>
-                <p>{row.object_change ? "Zmiana stanu obiektu po ręcznej czynności" : reasons[row.reason] ?? "Wymaga sprawdzenia"}</p>
+                <button className="text-sky-300" aria-label={t("transition.showOnMap",{place:coords(row.entry)})} onClick={()=>onInspect([...row.entry!] as [number,number,number])}>{t("itemId.map")} ↗</button>}
+              <details className="font-sans text-gray-400"><summary className="cursor-pointer">{t("transition.details")}</summary>
+                <p>{t("transition.before")}: {coords(row.origin)}</p>
+                <p>{t(row.direction === "up" ? "transition.up" : row.direction === "down" ? "transition.down" : "transition.sameFloor")}</p>
+                <p>{t("transition.entryIds")}: {row.entry_items.join(", ") || t("transition.unknownLower")}</p>
+                <p>{t("transition.lastSeen")}: {new Date(row.last_seen*1000).toLocaleString(locale())}</p>
+                <p>{row.object_change ? t("transition.objectChange") : reasons[row.reason] ?? t("transition.needsCheck")}</p>
               </details>
               </div>
             </td>
             <td>{row.object_change ? objectBehaviors[row.object_change.behavior] : transitionActions[row.action]}
-              {row.item_id !== null && <p className="mt-1 text-gray-400">Obiekt: {row.item_id}</p>}
-              {row.prepared_item_id && <p className="text-gray-400">Po otwarciu: {row.prepared_item_id}</p>}
-              {row.tool_id !== null && <p className="text-gray-400">Narzędzie: {({3003:"Rope",3457:"Shovel",8899:"AiO"} as Record<number,string>)[row.tool_id] ?? "ID"} · {row.tool_id}</p>}
+              {row.item_id !== null && <p className="mt-1 text-gray-400">{t("transition.object")}: {row.item_id}</p>}
+              {row.prepared_item_id && <p className="text-gray-400">{t("transition.afterOpen")}: {row.prepared_item_id}</p>}
+              {row.tool_id !== null && <p className="text-gray-400">{t("transition.tool")}: {({3003:"Rope",3457:"Shovel",8899:"AiO"} as Record<number,string>)[row.tool_id] ?? "ID"} · {row.tool_id}</p>}
             </td>
-            <td><span className={`evidence-badge ${row.evidence}`}>{row.evidence === "observed" ? "Zaobserwowane" : "Do sprawdzenia"}</span>
-              {row.variable_exit && <p className="mt-1 text-amber-300">Różne cele dla tego wejścia</p>}
+            <td><span className={`evidence-badge ${row.evidence}`}>{t(row.evidence === "observed" ? "transition.observed" : "transition.review")}</span>
+              {row.variable_exit && <p className="mt-1 text-amber-300">{t("transition.variableExit")}</p>}
             </td>
-            <td><span className="repeat-count">× {row.count}</span><small className="distance-caption">{new Date(row.last_seen*1000).toLocaleTimeString("pl-PL")}</small></td>
+            <td><span className="repeat-count">× {row.count}</span><small className="distance-caption">{new Date(row.last_seen*1000).toLocaleTimeString(locale())}</small></td>
           </tr>)}</tbody>
         </table>
       </div>}
-    <div className="transition-footer"><span>{order==="recent" ? "Ostatnie" : "Najbliższe"} {rows.length} z {learning?.total ?? 0} wariantów{order==="nearby" && learning && !learning.nearby_records ? " (wybór spośród ostatnich 20)" : ""}</span><span>Pasywny zapis · bez sterowania postacią</span></div>
-    <details className="map-source"><summary>Jak interpretować obserwacje?</summary><p className="mt-2">Powiązanie opisuje udaną obserwację, nie dowodzi jedynej wymaganej czynności. Kierunek powrotny, wymagany poziom i samoczynne zamykanie drzwi wymagają osobnego potwierdzenia.</p>{learning?.file && <p className="mt-1 break-all">Zapis lokalny: local_data/{learning.file}</p>}</details>
+    <div className="transition-footer"><span>{t(order==="recent" ? "transition.footerRecent" : "transition.footerNearby",{shown:rows.length,total:learning?.total ?? 0})}{order==="nearby" && learning && !learning.nearby_records ? " "+t("transition.fromLast20") : ""}</span><span>{t("transition.passive")}</span></div>
+    <details className="map-source"><summary>{t("transition.howTo")}</summary><p className="mt-2">{t("transition.howToNote")}</p>{learning?.file && <p className="mt-1 break-all">{t("transition.localFile")}: local_data/{learning.file}</p>}</details>
   </section>;
 }
