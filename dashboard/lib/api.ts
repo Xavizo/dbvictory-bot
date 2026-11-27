@@ -199,7 +199,7 @@ export interface MapAnnotationInput {
 export const saveMapAnnotation = (data:MapAnnotationInput) => control("/api/map/annotation",data);
 export const labelVisiblePet = (position:number[],ref:string,name:string|null) => control("/api/map/pet",{position,ref,name});
 
-export type KnifeCorpse = {id:number;skinned:number};
+export type KnifeCorpse = {id:number;skinned:number;monster?:string};
 
 function okOrThrow(response: Response): Response {
   if (response.ok) return response;

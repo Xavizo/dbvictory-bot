@@ -42,7 +42,7 @@ export default function HunterKnifePanel({ state, onRefresh }: {
       {info.last_issue.spell && ` · ${info.last_issue.since_spell_ms} ms od próby czaru Cavebota ${info.last_issue.spell}`}</small>}
     {info?.corpses && <div className="knife-corpses" aria-label="Ciała dla Hunter Knife">
       <small>Ciała:</small>
-      {corpses.map(c => <span key={c.id} title={`Po oskórowaniu: ${c.skinned}`}>{c.id}
+      {corpses.map(c => <span key={c.id} title={`${c.monster ? c.monster + " · " : ""}po oskórowaniu: ${c.skinned}`}>{c.id}
         <button type="button" className="knife-remove" aria-label={`Usuń ciało ${c.id}`} disabled={busy}
           onClick={() => save(corpses.filter(x => x.id !== c.id))}>×</button></span>)}
       {!corpses.length && <small>brak</small>}

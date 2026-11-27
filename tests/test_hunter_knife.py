@@ -11,7 +11,7 @@ def test_manual_unknown_corpse_requires_single_replacement_on_same_tile(caplog):
     from dbv.client_bridge.protocol import ClientOpcode, PacketReader, build_use_item_ex_packet
 
     from dbv.brain.combat.hunter_knife import LearnedCorpses
-    game = SimpleNamespace()
+    game = SimpleNamespace(kill_log=[dict(t=time.time() - 5, name="Big Ape", x=22, y=44, z=7)])
     learned = LearnedCorpses()
     monitor = PassiveMapMonitor(SimpleNamespace(connected=True, game_state=game, knife_learned=learned))
     pos = [22,44,7]
@@ -32,7 +32,7 @@ def test_manual_unknown_corpse_requires_single_replacement_on_same_tile(caplog):
         monitor._check_manual_knife(game, {**frame(7101), 'captured_at': time.time() + .01})
         assert "corpse_before=7100 corpse_after=7101" in caplog.text
         assert monitor._knife_witness is None
-    assert learned.snapshot() == {7100: 7101}
+    assert learned.snapshot() == {7100: (7101, "Big Ape")}
 
 A = (1925, 1288, 4)
 B = (1927, 1289, 4)

@@ -20,11 +20,20 @@ MAX_CORPSES = 128
 FRESH_BODIES = {c["id"] for c in DEFAULT_CORPSES}
 SKINNED_BY = {c["id"]: c["skinned"] for c in DEFAULT_CORPSES}
 SPENT_BODIES = set(SKINNED_BY.values())
-# Monsters whose deaths and Loot lines count as evidence of the player's own kill.
-SKINNABLE_SPECIES = frozenset({"fire elemental", "fire elementalis", "mutant fire elemental",
-                               "fury mutant fire", "fury mutant fire elemental",
-                               "roco", "chibi roco", "fury roco",
-                               "gunso", "chibi gunso", "fury gunso", "mutant wolf"})
+# Monsters whose deaths and Loot lines count as evidence of the player's own kill:
+# these, plus the monster recorded with each corpse learned by hand.
+DEFAULT_SPECIES = frozenset({"fire elemental", "fire elementalis", "mutant fire elemental",
+                             "fury mutant fire", "fury mutant fire elemental",
+                             "roco", "chibi roco", "fury roco",
+                             "gunso", "chibi gunso", "fury gunso", "mutant wolf"})
+SKINNABLE_SPECIES = set(DEFAULT_SPECIES)
+
+
+def monster_name(name):
+    """A monster name as the game shows it, normalised; None when it is not usable."""
+    if type(name) is not str or not 1 <= len(name.strip()) <= 64 or "[" in name or "]" in name:
+        return None
+    return " ".join(name.split()).casefold()
 
 
 def _item_id(value, label):
@@ -49,11 +58,13 @@ def validate_config(cfg):
         after = _item_id(entry.get("skinned", SPENT), "ID ciała po oskórowaniu")
         if body_id in (KNIFE, after):
             raise ValueError(f"ID {body_id} nie może być ciałem do skórowania.")
-        clean[body_id] = after
-    overlap = set(clean) & set(clean.values())
+        clean[body_id] = {"id": body_id, "skinned": after}
+        if monster_name(entry.get("monster")):
+            clean[body_id]["monster"] = monster_name(entry["monster"])
+    overlap = set(clean) & {e["skinned"] for e in clean.values()}
     if overlap:
         raise ValueError(f"ID {min(overlap)} nie może być jednocześnie świeżym i oskórowanym ciałem.")
-    cfg["corpses"] = [{"id": k, "skinned": v} for k, v in clean.items()]
+    cfg["corpses"] = list(clean.values())
     return cfg
 
 
@@ -66,41 +77,75 @@ def effective_config(cfg):
 
 
 def with_learned(cfg, learned):
-    """Add corpses skinned by hand that are not on the list yet; None when nothing is new."""
+    """Add corpses skinned by hand that are not on the list yet; None when nothing is new.
+
+    ``learned`` maps a fresh corpse ID to (ID after skinning, monster name or None).
+    """
     cfg = effective_config(cfg)
     known = {c["id"] for c in cfg["corpses"]}
     spent = {c["skinned"] for c in cfg["corpses"]}
-    new = [{"id": b, "skinned": a} for b, a in learned.items()
-           if b not in known and b not in spent and a not in known and b not in (KNIFE, a)]
+    new = []
+    for body_id, (after, name) in learned.items():
+        if body_id in known or body_id in spent or after in known or body_id in (KNIFE, after):
+            continue
+        entry = {"id": body_id, "skinned": after}
+        if monster_name(name):
+            entry["monster"] = monster_name(name)
+        new.append(entry)
     if not new or len(cfg["corpses"]) + len(new) > MAX_CORPSES:
         return None
     return {**cfg, "corpses": cfg["corpses"] + new}
 
 
+def learn_into(settings, learned, name="auto_hunter_knife"):
+    """Move corpses learned by hand into the action's saved list. True when it changed."""
+    rows = learned.snapshot()
+    if not rows:
+        return False
+    actions = settings.setdefault("actions", {})
+    cfg = with_learned(actions.get(name), rows)
+    learned.forget(rows)
+    if cfg is None:
+        return False
+    actions[name] = {**actions.get(name, {}), "corpses": cfg["corpses"]}
+    logging.getLogger(__name__).info("Hunter Knife 5908: nowe ciała z ręcznego skórowania %s", rows)
+    return True
+
+
 def apply_config(cfg):
     """Make the knife recognise the configured corpses; return what was applied."""
-    skinned_by = {c["id"]: c["skinned"] for c in effective_config(cfg)["corpses"]}
+    corpses = effective_config(cfg)["corpses"]
+    skinned_by = {c["id"]: c["skinned"] for c in corpses}
     FRESH_BODIES.clear()
     FRESH_BODIES.update(skinned_by)
     SKINNED_BY.clear()
     SKINNED_BY.update(skinned_by)
     SPENT_BODIES.clear()
     SPENT_BODIES.update(skinned_by.values() or (SPENT,))
-    return tuple(sorted(skinned_by.items()))
+    species = DEFAULT_SPECIES | {c["monster"] for c in corpses if c.get("monster")}
+    SKINNABLE_SPECIES.clear()
+    SKINNABLE_SPECIES.update(species)
+    return tuple(sorted(skinned_by.items())), tuple(sorted(species))
 
 
 class LearnedCorpses:
-    """Corpses the player skinned by hand, waiting to be saved to the list (thread-safe)."""
+    """Corpses the player skinned by hand, waiting to be saved to the list (thread-safe).
+
+    ``on_record`` is called after each new row, from the recording thread.
+    """
 
     def __init__(self):
         self.lock = threading.Lock()
         self.rows = {}
+        self.on_record = None
 
-    def record(self, body_id, skinned_id):
+    def record(self, body_id, skinned_id, name=None):
         if body_id in (KNIFE, skinned_id):
             return
         with self.lock:
-            self.rows[body_id] = skinned_id
+            self.rows[body_id] = (skinned_id, name)
+        if self.on_record is not None:
+            self.on_record()
 
     def snapshot(self):
         with self.lock:
@@ -176,6 +221,14 @@ def manual_corpse_ids(frame, position):
     if tile is None or tile.get("kind") == "no_ground":
         return None
     return [(item["stack"], item["id"]) for item in tile["items"] if "container" in item.get("flags", ())]
+
+
+def killed_on(game, position, before, window=900.0):
+    """Name of the latest logged kill on this tile, if it is recent enough to have left the corpse."""
+    for kill in reversed(list(getattr(game, "kill_log", ()))):
+        if (kill.get("x"), kill.get("y"), kill.get("z")) == tuple(position) and 0 <= before - kill.get("t", 0) <= window:
+            return kill.get("name") or None
+    return None
 
 
 def body_counts(items):

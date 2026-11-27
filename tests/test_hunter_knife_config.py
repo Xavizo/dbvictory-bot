@@ -1,12 +1,9 @@
-from types import SimpleNamespace
-
 import pytest
 
 from dbv.brain.combat import hunter_knife as hk
 from dbv.brain.combat.hunter_knife import (FRESH, GUNSO, MUTANT_WOLF, ROCO, SPENT, LearnedCorpses, apply_config,
-                                           body_counts, exposed_body_action, skinned, validate_config,
-                                           with_learned)
-from dbv.brain.combat.hunter_knife_action import NAME, learn
+                                           body_counts, exposed_body_action, learn_into, loot_species, skinned,
+                                           validate_config, with_learned)
 
 
 @pytest.fixture(autouse=True)
@@ -57,21 +54,39 @@ def test_broken_saved_settings_fall_back_to_defaults():
 
 
 def test_hand_skinned_corpses_are_added_once():
-    cfg = with_learned({}, {1234: 4321, MUTANT_WOLF: SPENT})
-    assert cfg["corpses"][-1] == {"id": 1234, "skinned": 4321} and len(cfg["corpses"]) == 5
-    assert with_learned(cfg, {1234: 4321}) is None
-    assert with_learned({}, {SPENT: 1}) is None  # a skinned corpse is never a fresh one
+    cfg = with_learned({}, {1234: (4321, "Big  Ape"), MUTANT_WOLF: (SPENT, "Mutant Wolf")})
+    assert cfg["corpses"][-1] == {"id": 1234, "skinned": 4321, "monster": "big ape"} and len(cfg["corpses"]) == 5
+    assert with_learned(cfg, {1234: (4321, None)}) is None
+    assert with_learned({}, {SPENT: (1, None)}) is None  # a skinned corpse is never a fresh one
+    assert with_learned({}, {55: (56, None)})["corpses"][-1] == {"id": 55, "skinned": 56}
 
 
-def test_worker_saves_learned_corpses_to_settings():
+def test_learned_monster_counts_as_kill_evidence():
+    apply_config(with_learned({}, {1234: (4321, "Big Ape")}))
+    assert "big ape" in hk.SKINNABLE_SPECIES and "mutant wolf" in hk.SKINNABLE_SPECIES
+    assert loot_species("[Big Ape]: 2 gold coins") == "big ape"
+    apply_config({})
+    assert "big ape" not in hk.SKINNABLE_SPECIES
+
+
+def test_learning_is_saved_into_settings_once():
     learned = LearnedCorpses()
-    learned.record(1234, 4321)
+    calls = []
+    learned.on_record = lambda: calls.append(True)
+    learned.record(1234, 4321, "Big Ape")
+    settings = {"actions": {"auto_hunter_knife": {"enabled": False}}}
+    assert calls == [True] and learn_into(settings, learned)
+    cfg = settings["actions"]["auto_hunter_knife"]
+    assert {"id": 1234, "skinned": 4321, "monster": "big ape"} in cfg["corpses"] and cfg["enabled"] is False
+    assert learned.snapshot() == {} and not learn_into(settings, learned)
+
+
+def test_server_saves_hand_skins_while_automation_is_off(monkeypatch):
+    from dbv.mcp_server import server
     saved = []
-    settings = {"actions": {NAME: {"enabled": True}}}
-    bot = SimpleNamespace(state=SimpleNamespace(knife_learned=learned, settings=settings),
-                          save_settings=lambda: saved.append(True))
-    learn(bot)
-    assert {"id": 1234, "skinned": 4321} in settings["actions"][NAME]["corpses"]
-    assert settings["actions"][NAME]["enabled"] is True and saved == [True] and learned.snapshot() == {}
-    learn(bot)
-    assert saved == [True]
+    monkeypatch.setattr(server, "save_settings", lambda settings: saved.append(settings))
+    monkeypatch.setattr(server.state, "settings", {"actions": {"auto_hunter_knife": {"enabled": False}}})
+    monkeypatch.setattr(server.state, "knife_learned", LearnedCorpses())
+    server.state.knife_learned.record(1234, 4321, None)
+    server._save_learned_knife_corpses()
+    assert {"id": 1234, "skinned": 4321} in saved[0]["actions"]["auto_hunter_knife"]["corpses"]

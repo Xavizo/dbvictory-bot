@@ -383,7 +383,7 @@ class PassiveMapMonitor:
         self.invalidate_packet_evidence()
 
     def _check_manual_knife(self, game_state, frame):
-        from dbv.brain.combat.hunter_knife import manual_corpse_ids
+        from dbv.brain.combat.hunter_knife import killed_on, manual_corpse_ids
         with self._knife_witness_lock:
             if self._knife_witness is None:
                 return
@@ -403,7 +403,7 @@ class PassiveMapMonitor:
                     pos, original, ids[0][1])
                 learned = getattr(self.state, "knife_learned", None)
                 if learned is not None:
-                    learned.record(original, ids[0][1])
+                    learned.record(original, ids[0][1], killed_on(game_state, pos, started))
 
     def invalidate_packet_evidence(self):
         with self._knife_witness_lock:
