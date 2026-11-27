@@ -84,3 +84,35 @@ def test_stale_file_is_unavailable(tmp_path, loop):
     info.write_text(stale)
     with pytest.raises(BridgeUnavailable):
         session_bridge.call("status", info_path=info, timeout=3)
+
+
+def test_a_bridge_made_before_the_state_folder_moved_publishes_in_the_new_one(tmp_path, loop, monkeypatch):
+    async def status():
+        return "ok"
+
+    monkeypatch.setattr(session_bridge, "ROOT", tmp_path)
+    (tmp_path / ".codex").mkdir()
+    bridge = ObserverBridge(loop, {"status": status})  # made while .codex was in use
+    (tmp_path / ".codex").rename(tmp_path / ".dbvictory")  # the launcher moves it
+    assert bridge.start()
+    try:
+        assert (tmp_path / ".dbvictory" / "runtime" / "observer.json").exists()
+        assert not (tmp_path / ".codex").exists()
+        assert session_bridge.call("status") == "ok"
+    finally:
+        bridge.close()
+    assert not (tmp_path / ".dbvictory" / "runtime" / "observer.json").exists()
+
+
+def test_a_journal_made_before_the_state_folder_moved_writes_in_the_new_one(tmp_path, monkeypatch):
+    from dbv.brain.state import session_journal
+    monkeypatch.setattr(session_journal, "ROOT", tmp_path)
+    (tmp_path / ".codex").mkdir()
+    journal = session_journal.SessionJournal()
+    (tmp_path / ".codex").rename(tmp_path / ".dbvictory")
+    journal.start("session")
+    try:
+        assert journal.directory == tmp_path / ".dbvictory" / "journal"
+        assert not (tmp_path / ".codex").exists()
+    finally:
+        journal.stop()
