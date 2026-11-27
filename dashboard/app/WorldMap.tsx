@@ -1,5 +1,5 @@
 "use client";
-import { t } from "@/lib/i18n";
+import { t, language, onLanguage } from "@/lib/i18n";
 import {memo, useEffect, useMemo, useRef, useState} from "react";
 import type {PointerEvent as ReactPointerEvent, ReactNode} from "react";
 import {stepFloor} from "@/lib/atlasModel";
@@ -75,6 +75,7 @@ const Sectors = memo(function Sectors({sectors, overlay}:{sectors:Sector[]; over
 type Props={initialFloor:number;onOpen:(p:Position)=>void;ground?:GroundLayer;toolbar?:ReactNode;zones?:WorldZones;
   player?:Position|null;location?:Position|null;viewport?:{current:WorldViewport|null};habitats?:Habitat[];habitatName?:string;habitatSide?:number;loadingLabel?:string;spawns?:SpawnMark[]};
 export default memo(function WorldMap({initialFloor,onOpen,ground,toolbar,player,location=player,viewport,zones,habitats,habitatName,habitatSide=8,loadingLabel,spawns}:Props) {
+  const [,setShownLanguage]=useState(language());useEffect(()=>onLanguage(setShownLanguage),[]); // memo() skips a parent render, so follow the language here
   const [floor,setFloor]=useState(()=>viewport?.current?.floor??location?.[2]??initialFloor), [retry,setRetry]=useState(0);
   const [result,setResult]=useState<Floor|null>(null), [error,setError]=useState("");
   const [overlay,setOverlay]=useState(false), [grid,setGrid]=useState(false);

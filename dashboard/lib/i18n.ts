@@ -58,3 +58,4 @@ export function labels<K extends string>(prefix: string, keys: readonly K[]): Re
   for (const key of keys) Object.defineProperty(record, key, { get: () => t(`${prefix}.${key}` as TextKey), enumerable: true });
   return record;
 }
+

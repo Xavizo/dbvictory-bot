@@ -1,5 +1,5 @@
 "use client";
-import { t, locale } from "@/lib/i18n";
+import { t, locale, language, onLanguage } from "@/lib/i18n";
 import {useEffect,useMemo,useRef,useState,type ReactNode} from "react";
 import {MapTool,MapMore} from "./MapTools";
 import {createPortal} from "react-dom";
@@ -80,6 +80,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   const [points,setPoints]=useState<Pos[]>([]),[plan,setPlan]=useState<Plan|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const [links,setLinks]=useState<RouteLink[]>([]);
   const [labels,setLabels]=useState<string[]>([]),[lastOptimization,setLastOptimization]=useState<{plan:Plan;labels:string[]}|null>(null);
+  const [shownLanguage,setShownLanguage]=useState(language());useEffect(()=>onLanguage(setShownLanguage),[]); // memoised parts below hold words
   const dirty=useMemo(()=>hasDraftChanges(draftId,savedVersion,draftName,points,labels,links,loop),[draftId,savedVersion,draftName,points,labels,links,loop]);
   const saved=!!draftId && !dirty;
   const [objectView,setObjectView]=useState(false),[rename,setRename]=useState(false);
@@ -332,7 +333,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
             {c.live && !!c.occupant_types?.pet && <g pointerEvents="none" transform={`translate(${c.x-center[0]+ox+.8} ${c.y-center[1]+oy+.23})`}>
               <circle r={.19} fill="#132d2c" stroke={petStyle.color} strokeWidth={.035}/><text textAnchor="middle" dominantBaseline="central" fontSize={.26} fontWeight="700" fill={petStyle.color}>{petStyle.symbol}</text>
             </g>}
-            <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?t("atlas.live"):t("atlas.historical")} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}${c.live && c.pet_names?.length ? " · Pet: "+petDescription(c) : ""}`}</title></g>;}),[cells,floorTransitions,center[0],center[1],ox,oy,viewport.width,grid.columns]);
+            <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?t("atlas.live"):t("atlas.historical")} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}${c.live && c.pet_names?.length ? " · Pet: "+petDescription(c) : ""}`}</title></g>;}),[cells,floorTransitions,center[0],center[1],ox,oy,viewport.width,grid.columns,shownLanguage]);
   const objectPositions=new Set(cells.filter(c=>c.navigation?.length).map(c=>[c.x,c.y,c.z].join(",")));
   const onFloor=segments.map((s,i)=>({...s,index:i})).filter(s=>s.floor===center[2]&&!hiddenSegments.includes(s.index));
   const storedDraft=drafts.find(d=>d.id===draftId), run=state?.adaptive_cavebot;
@@ -342,7 +343,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
     storedDraft.navigation_revision!==run.waypoint.navigation_revision;
   const savedNotice=t("atlas.savedForNext");
   const waypointList=useMemo(()=><div className="v2-point-scroll" tabIndex={0} role="region" aria-label={t("atlas.waypointList")}><table><thead><tr><th>#</th><th>{t("atlas.coordinates")}</th><th>{t("atlas.label")}</th><th/></tr></thead><tbody>{points.map((p,i)=><tr key={i} aria-current={progress?.current===i?"step":undefined} className={progress?.current===i?"waypoint-current":progress?.last_reached===i?"waypoint-reached":""}><td title={progress?.current===i?t("atlas.currentTarget"):progress?.last_reached===i?t("atlas.lastReached"):undefined}>{progress?.current===i?"▸ ":""}{i+1}</td><td><button className="waypoint-location" title={waypointKind(points,i)} onClick={()=>{setMapOpen(true);setCenter(p);setSelected(p);}}>{p.join(", ")}</button></td><td><input aria-label={t("atlas.waypointLabel",{n:i+1})} placeholder={waypointKind(points,i)} maxLength={60} value={labels[i]??""} disabled={busy||!!optimization||recorder?.active} onChange={e=>labelPoint(i,e.target.value)}/></td><td><button aria-label={t("map.removeWaypoint",{n:i+1})} disabled={busy||!!optimization||recorder?.active} onClick={()=>updatePoints(removeAnchor(points,i))}>×</button></td></tr>)}</tbody></table>{!points.length&&<p className="v2-empty-points">{t("atlas.emptyPoints")}</p>}</div>,
-    [points,labels,links,busy,optimization,recorder?.active,progress?.current,progress?.last_reached,center[0],center[1],center[2],loop,scope,compatible]);
+    [points,labels,links,busy,optimization,recorder?.active,progress?.current,progress?.last_reached,center[0],center[1],center[2],loop,scope,compatible,shownLanguage]);
   const review=<>{draftWaiting&&<p role="status" className="v2-inline-note">{t("atlas.loading")}</p>}{draftLoadError&&<p role="alert" className="v2-error">{draftLoadError}</p>}{optimization&&<div className="optimization-review" role="region" aria-label={t("atlas.optimizationCompare")}><strong>{optimization.candidate.complete?t("atlas.waypointsDelta",{from:optimization.before.points.length,to:optimization.candidate.points.length}) : t("atlas.optimizationCheck")}{optimization.before.complete&&optimization.candidate.complete?" · "+t("atlas.stepsDelta",{from:optimization.before.path.length-1,to:optimization.candidate.path.length-1}):""}{optimization.candidate.corridor_repeats&&` · ${t("atlas.repeatedLegs")}: ${optimization.candidate.corridor_repeats.join(" → ")}`}</strong><button disabled={!optimization.candidate.complete} onClick={acceptOptimization}>{t("atlas.accept")}</button><button onClick={()=>{setOptimization(null);frameRoute(plan?.path??points);}}>{t("atlas.reject")}</button>{!optimization.candidate.complete&&optimization.candidate.gaps.map((g,i)=><button key={i} className="atlas-gap" onClick={()=>focusGap(g)}>{t("atlas.checkLeg",{from:g.segment+1,to:g.segment+2})}: {pointText(g.from)} → {pointText(g.to)}. {g.reason}</button>)}</div>}
     {!browseOnly&&repairSource&&(plan?.gaps.length||optimization?.candidate.gaps.length)?<button className="restore-recorded-transitions" title={t("atlas.restoreTitle",{source:repairSource})} disabled={busy||recorder?.active} onClick={restoreRecordedTransitions}>{t("atlas.restore")}</button>:null}
     {plan?.complete&&plan.requires_action_review&&!plan.requires_path_review&&!!plan.unmatched_recorded_actions&&<div className="recorded-action-review" role="status"><span>{t("atlas.unmatched",{n:plan.unmatched_recorded_actions})}</span><button disabled={busy} onClick={()=>{setPlan({...plan,requires_action_review:false,ignored_recorded_actions:true});setSimulation(null);}}>{t("atlas.skipExtra")}</button></div>}

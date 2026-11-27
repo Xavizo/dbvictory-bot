@@ -1,5 +1,5 @@
 "use client";
-import { t, labels, num } from "@/lib/i18n";
+import { t, labels, num, language, onLanguage } from "@/lib/i18n";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 import type {BotState} from "@/lib/api";
@@ -95,6 +95,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     return ()=>{ctl.abort();clearInterval(interval);};
   },[scope]);
   const activeWorld=world?.scope===scope?world:null;
+  const [shownLanguage,setShownLanguage]=useState(language());useEffect(()=>onLanguage(setShownLanguage),[]);
   const choices=useMemo(()=>{
     const all=new Map<string,Area>();
     if(activeWorld)all.set("world",{id:"world",name:t("hunt.worldZones"),cells:activeWorld.cells,drafts:[]});
@@ -102,7 +103,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
     for(const a of data?.discoveries??[])all.set(a.id,a);
     for(const d of data?.drafts??[])if(!d.archived)all.set("draft:"+d.id,proposal(d));
     return all;
-  },[data,activeWorld]);
+  },[data,activeWorld,shownLanguage]);
   const draft=key.startsWith("draft:")?data?.drafts.find(d=>"draft:"+d.id===key):undefined;
   const terrain=draft?.terrain;
   const source=terrain?choices.get(terrain.ground):undefined;
