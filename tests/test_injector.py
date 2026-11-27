@@ -74,3 +74,22 @@ def test_module_entry_matches_the_windows_layout():
     assert (_ModuleEntry.base.offset, _ModuleEntry.handle.offset, _ModuleEntry.name.offset) == (
         (24, 40, 48) if pointer == 8 else (20, 28, 32))
     assert ctypes.sizeof(_ModuleEntry) == _ModuleEntry.name.offset + 516 * ctypes.sizeof(ctypes.c_wchar)
+
+
+def test_kernel32_signatures_can_be_set_on_real_ctypes_functions(monkeypatch):
+    """ctypes function objects are unhashable; the signature table must not use them as keys."""
+    import ctypes
+    from dbv.client_bridge import injector
+
+    class FakeKernel32:
+        def __init__(self, *args, **kwargs):
+            self.functions = {}
+
+        def __getattr__(self, name):
+            return self.functions.setdefault(name, ctypes.CFUNCTYPE(None)())
+
+    monkeypatch.setattr(ctypes, "WinDLL", FakeKernel32, raising=False)
+    k = injector._win32()
+    assert k.functions["CreateRemoteThread"].restype is not None
+    assert len(k.functions["CreateRemoteThread"].argtypes) == 7
+    assert {"OpenProcess", "Module32FirstW", "CreateToolhelp32Snapshot"} <= set(k.functions)
