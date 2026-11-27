@@ -143,8 +143,9 @@ On the **Cavebot** tab, choose the route and set up combat:
 
 Press start. The run bar at the top shows the current phase (route, lure, fight,
 chase, return), the current waypoint and any problem, such as a transition that
-needs checking. **Pauza** (pause) or the **Pause/Break** key stops everything at
-once. **Historia decyzji i raporty okrążeń** (decision history and loop reports)
+needs checking. **Pauza** (pause) there pauses only the route; healing and
+other actions keep running. To pause all automation at once, use **Pauza
+wszystkich** (pause all) on the Automation tab or press **Pause/Break**. **Historia decyzji i raporty okrążeń** (decision history and loop reports)
 explains why the bot did what it did and sums up each loop.
 
 ### Alerts
