@@ -326,7 +326,7 @@ attach. Adding a new build is a developer task described in the
 
 The engine is a standard stdio MCP server (`run_mcp.py`), so an AI agent can
 read the game state and control the bot with tools such as `get_status`,
-`start_bot`, `walk`, `attack`, `toggle_action`, `play_recording` and
+`start_bot`, `walk`, `attack`, `toggle_action` and
 `session_activity`. Connecting to the game is always an explicit `start_bot`
 call.
 
@@ -357,7 +357,7 @@ async def run(bot):
         await bot.sleep(INTERVAL)
 ```
 
-See [`bot.py`](bot.py) for everything the `bot` object offers (stats, position,
+See `BotContext` in [`mcp_server.py`](mcp_server.py) for everything the `bot` object offers (stats, position,
 creatures, `say`, `walk`, `use_item_in_container`, `use_item_on_map`, logging).
 
 ## Development
