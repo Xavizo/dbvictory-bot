@@ -33,16 +33,9 @@ SERVER_IP_STR = SERVER_HOST.encode("ascii")                      # e.g. b'87.98.
 # ── Item IDs ───────────────────────────────────────────────────────
 ITEM_RED_HAM = 3583
 ITEM_RUNE_3165 = 3165
-ITEM_BACKPACK = 2867
-
-# ── Player icons (DBVictory-specific) ──────────────────────────────
-ICONS_BASELINE = 0x0100
-HASTE_ICON_BIT = 0x0002  # bit 1 — empirically verified
 
 # ── Creature ID ranges ─────────────────────────────────────────────
 MONSTER_ID_MIN = 0x40000000  # OT creature ID range: monsters start here
-CREATURE_ID_MIN = 0x10000000
-CREATURE_ID_MAX = 0x7FFFFFFF
 
 # ── Light patch (full_light action) ────────────────────────────────
 # JZ instruction in the light renderer at this RVA:

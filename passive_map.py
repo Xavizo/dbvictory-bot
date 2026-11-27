@@ -560,7 +560,6 @@ class PassiveMapMonitor:
                     if self._stop.wait(retry_delay):
                         break
                     continue
-                    continue
                 except Exception as exc:
                     # No addresses, process contents, credentials or raw packets in UI/logs.
                     message = str(exc) if isinstance(exc, MapReadError) else "Odczyt mapy niedostępny. Sprawdź klienta i jego wersję."

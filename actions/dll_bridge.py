@@ -21,10 +21,7 @@ import inject as dll_inject
 log = logging.getLogger("action.dll_bridge")
 
 POLL_INTERVAL = 0.016  # seconds between creature reads (~60 FPS)
-INJECT_RETRY = 10     # seconds to wait before retrying injection
-CONNECT_RETRY = 2     # seconds between pipe connection attempts
 PROXIMITY_RANGE = 10  # max tile Chebyshev distance (screen is ~8x6 but allow margin)
-STALE_REINJECT = 3    # number of stale cycles before re-injecting DLL
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEBUG_LOG = os.path.join(PROJECT_ROOT, "dll_bridge_debug.txt")
 OFFSETS_FILE = os.path.join(PROJECT_ROOT, "offsets.json")
@@ -284,7 +281,6 @@ async def run(bot):
     probe_sent = False
     probe_result = None
     global_pos_scanned = False
-    tile_scan_init_sent = False  # deferred tile scan init (needs position first)
 
     poll_count = 0
     last_data_time = time.time()  # when we last got actual data
@@ -355,21 +351,6 @@ async def run(bot):
                 # Send packet-derived position to DLL for attack distance/floor check.
                 if not bridge.read_only and px > 0 and py > 0 and poll_count % 6 == 0:
                     bridge.send_command({"cmd": "set_player_pos", "x": px, "y": py, "z": pz})
-
-                # Tile scan disabled — scan_tileblocks blocks pipe thread too long
-                # (30+ seconds searching 11 strides × 65KB), starving creature scans.
-                # The position offset fix (-40 for all creatures) + refcount fallback
-                # provide sufficient creature detection without tile scan.
-                # TODO: re-enable after making scan_tileblocks non-blocking
-                if False and not tile_scan_init_sent and px > 0 and py > 0 and poll_count > 60:
-                    bridge.send_command({"cmd": "set_player_pos", "x": px, "y": py, "z": pz})
-                    bridge.send_command({"cmd": "dump_map_region"})
-                    bridge.send_command({"cmd": "scan_tileblocks"})
-                    bridge.send_command({"cmd": "calibrate_tile"})
-                    bridge.send_command({"cmd": "use_tile_scan", "enabled": True})
-                    tile_scan_init_sent = True
-                    _dbg(f"TILE SCAN init sent (pos=({px},{py},{pz}), poll#{poll_count})")
-                    bot.log(f"[DLL] tile scan init — scanning for tileblocks at z={pz}")
 
                 # Probe position offset: send once using packet_position (clean reference).
                 # Temporarily override set_player_pos with packet values so probe searches correctly.

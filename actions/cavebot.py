@@ -15,7 +15,7 @@ from protocol import (
     build_walk_packet,
     build_stop_walk_packet,
 )
-from cavebot import load_recording, build_actions_map, build_all_minimaps, build_sequence_minimaps, actions_map_to_text, save_recording_stats
+from cavebot import load_recording, build_actions_map, build_sequence_minimaps, actions_map_to_text, save_recording_stats
 from constants import MONSTER_ID_MIN
 
 USE_ITEM_TIMEOUT = 5.0
@@ -175,27 +175,6 @@ def _is_next_node_floor_change(actions_map, i, player_z):
         if to_z is not None and to_z != player_z:
             return True
     return False
-
-
-def _get_nearby_monsters(gs):
-    """Return list of alive monsters from game_state.creatures.
-
-    Filters for creature IDs >= MONSTER_ID_MIN with health between 1-100
-    and seen within the last 60 seconds.
-    """
-    now = time.time()
-    monsters = []
-    for cid, info in dict(gs.creatures).items():
-        if cid < MONSTER_ID_MIN:
-            continue
-        health = info.get("health", 0)
-        if health <= 0 or health > 100:
-            continue
-        age = now - info.get("last_seen", now)
-        if age > 60:
-            continue
-        monsters.append(info)
-    return monsters
 
 
 def _distance(a, b):

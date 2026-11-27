@@ -457,16 +457,6 @@ export async function stopPlayback(): Promise<void> {
   }
 }
 
-export async function clearCavebotLogs(): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/logs/spacer`, {
-    method: "POST",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    console.error("Spacer failed:", res.status, err);
-  }
-}
-
 export async function fetchRecording(
   name: string
 ): Promise<{ name: string; waypoints: WaypointInfo[] } | null> {

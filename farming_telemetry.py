@@ -70,11 +70,6 @@ class SpawnMap:
             }
         self.cells[grid_key]["respawn_intervals"].append(interval)
 
-    def density_at(self, x: int, y: int, z: int) -> int:
-        """Get kill count at a position's grid cell."""
-        gk = self._key(x, y, z)
-        cell = self.cells.get(gk)
-        return cell["kills"] if cell else 0
 
     def avg_respawn_at(self, pos: tuple[int, int, int]) -> float | None:
         """Get average respawn interval at a position, or None if no data."""
@@ -87,18 +82,6 @@ class SpawnMap:
             return None
         return sum(intervals) / len(intervals)
 
-    def density_ahead(self, x: int, y: int, z: int, radius: int = 2) -> float:
-        """Average kill density in a radius of grid cells around a position."""
-        gx, gy = x // GRID_SIZE, y // GRID_SIZE
-        total = 0
-        count = 0
-        for dx in range(-radius, radius + 1):
-            for dy in range(-radius, radius + 1):
-                gk = (gx + dx, gy + dy, z)
-                cell = self.cells.get(gk)
-                total += cell["kills"] if cell else 0
-                count += 1
-        return total / count if count > 0 else 0
 
     def to_dict(self) -> dict:
         """Serialize for JSON persistence (deques become lists)."""

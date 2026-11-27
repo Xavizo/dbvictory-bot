@@ -287,19 +287,6 @@ class PacketWriter:
         self.write_u8(z)
 
 
-def build_autowalk_packet(directions: list[Direction]) -> bytes:
-    """Build an auto-walk packet (0x64) — the same as clicking the map.
-
-    The server queues up the path and moves the player step by step.
-    """
-    pw = PacketWriter()
-    pw.write_u8(ClientOpcode.AUTO_WALK)
-    pw.write_u8(len(directions))
-    for d in directions:
-        pw.write_u8(int(d))
-    return pw.data
-
-
 def build_walk_packet(direction: Direction) -> bytes:
     """Build a walk packet for the given direction."""
     pw = PacketWriter()

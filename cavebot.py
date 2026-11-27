@@ -1055,31 +1055,6 @@ def build_minimap(
     }
 
 
-def build_all_minimaps(
-    actions_map: list[dict],
-    current_index: int,
-    player_pos: tuple | list,
-    failed_nodes: set | None = None,
-) -> dict:
-    """Build minimaps for ALL floors in the actions map.
-
-    Returns a dict keyed by floor number, each value is a minimap dict.
-    The player's current floor is included even if no nodes are on it.
-    """
-    all_floors = set()
-    for node in actions_map:
-        all_floors.add(node["target"][2])
-    all_floors.add(int(player_pos[2]))
-
-    result = {}
-    for floor in sorted(all_floors):
-        result[floor] = build_minimap(
-            actions_map, current_index, player_pos, floor,
-            failed_nodes=failed_nodes,
-        )
-    return result
-
-
 def _split_into_sequences(actions_map: list[dict]) -> list[dict]:
     """Split an actions map into sequences by floor transitions.
 

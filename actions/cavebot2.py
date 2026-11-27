@@ -60,11 +60,9 @@ LURE_STABILITY_FIGHTS = 3
 DEAD_SEGMENT_MIN_LOOPS = 2
 DEAD_SEGMENT_MIN_ENTRIES = 2
 LINGER_MAX = 20  # max seconds to wait for respawns in HOT zones
-LINGER_MIN_KILLS_PER_ATTEMPT = 0.3
 
 # ── Body-block handling ──────────────────────────────────────────
 BLOCK_DETECT_THRESHOLD = 3  # cancel_walks at same pos before retreat
-BLOCK_KILL_TIMEOUT = 5.0    # seconds stuck before killing blocker (last resort)
 
 UNREACHABLE_EXPIRY = 30
 
@@ -104,11 +102,6 @@ def _get_settings():
 def _distance(a, b):
     """Manhattan distance (ignoring z)."""
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
-
-
-def _chebyshev(a, b):
-    """Chebyshev distance (ignoring z)."""
-    return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
 
 def _count_nearby_monsters(gs, distance, targetable_only=False):
