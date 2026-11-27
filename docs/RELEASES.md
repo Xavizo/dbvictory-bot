@@ -10,7 +10,9 @@ release and how the package and updater work.
 2. Open **Actions → Release → Run workflow**, keep branch `master` and
    **Publish** ticked, and click **Run workflow**.
 3. The run (about 15 minutes) tests, builds and publishes
-   `DBVictory-Bot-vX.Y.Z.zip` plus `release.json`. The version comes from the
+   `DBVictory-Bot-vX.Y.Z.zip`, `release.json`, `release-manifest.json` and,
+   when a release was published before, the patch
+   `DBVictory-Bot-vX.Y.Z-patch-vA.B.C.zip` (only files changed since vA.B.C). The version comes from the
    commit history (`feat:` raises the minor number, other commits the patch),
    exactly as the launcher shows it.
 4. Players see **Dostępna aktualizacja** at their next launcher start.
@@ -51,6 +53,15 @@ Local build (Windows, a clean commit):
 .\scripts\build-release.ps1 -MinGwBin C:\mingw32\bin
 ```
 
+Before sealing, [`tools/release_trim.py`](../tools/release_trim.py) removes what
+only the build needs: panel packages outside the run-time dependencies of
+`npm run start` / `npm run electron:only` (the Next.js SWC compiler, sharp,
+TypeScript, Tailwind…), source maps, type declarations and package docs, pip,
+Tk/IDLE and the C headers from Python, npm's docs, and `tests\`. The build then
+imports the bot's modules with the trimmed Python and serves the panel with
+`next start` before it zips anything. Electron's own files stay whole: the
+running launcher holds them open while it installs an update.
+
 Optional `-PythonDir` / `-NodeDir` reuse existing runtimes instead of
 `uv python install` and a nodejs.org download.
 
@@ -64,12 +75,18 @@ Git installations keep the local release queue described in
 1. At start the launcher reads `releases/latest` from the GitHub API and the
    small `release.json` asset. Offline or on any error it starts the installed
    version.
-2. **Zainstaluj aktualizację** downloads the zip to `.codex\updates\github`,
+2. **Zainstaluj aktualizację** downloads the package to `.codex\updates\github`,
    checks its SHA-256 and size, unpacks only files listed in its manifest and
-   checks each file's hash.
+   checks each file's hash. When the installed version is the patch's base
+   (`release.json` → `patch.from`), it downloads the patch instead: the full
+   file list plus only the changed files. If the patch does not cover the
+   installation (a program file is missing, the download is bad) it falls
+   back to the full zip. Releases up to v2.0.17 ignore patches.
 3. It swaps only files whose hash changed and removes program files the new
    release no longer has. Running files (the launcher's Electron and Python)
    are renamed aside, which Windows allows, and deleted at the next start.
+   Folders emptied under `dashboard\node_modules`, `runtime\node` and
+   `venv\Scripts` are removed once per installed version.
    A journal (`transaction.json`) rolls an interrupted swap back.
 4. Never touched: `bot_settings.json`, `.env`, `.mcp.json`, `.codex\`,
    `local_data\`, `dashboard\public\local-spells\`. Shipped `recordings\` are

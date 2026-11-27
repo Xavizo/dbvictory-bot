@@ -45,7 +45,8 @@ def stage(tmp_path):
              "venv/Scripts/tcl/tcl8.6/init.tcl", "venv/Scripts/Scripts/pip.exe",
              "runtime/node/node.exe", "runtime/node/npm.cmd", "runtime/node/node_modules/npm/index.js",
              "runtime/node/node_modules/npm/docs/output/npm.html",
-             "dashboard/.next/BUILD_ID", "dashboard/.next/static/x.js.map"]
+             "dashboard/.next/BUILD_ID", "dashboard/.next/static/x.js.map",
+             "tests/test_x.py", "docs/screenshots/a.png", "docs/vbot/architecture.md", "requirements-dev.txt"]
     files += [f"dashboard/{key}/package.json" for key in LOCK["packages"] if key]
     files += ["dashboard/node_modules/next/dist/server/next.js", "dashboard/node_modules/next/dist/server/next.js.map",
               "dashboard/node_modules/next/dist/server/next.d.ts", "dashboard/node_modules/next/README.md",
@@ -87,9 +88,10 @@ def test_trim_keeps_what_players_run(tmp_path):
                  "dashboard/node_modules/rxjs/package.json", "dashboard/node_modules/electron/dist/electron.exe",
                  "dashboard/node_modules/electron/dist/locales/pl.pak", "dashboard/node_modules/electron/index.js",
                  "dashboard/node_modules/electron/cli.js", "dashboard/node_modules/electron/path.txt",
-                 "dashboard/node_modules/.bin/next", "dashboard/package-lock.json"):
+                 "dashboard/node_modules/.bin/next", "dashboard/package-lock.json", "docs/vbot/architecture.md"):
         assert kept in files, kept
-    for dropped in ("venv/Scripts/Lib/site-packages/pip/__init__.py",
+    for dropped in ("tests/test_x.py", "docs/screenshots/a.png", "requirements-dev.txt",
+                    "venv/Scripts/Lib/site-packages/pip/__init__.py",
                     "venv/Scripts/Lib/site-packages/pip-26.3.dist-info/RECORD",
                     "venv/Scripts/Lib/site-packages/PyWin32.chm", "venv/Scripts/Lib/tkinter/__init__.py",
                     "venv/Scripts/Lib/ensurepip/__init__.py", "venv/Scripts/DLLs/tcl86t.dll",

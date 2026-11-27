@@ -141,9 +141,14 @@ try {
 Remove-Tree $builtPanel
 Move-Item $pristine $builtPanel
 
-# 8. Version file, checksum manifest, zip and release description.
-Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_package.py"), $Stage, "--version", $Version,
+# 8. Version file, checksum manifest, zip, patch against the latest release and release description.
+$previous = Join-Path $Work "previous-manifest.json"
+Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_previous.py"), "--repo", $Repo, "--out", $previous)
+$packageArgs = @("-I", (Join-Path $Root "tools\release_package.py"), $Stage, "--version", $Version,
     "--revision", $Revision, "--repo", $Repo, "--out", $Out)
+if (Test-Path $previous) { $packageArgs += @("--previous", $previous) }
+Get-ChildItem $Out -Filter "DBVictory-Bot-*.zip" | Remove-Item -Force
+Invoke-Checked $HostPython $packageArgs
 Remove-Tree $Work
 $outputs = $env:GITHUB_OUTPUT
 if (-not $outputs) { $outputs = Join-Path $Out "outputs.txt" }

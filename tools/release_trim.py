@@ -41,6 +41,8 @@ PYTHON_DROPPED = (
     "Scripts/pip*.exe", "Scripts/idle*", "Scripts/pywin32_postinstall*", "Scripts/pywin32_testall*",
     "DLLs/_tkinter.pyd", "DLLs/tcl86t.dll", "DLLs/tk86t.dll", "tcl", "include", "libs",
 )
+# Program files from `git archive` that only developers use. docs/vbot stays: MCP serves it.
+SOURCE_DROPPED = ("tests", "docs/screenshots", "requirements-dev.txt")
 NODE_RUNTIME_DROPPED = ("node_modules/npm/docs", "node_modules/npm/man", "node_modules/corepack",
                         "corepack", "corepack.cmd", "install_tools.bat", "CHANGELOG.md", "README.md")
 
@@ -142,6 +144,8 @@ def trim(stage):
             raise SystemExit(f"Stage is missing {required}")
     trim_panel(stage / "dashboard")
     for path in _globbed(stage / "venv" / "Scripts", PYTHON_DROPPED):
+        _remove(path)
+    for path in _globbed(stage, SOURCE_DROPPED):
         _remove(path)
     node = stage / "runtime" / "node"
     for path in _globbed(node, NODE_RUNTIME_DROPPED):
