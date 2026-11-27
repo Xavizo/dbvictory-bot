@@ -3,9 +3,9 @@ import asyncio,json,sqlite3
 from contextlib import closing
 from types import SimpleNamespace
 import pytest
-import map_atlas as atlas_module
-from map_atlas import MapAtlas,navigation_edges,trace_links
-from adaptive_cavebot import supported_transition
+from dbv.brain.navigation import map_atlas as atlas_module
+from dbv.brain.navigation.map_atlas import MapAtlas,navigation_edges,trace_links
+from dbv.brain.cavebot.adaptive_cavebot import supported_transition
 from test_adaptive_cavebot import cell,setup
 from test_automation_safety import state
 from test_live_object_learning import learner
@@ -18,7 +18,7 @@ def edge(tool=3457):
 
 
 def fake_tools(monkeypatch,ids=(3457,)):
-    import client_equipment,client_player_state,passive_map_win32
+    from dbv.client_bridge import client_equipment; from dbv.client_bridge import client_player_state; from dbv.client_bridge import passive_map_win32
     import time
     monkeypatch.setattr(passive_map_win32,'ReadOnlyClient',lambda:SimpleNamespace(close=lambda:None))
     monkeypatch.setattr(client_player_state,'ClientPlayerReader',lambda *args:None)
@@ -158,7 +158,7 @@ def test_locked_commit_preserves_sketch_history_and_retries_latest_tiles(tmp_pat
 
 
 def test_exclusive_read_lock_does_not_disable_map_or_empty_sketch_list(tmp_path, monkeypatch):
-    import dashboard_api
+    from dbv.mcp_server import dashboard_api
     atlas = MapAtlas(tmp_path,'f'*64)
     atlas.observe(dict(status='ready',cells=[cell(16,16)]))
     draft = atlas.save_draft('Saved', [[16,16,7],[17,16,7]])

@@ -87,7 +87,7 @@ def test_monars_ladder_landing_proceeds_to_next_waypoint_without_reusing_ladder(
 
 
 def test_ladder_recovery_waits_for_fresh_exit_and_rejects_wrong_tile(state,tmp_path):
-    from adaptive_cavebot import InputsUnavailable
+    from dbv.brain.cavebot.adaptive_cavebot import InputsUnavailable
     origin, landing = [1652,1105,5], [1652,1106,4]
     edge = dict(id='ladder', origin=origin, entry=origin, exit=landing, action='use',
                 item_id=1948, entry_items=[1948], evidence='observed')

@@ -14,7 +14,7 @@ import time
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
-from constants import LIGHT_JZ_RVA, LIGHT_ORIGINAL_BYTES, LIGHT_PATCHED_BYTES
+from dbv.client_bridge.constants import LIGHT_JZ_RVA, LIGHT_ORIGINAL_BYTES, LIGHT_PATCHED_BYTES
 
 ORIGINAL_BYTES = LIGHT_ORIGINAL_BYTES
 PATCHED_BYTES = LIGHT_PATCHED_BYTES

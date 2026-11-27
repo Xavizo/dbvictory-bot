@@ -2,8 +2,8 @@
 import struct
 
 import pytest
-import game_state as module
-from game_state import GameState, scan_packet
+from dbv.brain.state import game_state as module
+from dbv.brain.state.game_state import GameState, scan_packet
 
 
 @pytest.fixture(autouse=True)

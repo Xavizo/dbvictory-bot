@@ -2,10 +2,10 @@
 import asyncio
 import time
 import pytest
-import combat_wave as wave
-from cavebot_combat import validate_spell
-from combat_spell_conditions import evaluate_spell
-from protocol import ClientOpcode
+from dbv.brain.combat import combat_wave as wave
+from dbv.brain.cavebot.cavebot_combat import validate_spell
+from dbv.brain.combat.combat_spell_conditions import evaluate_spell
+from dbv.client_bridge.protocol import ClientOpcode
 from test_v2_combat import armed, monster
 from test_automation_safety import state
 

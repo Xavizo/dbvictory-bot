@@ -83,7 +83,7 @@ newer one is.
 ## Game client updates
 
 The launcher hashes the client's `dbvStart.exe` before Start. An unknown build
-gets a plain message (`CLIENT_UPDATED_MESSAGE` in `client_profiles.py`): the
+gets a plain message (`CLIENT_UPDATED_MESSAGE` in `dbv/client_bridge/client_profiles.py`): the
 bot will not attach, the player can play without it, and a release for the new
 client will be offered. Supporting the new build is the developer task in the
 [client update guide](CLIENT_UPDATE_GUIDE.md), followed by a release.

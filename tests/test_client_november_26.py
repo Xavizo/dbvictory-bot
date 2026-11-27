@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from client_profiles import select_profile
-from client_player_state import ClientPlayerReader
-from client_equipment import EquipmentReader
-from passive_map import MapReadError
+from dbv.client_bridge.client_profiles import select_profile
+from dbv.client_bridge.client_player_state import ClientPlayerReader
+from dbv.client_bridge.client_equipment import EquipmentReader
+from dbv.brain.navigation.passive_map import MapReadError
 
 DIGEST = "af43383076c0abc7192b407210efc54da6b6cbaf4ff8a2aa18f22a7f7d7486e4"
 
@@ -91,7 +91,7 @@ def test_equipment_uses_new_inventory_and_game_addresses():
 
 
 def test_new_profile_has_its_own_dll_and_pipe():
-    from client_profiles import UPDATED
+    from dbv.client_bridge.client_profiles import UPDATED
     profile = select_profile(DIGEST)
     assert profile.observer_dll == 'dbvobserver_marker_20261126.dll'
     assert profile.observer_pipe == rb'\\.\pipe\dbvbot_marker_20261126'
@@ -101,7 +101,7 @@ def test_new_profile_has_its_own_dll_and_pipe():
 def test_new_bridge_uses_new_pipe_and_injects_exact_selected_artifact(monkeypatch, tmp_path):
     from unittest.mock import Mock
     from actions import dll_bridge as action
-    from dll_bridge import DllBridge
+    from dbv.client_bridge.dll_bridge import DllBridge
     profile = select_profile(DIGEST)
     bridge = DllBridge(read_only=True, profile=profile)
     assert bridge.pipe_name == rb'\\.\pipe\dbvbot_marker_20261126'
@@ -119,7 +119,7 @@ def test_new_bridge_uses_new_pipe_and_injects_exact_selected_artifact(monkeypatc
 
 
 def test_offline_build_check_rejects_unknown_executable_without_accepting_a_profile(tmp_path):
-    from check_client_build import verify
+    from dbv.client_bridge.check_client_build import verify
     path = tmp_path / 'unknown.exe'
     path.write_bytes(b'MZ' + bytes(128))
     with pytest.raises(ValueError, match='weryfikacja'):
@@ -129,13 +129,13 @@ def test_offline_build_check_rejects_unknown_executable_without_accepting_a_prof
 def test_startup_requires_selected_dll_before_reset_or_process_writes(monkeypatch, tmp_path):
     import asyncio
     from unittest.mock import AsyncMock, Mock
-    import mcp_server as server
-    import passive_map_win32
+    from dbv.mcp_server import server
+    from dbv.client_bridge import passive_map_win32
     profile = select_profile(DIGEST)
     close = Mock()
     monkeypatch.setattr(passive_map_win32,'ReadOnlyClient',lambda:SimpleNamespace(profile=profile,close=close))
     monkeypatch.setattr(server,'os',SimpleNamespace(name='nt'))
-    monkeypatch.setattr(server,'__file__',str(tmp_path/'mcp_server.py'))
+    monkeypatch.setattr(server.paths,'DLL_DIR',tmp_path/'dll')
     reset = AsyncMock(side_effect=AssertionError('session reset before compatibility validation'))
     monkeypatch.setattr(server,'_reset_bot',reset)
     folder = tmp_path/'dll'

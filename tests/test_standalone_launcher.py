@@ -2,7 +2,7 @@
 import asyncio
 from types import SimpleNamespace
 import pytest
-import mcp_server as server
+from dbv.mcp_server import server
 import run_bot as launcher
 
 
@@ -25,7 +25,7 @@ def test_reopen_without_session_cannot_start_or_attach(monkeypatch):
 
 @pytest.mark.parametrize('available',[True,False])
 def test_standalone_panel_before_login_only_needs_local_api(monkeypatch,available):
-    import dashboard_api
+    from dbv.mcp_server import dashboard_api
     st=SimpleNamespace(game_proxy=None)
     monkeypatch.setattr(server,'state',st)
     calls=[]

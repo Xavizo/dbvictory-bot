@@ -8,7 +8,7 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows pause b
 
 
 def test_badge_tracks_only_the_foreground_game_and_hides_on_resume(monkeypatch):
-    from game_pause_badge import GamePauseBadge, gui, con, win32process, win32ts
+    from dbv.mcp_server.game_pause_badge import GamePauseBadge, gui, con, win32process, win32ts
 
     badge = GamePauseBadge()
     try:

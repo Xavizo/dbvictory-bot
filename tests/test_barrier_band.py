@@ -1,10 +1,10 @@
 import struct
 from types import SimpleNamespace
 import pytest
-from barrier_band import BandScheduler,validate_config,can_equip
-from client_equipment import EquipmentReader
-from client_profiles import UPDATED,LEGACY
-from passive_map import MapReadError
+from dbv.brain.combat.barrier_band import BandScheduler,validate_config,can_equip
+from dbv.client_bridge.client_equipment import EquipmentReader
+from dbv.client_bridge.client_profiles import UPDATED,LEGACY
+from dbv.brain.navigation.passive_map import MapReadError
 from test_automation_safety import state
 
 
@@ -48,7 +48,7 @@ def test_stale_unchanged_or_missing_stock_cannot_trigger_and_attempts_are_bounde
                                                    (9, 9.9, "pending"), (9, 14., "pending")])
 def test_seen_band_only_confirms_the_requested_slot_and_current_attempt(slot, observed, expected):
     import asyncio
-    from command_delivery import CommandReceipt
+    from dbv.client_bridge.command_delivery import CommandReceipt
 
     async def run():
         scheduler = BandScheduler()
@@ -129,9 +129,9 @@ def test_reader_rejects_wrong_profile_invalid_bounds_and_torn_inventory():
 
 def test_action_sends_only_move_to_selected_empty_slot_and_revokes_queued_guard(monkeypatch):
     import asyncio,time
-    import barrier_band as band
-    import client_equipment,client_player_state,passive_map_win32
-    from protocol import build_move_item_packet
+    from dbv.brain.combat import barrier_band as band
+    from dbv.client_bridge import client_equipment; from dbv.client_bridge import client_player_state; from dbv.client_bridge import passive_map_win32
+    from dbv.client_bridge.protocol import build_move_item_packet
     source=SimpleNamespace(close=lambda:None)
     cfg={'enabled':True,'slot':'right_hand'}
     state=SimpleNamespace(settings={'actions':{band.NAME:cfg}},automation_paused=False,band_scheduler=BandScheduler())
@@ -160,7 +160,7 @@ def test_dead_character_does_not_publish_equipment():
 
 def test_configuration_and_restart_validate_band_without_enabling_other_actions(state,monkeypatch):
     import asyncio
-    import mcp_server as server
+    from dbv.mcp_server import server
     calls=[]
     monkeypatch.setattr(server,'_start_action',lambda name:calls.append(name))
     for name in ['eat_food','auto_barrier_band']:

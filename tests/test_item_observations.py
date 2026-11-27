@@ -3,8 +3,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from item_observations import observed_inputs, wait_for_inputs
-from session_observations import session_observations
+from dbv.brain.state.item_observations import observed_inputs, wait_for_inputs
+from dbv.brain.state.session_observations import session_observations
 
 
 def test_observation_between_check_and_sleep_is_not_lost_or_reused_across_sessions():

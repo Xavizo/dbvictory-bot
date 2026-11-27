@@ -1,5 +1,5 @@
 import random,time
-from adaptive_cavebot import varied_detour,step_clear
+from dbv.brain.cavebot.adaptive_cavebot import varied_detour,step_clear
 from test_adaptive_cavebot import setup,cell
 from test_automation_safety import state
 

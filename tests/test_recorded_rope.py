@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from map_atlas import MapAtlas, trace_links
-from recorded_rope import recorded_rope_edges
+from dbv.brain.navigation.map_atlas import MapAtlas, trace_links
+from dbv.brain.cavebot.recorded_rope import recorded_rope_edges
 from test_adaptive_cavebot import cell
 
 
@@ -74,7 +74,7 @@ def test_scoped_recording_after_long_wait_confirms_marked_spot_without_learner_c
 
 
 def test_trace_break_only_invalidates_affected_occurrence():
-    from map_atlas import recording_points
+    from dbv.brain.navigation.map_atlas import recording_points
     rec, row=recording_and_row()
     origin,dest=row["origin"],row["exit"]
     rec["observed_path"]=[dict(pos=p,t=i,break_before=i==3) for i,p in enumerate([origin,dest,origin,dest])]

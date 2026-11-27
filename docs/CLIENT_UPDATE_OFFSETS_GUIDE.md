@@ -12,7 +12,7 @@ Do this with the game closed.
 
 Worked example throughout = the Nov 26 build
 (`af43383076c0abc7192b407210efc54da6b6cbaf4ff8a2aa18f22a7f7d7486e4`), whose
-answers are already in `client_profiles.py` so you can check yourself.
+answers are already in `dbv/client_bridge/client_profiles.py` so you can check yourself.
 
 ---
 
@@ -41,7 +41,7 @@ There are only four kinds of anchor, and every value in a profile comes from one
   (reading a getter to confirm which field it is). This is the only non‑scripted part.
 - **Python 3** — to run `derive.py` below. No `pip` packages needed; it parses
   the PE by hand. (`pefile`/`capstone` are nice‑to‑have, not required.)
-- The repo's own **`check_client_build.py`** — your acceptance judge.
+- The repo's own **`tools/check_client_build.py`** — your acceptance judge.
 - The x86 MinGW already in the repo runtime
   (`.codex\runtime\mingw32\bin\g++.exe`) to build the DLL.
 
@@ -70,7 +70,7 @@ output reproduces the committed profile exactly.
 
 Does NOT attach to a process, open a socket, or write anything. It parses the
 PE on disk and prints candidate addresses for a new ClientProfile. Every number
-is a CANDIDATE: feed them into check_client_build.py, which re-proves them.
+is a CANDIDATE: feed them into tools/check_client_build.py, which re-proves them.
 
 Usage:  python3 -I derive.py PATH/TO/dbvStart.exe
 """
@@ -270,7 +270,7 @@ scanner shows the body one byte in at `0xBAEC1`. Both point at `+0xD4`.
 
 These populate `PlayerLayout(stats, conditions, inventory, game_singleton,
 speed_getter, states_getter)`. Note `stats` is the **base** of the stat block
-(`+0x558`); the reader in `client_player_state.py` knows the field strides from
+(`+0x558`); the reader in `dbv/client_bridge/client_player_state.py` knows the field strides from
 there, so confirm the *strides* (hp→maxhp = +8, but maxhp→level = +0x20) match
 what you read, not just the base.
 
@@ -290,7 +290,7 @@ The visual target square needs four things, all in `dll/observer_layout.h`:
   (script: `0x405455`, `0x405480`). The hook in `target_marker.h` checks the
   **return address** (`site + 6`) so it only acts at the game‑loop boundary.
 - `SHOW_SQUARE` / `HIDE_SQUARE` — `Creature::showStaticSquare` / `hideStaticSquare`.
-  Find them by their full body signatures (in `check_client_build.py`); the two
+  Find them by their full body signatures (in `tools/check_client_build.py`); the two
   displacements inside `show` are `SQUARE_VISIBLE` (`0x15D`) and `SQUARE_COLOR`
   (`0x13C`). On Nov 26 they are `0xBA920` / `0xBA960`.
 
@@ -304,7 +304,7 @@ revisit later. This is the containment the Nov 17 record already chose once.
 
 Older builds leaked the XTEA key via the RSA login block. The Nov 26 build
 stopped, so the key is now read from the live `ProtocolGame` object
-(`client_protocol.py`). To re‑derive for a future build:
+(`dbv/client_bridge/client_protocol.py`). To re‑derive for a future build:
 
 1. `PROTOCOL_VTABLE` = the ProtocolGame vtable from Anchor A (`0x8BE5FC`).
 2. Confirm three accessor signatures still match (in `client_protocol.SIGNATURES`):
@@ -328,26 +328,26 @@ stopped, so the key is now read from the live `ProtocolGame` object
 
 ## 8. Write the profile and prove it
 
-1. **Add** a new `ClientProfile` (+ `PlayerLayout`) to `client_profiles.py`;
+1. **Add** a new `ClientProfile` (+ `PlayerLayout`) to `dbv/client_bridge/client_profiles.py`;
    append to `PROFILES`. Never edit an existing profile — keep old ones for
    rollback. Give it a new `observer_dll` name and `observer_pipe`.
 2. Add the `#if defined(DBV_CLIENT_YYYYMMDD)` branch to `dll/observer_layout.h`
    and extend `build_dll.ps1`'s `ValidateSet` + define + output name.
-3. Add the build's signature block to `check_client_build.py` (copy the Nov 26
+3. Add the build's signature block to `tools/check_client_build.py` (copy the Nov 26
    block, swap values). **This is your acceptance test** — it re‑proves every
    number against bytes + RTTI. A profile with zero static checks is not verified.
-4. Add the native‑key wiring in `mcp_server.py` (`client_key_reader = lambda:
-   read_live_protocol_key(game_pid)`) and point `client_protocol.py` at the new
+4. Add the native‑key wiring in `dbv/mcp_server/server.py` (`client_key_reader = lambda:
+   read_live_protocol_key(game_pid)`) and point `dbv/client_bridge/client_protocol.py` at the new
    profile + signatures.
 5. Run the judge and the suite:
 
 ```powershell
 .\build_dll.ps1 -ClientVersion YYYYMMDD
-.\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_YYYYMMDD.dll'
+.\venv\Scripts\python.exe tools/check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_YYYYMMDD.dll'
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-If `check_client_build.py` prints `static_checks` > 0 and no mismatch, your
+If `tools/check_client_build.py` prints `static_checks` > 0 and no mismatch, your
 addresses are internally consistent. If it throws `Static signature mismatch at
 RVA …`, that exact field is wrong — go back to its anchor.
 
@@ -362,7 +362,7 @@ The anchor method handles a **relocation‑only** update (the common case). Stop
 and get help — don't bypass a check — when:
 
 - A getter's **code shape** changed, not just its displacement (a field changed
-  type, or a struct was reorganised). `check_client_build.py` will mismatch.
+  type, or a struct was reorganised). `tools/check_client_build.py` will mismatch.
 - The **key mechanism** changed again (the handshake no longer exposes the key
   where §7 expects). `_confirm_client_key` simply never confirms.
 - The **protocol/opcodes** changed — you'll see `parse message exception` in the
@@ -381,5 +381,5 @@ make an unknown build start.
 
 Hash → run `derive.py` → confirm vtables/singletons/marker automatically, match
 the dozen field getters in Ghidra by name+width → write a new profile → let
-`check_client_build.py` re‑prove it → build DLL, test, install, fresh‑login.
+`tools/check_client_build.py` re‑prove it → build DLL, test, install, fresh‑login.
 Anchors, never deltas; fail safe, never force.

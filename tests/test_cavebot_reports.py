@@ -2,8 +2,8 @@ import asyncio
 import time
 from types import SimpleNamespace as NS
 
-from cavebot_reports import Lap, replay_reports
-from cavebot_history import RunHistory, read_reports, save_report
+from dbv.brain.cavebot.cavebot_reports import Lap, replay_reports
+from dbv.brain.cavebot.cavebot_history import RunHistory, read_reports, save_report
 
 
 def frame(ms, lap=0, **kwargs):

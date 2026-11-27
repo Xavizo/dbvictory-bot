@@ -3,9 +3,9 @@ import asyncio
 
 import pytest
 
-from adaptive_cavebot import WalkOutcome
-from cavebot_combat import validate_combat
-from cavebot_walking import detour
+from dbv.brain.cavebot.adaptive_cavebot import WalkOutcome
+from dbv.brain.cavebot.cavebot_combat import validate_combat
+from dbv.brain.cavebot.cavebot_walking import detour
 from test_adaptive_cavebot import cell, setup, connect_fake_walk
 from test_automation_safety import state
 from test_v2_combat import armed, monster

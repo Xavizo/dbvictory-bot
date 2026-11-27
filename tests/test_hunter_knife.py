@@ -1,14 +1,14 @@
 import pytest
 
-from hunter_knife import FRESH, SPENT, SkinningQueue, body_counts, skinned
+from dbv.brain.combat.hunter_knife import FRESH, SPENT, SkinningQueue, body_counts, skinned
 
 
 def test_manual_unknown_corpse_requires_single_replacement_on_same_tile(caplog):
     import logging
     import time
     from types import SimpleNamespace
-    from passive_map import PassiveMapMonitor
-    from protocol import ClientOpcode, PacketReader, build_use_item_ex_packet
+    from dbv.brain.navigation.passive_map import PassiveMapMonitor
+    from dbv.client_bridge.protocol import ClientOpcode, PacketReader, build_use_item_ex_packet
 
     game = SimpleNamespace()
     monitor = PassiveMapMonitor(SimpleNamespace(connected=True, game_state=game))
@@ -106,10 +106,10 @@ def test_changing_stacks_and_no_drop_are_distinct_from_confirmation():
 
 def test_loot_channel_provenance_and_ownership_rejection():
     import struct
-    from game_state import GameState, scan_packet
-    from packet_observer import apply_scan, detach_state
-    from protocol import ServerOpcode
-    from hunter_knife_action import KnifeAutomation
+    from dbv.brain.state.game_state import GameState, scan_packet
+    from dbv.client_bridge.packet_observer import apply_scan, detach_state
+    from dbv.client_bridge.protocol import ServerOpcode
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation
 
     def string(value):
         return struct.pack("<H",len(value))+value
@@ -141,8 +141,8 @@ def test_loot_channel_provenance_and_ownership_rejection():
 
 def test_fury_loot_with_display_time_and_channel_state():
     from types import SimpleNamespace
-    from hunter_knife import loot_species
-    from hunter_knife_action import KnifeAutomation, WAITING_FOR_BODY
+    from dbv.brain.combat.hunter_knife import loot_species
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation, WAITING_FOR_BODY
 
     line = "[Fury Mutant Fire Elemental]: nothing."
     assert loot_species(line) == loot_species("13:51 " + line) == "fury mutant fire elemental"
@@ -162,7 +162,7 @@ def test_fury_loot_with_display_time_and_channel_state():
 def combat_frames(*, xp=True, foreign=False, other_birth=False, still_alive=False,
                   existing=0, other_death=False, targeted=True):
     from types import SimpleNamespace as NS
-    from hunter_knife_action import KnifeAutomation
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation
 
     cid = 0x40000001
     game = NS(position=A, attack_target_id=cid if targeted else 0, experience=120000, creatures={})
@@ -214,7 +214,7 @@ def test_exposed_body_without_reliable_personal_evidence_can_be_tried_once():
 
 def test_two_successive_targets_at_same_tile_without_loot_or_cavebot_target_clicks():
     from types import SimpleNamespace as NS
-    from hunter_knife_action import KnifeAutomation
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation
 
     game = NS(position=A, attack_target_id=0, experience=20000, creatures={})
     combat = NS(config={"enabled": True}, sent_target=0, target=None)
@@ -240,9 +240,9 @@ def test_two_successive_targets_at_same_tile_without_loot_or_cavebot_target_clic
 
 def test_running_cavebot_skins_first_exposed_body_with_next_target_active(monkeypatch):
     from types import SimpleNamespace as NS
-    from hunter_knife_action import KnifeAutomation
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation
     clock = [100.]
-    monkeypatch.setattr("hunter_knife_action.time", NS(time=lambda: clock[0], monotonic=lambda: clock[0]))
+    monkeypatch.setattr("dbv.brain.combat.hunter_knife_action.time", NS(time=lambda: clock[0], monotonic=lambda: clock[0]))
     cid = 0x40000001
     game = NS(position=A, attack_target_id=0, experience=10000, creatures={})
     combat = NS(config={"enabled": True}, sent_target=cid, target=None)
@@ -286,9 +286,9 @@ def test_fully_matched_personal_loot_can_release_two_bodies_early():
 
 def test_status_line_denial_from_manual_and_automatic_uses():
     from types import SimpleNamespace as NS
-    from game_state import GameState
-    from hunter_knife import ownership_denied, publish_feedback
-    from hunter_knife_action import KnifeAutomation
+    from dbv.brain.state.game_state import GameState
+    from dbv.brain.combat.hunter_knife import ownership_denied, publish_feedback
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation
 
     game = GameState()
     msg = NS(messages=[{"text":"Sorry, you are not owner."}],knife_feedback=[])
@@ -312,9 +312,9 @@ def test_status_line_denial_from_manual_and_automatic_uses():
 
 def test_worker_confirms_two_layers_across_end_of_manual_combat(monkeypatch):
     from types import SimpleNamespace
-    from hunter_knife_action import KnifeAutomation
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation
     clock = [11.6]
-    monkeypatch.setattr("hunter_knife_action.time.monotonic",lambda:clock[0])
+    monkeypatch.setattr("dbv.brain.combat.hunter_knife_action.time.monotonic",lambda:clock[0])
     game = SimpleNamespace(position=A,creatures={},attack_target_id=None)
     runtime = KnifeAutomation(game)
     runtime.tool_ready = True
@@ -338,7 +338,7 @@ def test_worker_confirms_two_layers_across_end_of_manual_combat(monkeypatch):
 
 def test_worker_changes_top_layer_only_with_usable_destination():
     from types import SimpleNamespace
-    from hunter_knife_action import KnifeAutomation
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation
     game = SimpleNamespace(position=(A[0]-1,A[1],A[2]),creatures={},attack_target_id=0)
     runtime = KnifeAutomation(game)
     runtime.tool_ready = True
@@ -364,7 +364,7 @@ def test_standalone_action_uses_equipped_base_knife_and_observed_effect(monkeypa
     from types import SimpleNamespace as NS
     from unittest.mock import Mock
     from actions.auto_hunter_knife import run
-    from protocol import build_use_item_ex_packet
+    from dbv.client_bridge.protocol import build_use_item_ex_packet
 
     clock = [100.0]
     gs = NS(hp=90,position=A,attack_target_id=None,creatures={})
@@ -376,13 +376,13 @@ def test_standalone_action_uses_equipped_base_knife_and_observed_effect(monkeypa
     reader = Mock()
     reader.snapshot.return_value = {"slots":{6:5908},"sources":[]}
     source = Mock()
-    monkeypatch.setattr("passive_map_win32.ReadOnlyClient",lambda:source)
-    monkeypatch.setattr("client_player_state.ClientPlayerReader",lambda *args:object())
-    monkeypatch.setattr("client_equipment.EquipmentReader",lambda *args:reader)
+    monkeypatch.setattr("dbv.client_bridge.passive_map_win32.ReadOnlyClient",lambda:source)
+    monkeypatch.setattr("dbv.client_bridge.client_player_state.ClientPlayerReader",lambda *args:object())
+    monkeypatch.setattr("dbv.client_bridge.client_equipment.EquipmentReader",lambda *args:reader)
     wall = time.time()
     def wall_time():
         return wall+clock[0]-100
-    monkeypatch.setattr("hunter_knife_action.time",NS(time=wall_time,monotonic=lambda:clock[0]))
+    monkeypatch.setattr("dbv.brain.combat.hunter_knife_action.time",NS(time=wall_time,monotonic=lambda:clock[0]))
     sent = []
     def sample(*items):
         monitor._result = dict(status="ready",cells=[dict(tile(A,*items),kind="clear")],center=A,captured_at=wall_time())

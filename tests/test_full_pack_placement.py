@@ -7,8 +7,8 @@ import time
 
 import pytest
 
-import cavebot_combat
-from cavebot_lure import lure_stopping_path, open_sides, queued_pack_step
+from dbv.brain.cavebot import cavebot_combat
+from dbv.brain.cavebot.cavebot_lure import lure_stopping_path, open_sides, queued_pack_step
 from test_adaptive_cavebot import cell, connect_fake_walk
 from test_automation_safety import state
 from test_v2_combat import armed, monster

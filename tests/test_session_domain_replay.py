@@ -2,12 +2,12 @@
 import asyncio
 from types import SimpleNamespace
 
-from adaptive_cavebot import AdaptiveCavebot
-from game_state import GameState
-from hunter_knife import FRESH
-from hunter_knife_action import KnifeAutomation
-from potions import PotionScheduler, validate_config
-from session_observations import note_observation_gap, session_observations
+from dbv.brain.cavebot.adaptive_cavebot import AdaptiveCavebot
+from dbv.brain.state.game_state import GameState
+from dbv.brain.combat.hunter_knife import FRESH
+from dbv.brain.combat.hunter_knife_action import KnifeAutomation
+from dbv.brain.combat.potions import PotionScheduler, validate_config
+from dbv.brain.state.session_observations import note_observation_gap, session_observations
 from test_hunter_knife import A, NAME, tile
 from test_potions import rule
 from test_relogin_identity import callback

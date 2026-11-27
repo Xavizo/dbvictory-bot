@@ -1,2 +1,2 @@
 """Utrzymuje barierę postaci za pomocą czaru Barrier."""
-from barrier_spell import run_barrier as run
+from dbv.brain.combat.barrier_spell import run_barrier as run

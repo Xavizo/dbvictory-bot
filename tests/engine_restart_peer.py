@@ -10,10 +10,10 @@ from types import SimpleNamespace
 
 def main(tree, folder):
     sys.path[:0] = [str(tree), str(tree / "tests")]
-    import mcp_server as server
-    from client_player_state import bind_local_player
-    from potions import run_potions
-    from protocol import ClientOpcode
+    from dbv.mcp_server import server
+    from dbv.client_bridge.client_player_state import bind_local_player
+    from dbv.brain.combat.potions import run_potions
+    from dbv.client_bridge.protocol import ClientOpcode
     from test_adaptive_cavebot import setup
     from test_automation_domains import until
     from test_command_delivery import transport
@@ -122,7 +122,7 @@ def main(tree, folder):
             state.game_proxy.recovery_connection_id = observation["connection_id"]
         bot = SimpleNamespace(is_connected=True, sleep=asyncio.sleep)
         if observation:
-            from map_atlas import MapAtlas
+            from dbv.brain.navigation.map_atlas import MapAtlas
             atlas = MapAtlas(folder, 'a'*64)
             state.passive_map_monitor = SimpleNamespace(atlas=atlas, learner=None, snapshot=lambda: dict(
                 status="ready", center=list(state.game_state.position), age_seconds=0, cells=[]))

@@ -5,8 +5,8 @@ from collections import deque
 from unittest.mock import AsyncMock,Mock
 
 import pytest
-from command_delivery import CommandReceipt,delivery
-from session_lifetime import SessionLease
+from dbv.client_bridge.command_delivery import CommandReceipt,delivery
+from dbv.brain.state.session_lifetime import SessionLease
 from test_automation_safety import proxy,state
 
 
@@ -27,7 +27,7 @@ async def dispatched(p,receipt):
 def test_delivery_timings_stop_at_first_observed_result(monkeypatch):
     from types import SimpleNamespace
     clock = [10.]
-    monkeypatch.setattr('command_delivery.time', SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr('dbv.client_bridge.command_delivery.time', SimpleNamespace(monotonic=lambda: clock[0]))
 
     async def exercise():
         receipt = CommandReceipt(1, 3, 'server', 1)
@@ -135,7 +135,7 @@ def test_session_lease_expires_without_relying_on_proxy_object_replacement(state
 
 
 def test_context_old_action_cannot_send_in_new_session(state):
-    import mcp_server as server
+    from dbv.mcp_server import server
     async def exercise():
         state.game_proxy=transport();state.ready=True
         ctx=server.BotContext('auto_potions')
@@ -211,8 +211,8 @@ def test_rejected_spell_does_not_reserve_cooldown(state,tmp_path):
 
 @pytest.mark.parametrize('status,consumed',[('rejected',False),('expired',False),('unknown',True),('dispatched',True)])
 def test_healing_reserves_cooldown_only_for_possible_delivery(state,status,consumed):
-    import mcp_server as server
-    from potions import run_potions
+    from dbv.mcp_server import server
+    from dbv.brain.combat.potions import run_potions
     state.ready=True;state.game_proxy=transport()
     gs=state.game_state;gs.hp=30;gs.max_hp=100;gs.stats_updated_at=time.time()
     state.settings['actions']['auto_potions']=dict(enabled=True,health_cooldown=2,ki_cooldown=2)
@@ -228,8 +228,8 @@ def test_healing_reserves_cooldown_only_for_possible_delivery(state,status,consu
 
 
 def test_late_hp_recovery_invalidates_queued_healing(state):
-    import mcp_server as server
-    from potions import run_potions
+    from dbv.mcp_server import server
+    from dbv.brain.combat.potions import run_potions
     state.ready=True;state.game_proxy=transport()
     gs=state.game_state;gs.hp=30;gs.max_hp=100;gs.stats_updated_at=time.time()
     state.settings['actions']['auto_potions']=dict(enabled=True,health_cooldown=2,ki_cooldown=2)
@@ -249,8 +249,8 @@ def test_late_hp_recovery_invalidates_queued_healing(state):
 
 @pytest.mark.parametrize('written',[False,True])
 def test_cancelled_healing_keeps_cooldown_only_if_write_started(state,written):
-    import mcp_server as server
-    from potions import run_potions
+    from dbv.mcp_server import server
+    from dbv.brain.combat.potions import run_potions
     state.ready=True;state.game_proxy=transport()
     gs=state.game_state;gs.hp=30;gs.max_hp=100;gs.stats_updated_at=time.time()
     state.settings['actions']['auto_potions']=dict(enabled=True,health_cooldown=2,ki_cooldown=2)

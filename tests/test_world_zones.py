@@ -1,9 +1,9 @@
-from cavebot_history import save_report
-from hunt_areas import save_area, sector
-from hunt_routes import propose
-from hunt_world import world_zones
-from manual_hunts import store_visit
-from map_atlas import MapAtlas
+from dbv.brain.cavebot.cavebot_history import save_report
+from dbv.brain.hunts.hunt_areas import save_area, sector
+from dbv.brain.hunts.hunt_routes import propose
+from dbv.brain.hunts.hunt_world import world_zones
+from dbv.brain.hunts.manual_hunts import store_visit
+from dbv.brain.navigation.map_atlas import MapAtlas
 from test_atlas_and_pause import cell, sample
 import pytest
 

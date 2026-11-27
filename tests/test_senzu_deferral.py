@@ -3,8 +3,8 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from game_state import GameState
-from potions import PotionDiagnostics, PotionScheduler, run_potions, validate_config
+from dbv.brain.state.game_state import GameState
+from dbv.brain.combat.potions import PotionDiagnostics, PotionScheduler, run_potions, validate_config
 from test_potions import rule
 
 
@@ -172,8 +172,8 @@ def test_action_dispatches_one_attempt_after_delay(monkeypatch):
             raise asyncio.CancelledError
         apply_frame(*next_frame)
     apply_frame(*frame)
-    monkeypatch.setattr("potions.time.time", lambda: 1000 + frame[0])
-    monkeypatch.setattr("potions.time.monotonic", lambda: 100 + frame[0])
+    monkeypatch.setattr("dbv.brain.combat.potions.time.time", lambda: 1000 + frame[0])
+    monkeypatch.setattr("dbv.brain.combat.potions.time.monotonic", lambda: 100 + frame[0])
     st = NS(settings={"actions": {"auto_potions": cfg}}, game_state=gs,
             potion_scheduler=timer, potion_diagnostics=PotionDiagnostics())
     bot = NS(state=st, is_connected=True, sleep=sleep, inject_to_server=send, log=lambda _: None)

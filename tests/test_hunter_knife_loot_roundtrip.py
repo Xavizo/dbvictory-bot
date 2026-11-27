@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from game_state import GameState
-from hunter_knife import FRESH, SPENT, publish_feedback
-from hunter_knife_action import KnifeAutomation
-from protocol import ServerOpcode
+from dbv.brain.state.game_state import GameState
+from dbv.brain.combat.hunter_knife import FRESH, SPENT, publish_feedback
+from dbv.brain.combat.hunter_knife_action import KnifeAutomation
+from dbv.client_bridge.protocol import ServerOpcode
 from test_hunter_knife import NAME, tile
 from test_personal_loot_channels import channel_message, receive, roster
 

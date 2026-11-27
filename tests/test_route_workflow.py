@@ -8,12 +8,12 @@ import time
 import pytest
 from types import SimpleNamespace
 
-import cavebot
-import dashboard_api as api
-from adaptive_cavebot import AdaptiveCavebot,OFFSETS
-from dashboard_security import DASHBOARD_ORIGIN,SESSION_TOKEN
-from map_atlas import MapAtlas,recording_points,review_recorded_actions
-from protocol import WALK_OPCODES,ClientOpcode
+from dbv.brain.cavebot import cavebot
+from dbv.mcp_server import dashboard_api as api
+from dbv.brain.cavebot.adaptive_cavebot import AdaptiveCavebot,OFFSETS
+from dbv.mcp_server.dashboard_security import DASHBOARD_ORIGIN,SESSION_TOKEN
+from dbv.brain.navigation.map_atlas import MapAtlas,recording_points,review_recorded_actions
+from dbv.client_bridge.protocol import WALK_OPCODES,ClientOpcode
 from test_adaptive_cavebot import cell,setup
 from test_automation_safety import state,proxy
 from test_dashboard_security import http_api
@@ -98,7 +98,7 @@ def test_unoptimized_wiggle_keeps_every_turn_and_backtrack(tmp_path):
 def test_two_editor_windows_cannot_silently_overwrite_a_newer_sketch(tmp_path,monkeypatch):
     atlas=MapAtlas(tmp_path,'d'*64);points=[[10,10,7],[11,10,7]]
     draft=atlas.save_draft('one',points);before=atlas.drafts()[0]['updated']
-    monkeypatch.setattr('map_atlas.time.time',lambda:before+1)
+    monkeypatch.setattr('dbv.brain.navigation.map_atlas.time.time',lambda:before+1)
     atlas.save_draft('newer',points,draft,False,expected_updated=before)
     with pytest.raises(ValueError,match='innym oknie'):
         atlas.save_draft('stale',[[10,10,7],[12,10,7]],draft,True,expected_updated=before)

@@ -7,7 +7,7 @@ import pytest
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from cavebot import build_actions_map, _simplify_path, _is_map_click_walk
+from dbv.brain.cavebot.cavebot import build_actions_map, _simplify_path, _is_map_click_walk
 
 # Direction → (dx, dy) for computing post-walk pos from player_pos
 _DIR_OFFSET = {

@@ -6,9 +6,9 @@ from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
-import mcp_server as server
-from adaptive_cavebot import AdaptiveCavebot
-from protocol import ClientOpcode
+from dbv.mcp_server import server
+from dbv.brain.cavebot.adaptive_cavebot import AdaptiveCavebot
+from dbv.client_bridge.protocol import ClientOpcode
 from test_automation_safety import state
 from test_adaptive_cavebot import setup,cell,connect_fake_walk
 

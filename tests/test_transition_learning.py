@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from protocol import ClientOpcode as Op, PacketReader
-import transition_learning as tl
-from passive_map import PassiveMapMonitor
+from dbv.client_bridge.protocol import ClientOpcode as Op, PacketReader
+from dbv.brain.navigation import transition_learning as tl
+from dbv.brain.navigation.passive_map import PassiveMapMonitor
 
 ORIGIN = [100,100,7]
 ENTRY = [100,99,7]

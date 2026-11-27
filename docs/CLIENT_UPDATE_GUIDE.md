@@ -58,8 +58,8 @@ Packet counters count forwarded traffic. Increasing counters do **not** prove
 decryption, a game session, HP/Ki sampling or a working DLL. This distinction
 was the cause of the misleading dashboard during the November 26 repair.
 
-For the November 26 build, `client_protocol.py` reads the existing XTEA key
-from the verified process using read-only access. `proxy.py` confirms it against
+For the November 26 build, `dbv/client_bridge/client_protocol.py` reads the existing XTEA key
+from the verified process using read-only access. `dbv/client_bridge/proxy.py` confirms it against
 two server frames before starting observation. The selected PID, executable,
 signatures, protocol type and stable fields must agree. Older builds retain
 their RSA path. A future client might change either memory layout or framing;
@@ -74,25 +74,25 @@ client-update path; an update need only change the ones its evidence requires.
 
 | File | Responsibility / what to review |
 | --- | --- |
-| [client_profiles.py](../client_profiles.py) | Exact executable and DAT hashes, map/type/vtable RVAs, `PlayerLayout`, observer DLL and pipe. Register a new profile in `PROFILES`; retain previous entries. |
-| [check_client_build.py](../check_client_build.py) | Offline PE/DAT/signature/DLL checker. Add checks for the new build, not just its hash. At v1.38.3 only `NOVEMBER_26` has the 35 detailed code/type checks. |
-| [passive_map_win32.py](../passive_map_win32.py) | Finds one `dbvStart.exe`, identifies its executable, opens QUERY/VM_READ access and exposes the loaded base/PID. No process writes. |
-| [passive_map.py](../passive_map.py) | Map/tree/vector/thing decoding and polling; executable/DAT/server scope for observations. Review embedded object-field assumptions when structures change. |
-| [client_player_state.py](../client_player_state.py) | LocalPlayer identity, HP/Ki/level, facing, conditions, speed and stable snapshots. Contains an explicit supported-profile list as well as fields outside `PlayerLayout`. |
-| [client_equipment.py](../client_equipment.py) | Equipment and open-container structures. Contains another explicit supported-profile list; inventory offset alone is insufficient if container layouts change. |
-| [client_protocol.py](../client_protocol.py) | November 26 protocol object, accessor signatures, encryption flag and key fields. Currently explicitly restricted to `NOVEMBER_26`. |
+| [dbv/client_bridge/client_profiles.py](../client_profiles.py) | Exact executable and DAT hashes, map/type/vtable RVAs, `PlayerLayout`, observer DLL and pipe. Register a new profile in `PROFILES`; retain previous entries. |
+| [tools/check_client_build.py](../check_client_build.py) | Offline PE/DAT/signature/DLL checker. Add checks for the new build, not just its hash. At v1.38.3 only `NOVEMBER_26` has the 35 detailed code/type checks. |
+| [dbv/client_bridge/passive_map_win32.py](../passive_map_win32.py) | Finds one `dbvStart.exe`, identifies its executable, opens QUERY/VM_READ access and exposes the loaded base/PID. No process writes. |
+| [dbv/brain/navigation/passive_map.py](../passive_map.py) | Map/tree/vector/thing decoding and polling; executable/DAT/server scope for observations. Review embedded object-field assumptions when structures change. |
+| [dbv/client_bridge/client_player_state.py](../client_player_state.py) | LocalPlayer identity, HP/Ki/level, facing, conditions, speed and stable snapshots. Contains an explicit supported-profile list as well as fields outside `PlayerLayout`. |
+| [dbv/client_bridge/client_equipment.py](../client_equipment.py) | Equipment and open-container structures. Contains another explicit supported-profile list; inventory offset alone is insufficient if container layouts change. |
+| [dbv/client_bridge/client_protocol.py](../client_protocol.py) | November 26 protocol object, accessor signatures, encryption flag and key fields. Currently explicitly restricted to `NOVEMBER_26`. |
 
 ### Proxy and session startup
 
 | File | Responsibility / what to review |
 | --- | --- |
-| [mcp_server.py](../mcp_server.py) | `start_bot` preflight, address patching, proxy creation and login callbacks. Explicitly enables the native key reader for `NOVEMBER_26`; a new profile needs deliberate wiring. |
-| [patcher.py](../patcher.py) | Finds and patches the remote server address in client memory. A successful patch alone does not establish a session. |
-| [constants.py](../constants.py) | Server host and environment-controlled network ports. Confirm actual endpoint changes; do not guess them from a client version. |
-| [proxy.py](../proxy.py) | Framing/forwarding, RSA fallback, native-key confirmation, exact known login envelope and connection cleanup. Never log keys or raw login bytes. |
-| [crypto.py](../crypto.py), [protocol.py](../protocol.py) | XTEA/checksums/RSA and packet opcodes/readers/builders. Change only if new protocol evidence requires it. |
-| [packet_observer.py](../packet_observer.py), [game_state.py](../game_state.py) | Bounded asynchronous decryption/parsing and state publication. Preserve initial frames and session ownership. |
-| [session_startup.py](../session_startup.py), [session_lifetime.py](../session_lifetime.py), [session_observations.py](../session_observations.py) | Login work, session lifetime and observation freshness. Keep disconnect/relogin invalidation intact. |
+| [dbv/mcp_server/server.py](../mcp_server.py) | `start_bot` preflight, address patching, proxy creation and login callbacks. Explicitly enables the native key reader for `NOVEMBER_26`; a new profile needs deliberate wiring. |
+| [dbv/client_bridge/patcher.py](../patcher.py) | Finds and patches the remote server address in client memory. A successful patch alone does not establish a session. |
+| [dbv/client_bridge/constants.py](../constants.py) | Server host and environment-controlled network ports. Confirm actual endpoint changes; do not guess them from a client version. |
+| [dbv/client_bridge/proxy.py](../proxy.py) | Framing/forwarding, RSA fallback, native-key confirmation, exact known login envelope and connection cleanup. Never log keys or raw login bytes. |
+| [dbv/client_bridge/crypto.py](../crypto.py), [dbv/client_bridge/protocol.py](../protocol.py) | XTEA/checksums/RSA and packet opcodes/readers/builders. Change only if new protocol evidence requires it. |
+| [dbv/client_bridge/packet_observer.py](../packet_observer.py), [dbv/brain/state/game_state.py](../game_state.py) | Bounded asynchronous decryption/parsing and state publication. Preserve initial frames and session ownership. |
+| [dbv/brain/state/session_startup.py](../session_startup.py), [dbv/brain/state/session_lifetime.py](../session_lifetime.py), [dbv/brain/state/session_observations.py](../session_observations.py) | Login work, session lifetime and observation freshness. Keep disconnect/relogin invalidation intact. |
 
 ### Native observer and marker
 
@@ -103,9 +103,9 @@ client-update path; an update need only change the ones its evidence requires.
 | [dll/target_marker.h](../dll/target_marker.h) | Visual square only, full setter signatures, reviewed game-thread hook, ownership/expiry/manual-selection checks. Review ABI and entire function bodies before changing. |
 | [build_dll.ps1](../build_dll.ps1) | Selects the source, compile definition and output filename. Extend its `ValidateSet` and branches for a new build. The default builds the legacy DLL. |
 | `dll/dbvobserver_marker_20261126.dll` | Generated x86 artifact for the working build. DLLs are Git-ignored: a source commit/clone does not include this binary. Build, hash and deliver it separately. |
-| [inject.py](../inject.py) | Windows DLL loading and target bitness checks; normally unchanged by an address relocation. |
+| [dbv/client_bridge/inject.py](../inject.py) | Windows DLL loading and target bitness checks; normally unchanged by an address relocation. |
 | [actions/dll_bridge.py](../actions/dll_bridge.py) | Selects the profile's DLL for injection and starts the bridge. Preserve profile selection through retries. |
-| [dll_bridge.py](../dll_bridge.py) | Selects the profile's named pipe and handles the protocol. A DLL/pipe mismatch can leave the bridge inactive even if the DLL loaded. |
+| [dbv/client_bridge/dll_bridge.py](../dll_bridge.py) | Selects the profile's named pipe and handles the protocol. A DLL/pipe mismatch can leave the bridge inactive even if the DLL loaded. |
 
 `dll/dbvbot.cpp`, `dll/observer.cpp`, `dll/target_observer.cpp` and
 `dll/target_sync.h` are older/alternate implementations, not the November 26
@@ -123,8 +123,8 @@ older files will not adapt the current connection path.
 | [launcher_files.py](../launcher_files.py), [launcher/UpdateWindow.cs](../launcher/UpdateWindow.cs) | File-only preflight and updater window. `preflight --check` does not install anything. |
 | [dbv_release.py](../dbv_release.py), [launcher_lock.py](../launcher_lock.py), [dbv_revision.py](../dbv_revision.py), [launcher_panel_build.py](../launcher_panel_build.py) | Exact-commit packaging, locks, version calculation and renderer builds. Native/dependency changes intentionally require separate maintenance. |
 | [launcher/desktop/release-notes.json](../launcher/desktop/release-notes.json) | User-facing release notes. Each commit advances the displayed version, including documentation commits. |
-| [dashboard_api.py](../dashboard_api.py), [dashboard_security.py](../dashboard_security.py), `dashboard/app/`, `dashboard/electron/` | Observations/status UI, authenticated local APIs and Electron shell. Usually no changes for an offset-only update. |
-| [dashboard/electron/tray.js](../dashboard/electron/tray.js), [tray_exit.py](../tray_exit.py) | **Zakończ bota** requests engine exit. Window X only hides the panel. |
+| [dbv/mcp_server/dashboard_api.py](../dashboard_api.py), [dbv/mcp_server/dashboard_security.py](../dashboard_security.py), `dashboard/app/`, `dashboard/electron/` | Observations/status UI, authenticated local APIs and Electron shell. Usually no changes for an offset-only update. |
+| [dashboard/electron/tray.js](../dashboard/electron/tray.js), [dbv/mcp_server/tray_exit.py](../tray_exit.py) | **Zakończ bota** requests engine exit. Window X only hides the panel. |
 
 ### Tests and evidence
 
@@ -235,10 +235,10 @@ Add a new named profile instead of editing `NOVEMBER_26`. Then check this list:
   new DLL filename and matching pipe name.
 - Review `ClientPlayerReader` and `EquipmentReader` supported-profile lists and
   embedded field layouts. Retain identity, bounds, freshness and torn-read checks.
-- Add build-specific native-key evidence/selection in `client_protocol.py` and
-  wire it in `mcp_server.py` if that key path is appropriate. Merely adding a
+- Add build-specific native-key evidence/selection in `dbv/client_bridge/client_protocol.py` and
+  wire it in `dbv/mcp_server/server.py` if that key path is appropriate. Merely adding a
   `ClientProfile` does **not** activate native key reading.
-- Review `proxy.py`'s recognized login envelope. For the working build it is
+- Review `dbv/client_bridge/proxy.py`'s recognized login envelope. For the working build it is
   checksummed, 137 bytes, opcode 10, OS 10, version 372. These are observed
   build-specific facts, not universal protocol constants. Retain key confirmation,
   connection reset and forwarding-before-analysis behavior.
@@ -246,7 +246,7 @@ Add a new named profile instead of editing `NOVEMBER_26`. Then check this list:
   `dll/observer_layout.h` and `build_dll.ps1`. Review structures in the observer
   and marker sources as well. A missing new define currently selects the older
   layout through `#else`; verify the artifact rather than trusting its filename.
-- Extend `check_client_build.py` with independent code/type checks. An unknown
+- Extend `tools/check_client_build.py` with independent code/type checks. An unknown
   hash should fail. A newly registered profile with **zero static checks** is
   not a completed compatibility verification.
 - If the DAT changed, review item definitions and locally exported graphics/
@@ -268,7 +268,7 @@ From the candidate root, these are the working November 26 commands:
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\build_dll.ps1 -ClientVersion 20261126
-.\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_20261126.dll'
+.\venv\Scripts\python.exe tools/check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_20261126.dll'
 .\venv\Scripts\python.exe -m pytest -q tests/test_client_profiles.py tests/test_client_november_26.py tests/test_client_protocol.py tests/test_client_player_state.py tests/test_passive_map.py tests/test_dll_pipe.py tests/test_native_target_sync.py tests/test_packet_observer.py tests/test_relogin_identity.py tests/test_automation_safety.py
 .\venv\Scripts\python.exe -m pytest -q
 node --test tests/desktop_launcher.test.cjs

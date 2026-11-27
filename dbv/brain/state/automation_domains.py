@@ -1,0 +1,184 @@
+"""Independent combat evaluation and one movement executor per game session.
+
+Healing remains its own action task. Neither worker owns or cancels that task.
+Combat publishes movement intents; only navigation can execute a walk/tool use.
+"""
+import asyncio
+import logging
+import time
+
+log = logging.getLogger(__name__)
+COMBAT_INTERVAL = .05
+
+
+class CavebotDomains:
+    def __init__(self, owner):
+        self.owner = owner
+        self.movement_state = 'idle'
+        self.combat_state = 'idle'
+        self.movement_error = None
+        self.combat_error = None
+        self.decision = None
+        self._review_requested = asyncio.Event()
+        self._decision_ready = asyncio.Event()
+        self._requested_signature = None
+        self.tasks = []
+
+    def snapshot(self):
+        return dict(movement=dict(status=self.movement_state,reason=self.movement_error),
+                    combat=dict(status=self.combat_state,reason=self.combat_error))
+
+    def signature(self):
+        o = self.owner
+        return (tuple(o.state.game_state.position),o.index,o.generation,o.motion_generation)
+
+    def movement_allowed(self):
+        o = self.owner
+        return (not o.combat_only and not o.navigation_hold
+                and self.movement_state != 'complete' and time.monotonic() >= o.manual_until)
+
+    async def combat_loop(self):
+        o = self.owner
+        o.combat.defer_movement = True
+        while o.status == 'running':
+            self._review_requested.clear()
+            self.decision = None
+            o.combat.movement_intent = None
+            if not o.combat.config['enabled']:
+                self.combat_state = 'disabled'
+                await asyncio.sleep(.05)
+                continue
+            try:
+                o.guard(combat=True)
+                sample = o.map_now()
+                signature = self.signature()
+                boundary = bool(not o.combat_only and o.path and o.route_boundary(sample))
+                consumed = await o.combat.tick(sample,boundary,allow_movement=self.movement_allowed())
+                self.combat_state = 'running'
+                self.combat_error = None
+                if signature == self.signature():
+                    self.decision = dict(signature=signature,at=time.monotonic(),consumed=consumed,
+                                         intent=o.combat.movement_intent)
+                    if self._requested_signature == signature:
+                        self._review_requested.clear()
+                    self._decision_ready.set()
+            except ValueError as exc:
+                self.combat_state = 'waiting'
+                self.combat_error = str(exc)
+            except Exception:
+                # A programming error is visible and contained, not retried blindly.
+                self.combat_state = 'fault'
+                self.combat_error = 'Błąd walki. Zatrzymaj i uruchom automat ponownie; leczenie działa niezależnie.'
+                log.exception('Combat worker failed')
+                return
+            # Keep checking stationary fights. A new position with a ready map
+            # can request its own decision immediately between those checks.
+            try:
+                await asyncio.wait_for(self._review_requested.wait(), COMBAT_INTERVAL)
+            except asyncio.TimeoutError:
+                pass
+
+    async def observe_combat_changes(self):
+        """Wake the existing combat worker on world changes while its timer covers cooldowns."""
+        from dbv.brain.state.session_observations import session_observations
+        events = session_observations(self.owner.state.game_state)
+        families = ("target", "creatures", "position")
+        revision = events.revision_for(families)
+        while self.owner.status == "running":
+            await events.wait(families, revision, 30.)
+            current = events.revision_for(families)
+            if current != revision:
+                revision = current
+                self._review_requested.set()
+
+    async def consume_movement(self,sample,boundary):
+        """Called only by the movement worker. True means no route step this tick."""
+        o = self.owner
+        if not o.combat.config['enabled']:
+            self.movement_state = 'running'
+            return False
+        decision = self.decision
+        signature = self.signature()
+        if (not decision or decision['signature'] != signature
+                or time.monotonic()-decision['at'] > .3):
+            self.movement_state = 'waiting'
+            if self.combat_error:o.reason=self.combat_error
+            self._decision_ready.clear()
+            if signature != self._requested_signature:
+                self._requested_signature = signature
+                self._review_requested.set()
+            try:
+                await asyncio.wait_for(self._decision_ready.wait(), COMBAT_INTERVAL)
+            except asyncio.TimeoutError:
+                pass
+            # Re-read terrain and position even if the review completed at once.
+            return True
+        intent = decision['intent']
+        if intent:
+            self.decision = None  # consume at most once; a new observation replans
+            if (self.movement_allowed() and time.monotonic()<intent['expires']
+                    and list(o.state.game_state.position)==intent['origin']):
+                self.movement_state = 'combat_movement'
+                validate = intent['validate']
+                await o.step(intent['target'],validate=lambda:
+                    self.movement_allowed() and (validate is None or validate()))
+            return True
+        if decision['consumed'] or not o.combat.route_step_allowed(boundary):
+            self.movement_state = 'waiting_for_combat'
+            await o.wait_for_navigation(o.reason, ('target', 'creatures', 'position'), .01)
+            return True
+        self.movement_state = 'running'
+        return False
+
+    async def movement_loop(self):
+        from dbv.brain.cavebot.adaptive_cavebot import InputsUnavailable,MovementDeferred
+        o = self.owner
+        while o.status == 'running':
+            try:
+                await o._navigation_loop()
+            except (InputsUnavailable,MovementDeferred) as exc:
+                self.movement_state='waiting';self.movement_error=str(exc)
+                o.reason=str(exc)
+                await o.wait_for_navigation(o.reason, ('map', 'position', 'health'), .05)
+                self.movement_error = None
+            except Exception as exc:
+                if o.status != 'running':
+                    return
+                if not isinstance(exc,ValueError):log.exception('Movement worker failed')
+                self.movement_state='held';self.movement_error=str(exc) if isinstance(exc,ValueError) else 'Błąd wykonania trasy.'
+                if not o.combat.config['enabled']:
+                    o.pause(self.movement_error)
+                    return
+                o.navigation_hold=self.movement_error
+                o.logs.append('Ruch: '+self.movement_error)
+                while o.navigation_hold and o.status=='running':
+                    o.reason='Ruch wstrzymany: '+o.navigation_hold+' Walka działa niezależnie.'
+                    await asyncio.sleep(.05)
+                self.movement_error=None
+
+    async def run(self):
+        from dbv.brain.cavebot.adaptive_cavebot import fresh_health
+        o=self.owner
+        self.tasks=[asyncio.create_task(self.combat_loop(),name='cavebot-combat'),
+                    asyncio.create_task(self.movement_loop(),name='cavebot-movement')]
+        if o.combat.config['enabled']:
+            self.tasks.append(asyncio.create_task(self.observe_combat_changes(), name='cavebot-observations'))
+        try:
+            while o.status=='running':
+                if getattr(o,'reporter',None) is not None:
+                    o._observe_report('sample')
+                if not o.session_lease.valid() or o.state.automation_paused:
+                    o.pause('Sesja zakończona lub automatyka wstrzymana.')
+                    break
+                health = fresh_health(o.state.game_state)
+                if health is not None and health[0] == 0:
+                    o.pause('Brak żywej postaci — automatyka wstrzymana.')
+                    break
+                await asyncio.sleep(.02)
+        finally:
+            for task in self.tasks:task.cancel()
+            await asyncio.gather(*self.tasks,return_exceptions=True)
+            o.combat.defer_movement=False
+            self.decision=None
+            if self.movement_state not in {'complete','held'}:self.movement_state='stopped'
+            if self.combat_state!='fault':self.combat_state='stopped'

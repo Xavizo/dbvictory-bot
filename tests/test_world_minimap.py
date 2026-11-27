@@ -6,8 +6,8 @@ import zlib
 
 import pytest
 
-from world_minimap import world_floor
-from map_atlas import MapAtlas
+from dbv.brain.navigation.world_minimap import world_floor
+from dbv.brain.navigation.map_atlas import MapAtlas
 
 
 def write_map(path, flags=1):

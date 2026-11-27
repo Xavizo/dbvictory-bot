@@ -4,11 +4,11 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-import hunter_knife_action as knife
-from command_delivery import CommandReceipt
-from game_state import GameState
-from hunter_knife import FRESH, SPENT, publish_feedback
-from potions import PotionScheduler, validate_config
+from dbv.brain.combat import hunter_knife_action as knife
+from dbv.client_bridge.command_delivery import CommandReceipt
+from dbv.brain.state.game_state import GameState
+from dbv.brain.combat.hunter_knife import FRESH, SPENT, publish_feedback
+from dbv.brain.combat.potions import PotionScheduler, validate_config
 from test_hunter_knife import NAME, tile
 from test_potions import rule
 
@@ -28,10 +28,10 @@ def test_standalone_manual_target_and_corpse_group(monkeypatch, scenario):
         clock = [100.]
         wall = lambda: 1000. + clock[0]
         monkeypatch.setattr(knife, "time", NS(monotonic=lambda: clock[0], time=wall))
-        monkeypatch.setattr("passive_map_win32.ReadOnlyClient", lambda: NS(close=lambda: None))
-        monkeypatch.setattr("client_player_state.ClientPlayerReader", lambda *_: object())
+        monkeypatch.setattr("dbv.client_bridge.passive_map_win32.ReadOnlyClient", lambda: NS(close=lambda: None))
+        monkeypatch.setattr("dbv.client_bridge.client_player_state.ClientPlayerReader", lambda *_: object())
         reader = NS(snapshot=lambda: {"slots": {6: 5908}, "sources": []})
-        monkeypatch.setattr("client_equipment.EquipmentReader", lambda *_: reader)
+        monkeypatch.setattr("dbv.client_bridge.client_equipment.EquipmentReader", lambda *_: reader)
 
         game = GameState()
         game.position, game.hp, game.max_hp = ORIGIN, 40, 100

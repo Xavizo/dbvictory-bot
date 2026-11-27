@@ -2,16 +2,16 @@
 import asyncio,json,time
 from copy import deepcopy
 import pytest
-import dashboard_api as api
-from dashboard_security import SESSION_TOKEN,DASHBOARD_ORIGIN
+from dbv.mcp_server import dashboard_api as api
+from dbv.mcp_server.dashboard_security import SESSION_TOKEN,DASHBOARD_ORIGIN
 from test_dashboard_security import http_api
 from test_automation_safety import state,proxy
 from test_adaptive_cavebot import setup,cell,connect_fake_walk
 from test_v2_combat import armed,monster,configure_rules
-from cavebot_combat import eligible_monsters
-from combat_reachability import reachable_tiles
-from adaptive_cavebot import MovementDeferred
-from protocol import ClientOpcode
+from dbv.brain.cavebot.cavebot_combat import eligible_monsters
+from dbv.brain.combat.combat_reachability import reachable_tiles
+from dbv.brain.cavebot.adaptive_cavebot import MovementDeferred
+from dbv.client_bridge.protocol import ClientOpcode
 
 def test_sealed_room_monsters_do_not_hold_lure_or_receive_attacks(state,tmp_path):
     c,cells=armed(state,tmp_path,mode='lure',engage='visible');c.status='running'

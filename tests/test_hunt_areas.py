@@ -6,11 +6,11 @@ from uuid import uuid4
 
 import pytest
 
-from cavebot_history import RunHistory, save_report
-from hunt_areas import catalogue, save_area
-from map_atlas import MapAtlas
-from passive_map import PassiveMapMonitor
-from pet_tracking import PetTracker
+from dbv.brain.cavebot.cavebot_history import RunHistory, save_report
+from dbv.brain.hunts.hunt_areas import catalogue, save_area
+from dbv.brain.navigation.map_atlas import MapAtlas
+from dbv.brain.navigation.passive_map import PassiveMapMonitor
+from dbv.brain.state.pet_tracking import PetTracker
 from test_cavebot_reports import owner_for
 
 
@@ -31,7 +31,7 @@ def test_first_contact_keeps_monster_position_once_per_lap(tmp_path):
 
 def test_first_sighting_keeps_original_tile_through_lure_death_and_lap_boundary(tmp_path, monkeypatch):
     now = time.time()
-    monkeypatch.setattr('cavebot_history.time', SimpleNamespace(time=lambda: now, monotonic=lambda: now))
+    monkeypatch.setattr('dbv.brain.cavebot.cavebot_history.time', SimpleNamespace(time=lambda: now, monotonic=lambda: now))
     atlas = MapAtlas(tmp_path, 'a'*64)
     ident = atlas.save_draft('Saiyan - Vegeta East', [[669,407,7], [670,407,7]])
     owner = owner_for(atlas.path)

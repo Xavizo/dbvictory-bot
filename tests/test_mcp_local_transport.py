@@ -14,8 +14,8 @@ from mcp.types import LATEST_PROTOCOL_VERSION
 import pytest
 
 import run_bot
-from transport_control import KEY_ENV, PORT_ENV, local_transport_host
-from transport_session import LocalTransportSession
+from dbv.mcp_server.transport_control import KEY_ENV, PORT_ENV, local_transport_host
+from dbv.mcp_server.transport_session import LocalTransportSession
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL = "127.0.0.1"
@@ -325,7 +325,7 @@ def test_host_shutdown_joins_pending_control_before_stopping_owner(monkeypatch):
             async def stop(self):
                 trace.append("owner stopped")
 
-        monkeypatch.setattr("transport_control.LocalTransportSession", PendingManager)
+        monkeypatch.setattr("dbv.mcp_server.transport_control.LocalTransportSession", PendingManager)
         context = local_transport_host(24004)
         env = await context.__aenter__()
         endpoint = (LOCAL, int(env[PORT_ENV]))
@@ -373,7 +373,7 @@ def test_concurrent_start_and_recovery_from_child_exit():
 
 
 def test_new_connection_gets_new_identity_even_with_same_listener_or_worker_count():
-    from engine_recovery import EngineJournal
+    from dbv.brain.state.engine_recovery import EngineJournal
 
     async def scenario():
         manager = LocalTransportSession()

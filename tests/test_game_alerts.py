@@ -1,9 +1,9 @@
 import struct
 from types import SimpleNamespace as NS
 import pytest
-from game_alerts import AlertCenter, default_config, validate_config
-from game_state import GameState, scan_packet
-from chat_messages import parse_talk
+from dbv.brain.state.game_alerts import AlertCenter, default_config, validate_config
+from dbv.brain.state.game_state import GameState, scan_packet
+from dbv.brain.state.chat_messages import parse_talk
 
 
 def setup(*, resume=True):
@@ -31,7 +31,7 @@ def message(kind='private',sender='Visitor',text='Hello',statement=1):
 
 def test_new_session_starts_paused_and_resumes_without_replaying_history(monkeypatch):
     import asyncio
-    import mcp_server as server
+    from dbv.mcp_server import server
 
     config = default_config()
     config['default']['enabled'] = False
@@ -203,7 +203,7 @@ def test_dbv_wire_private_reaches_alert_center_without_player_being_visible():
 
 def test_settings_persist_only_alert_preferences_and_history_stays_in_memory(monkeypatch,tmp_path):
     import asyncio,json
-    import mcp_server as server
+    from dbv.mcp_server import server
     settings={'actions':{'auto_potions':{'enabled':True}},'combat_profile':{'enabled':False}}
     monkeypatch.setattr(server,'load_settings',lambda:settings)
     state=server.BotState();monkeypatch.setattr(server,'state',state)
@@ -222,8 +222,8 @@ def test_settings_persist_only_alert_preferences_and_history_stays_in_memory(mon
 
 
 def test_vitals_outage_during_hunt_warns_once_before_disconnect_and_rearms(monkeypatch):
-    from client_player_state import FRESH_SECONDS
-    from potions import PotionScheduler
+    from dbv.client_bridge.client_player_state import FRESH_SECONDS
+    from dbv.brain.combat.potions import PotionScheduler
     from test_potions import config, rule
 
     center, state, _ = setup()
@@ -377,7 +377,7 @@ def test_ki_losses_over_several_turns_are_ignored_and_recovery_rearms_alarm():
 @pytest.mark.parametrize("levels, alarms", [([0], 1), ([48, 0], 0), ([48, 95, 0], 0)])
 @pytest.mark.parametrize("source", ["client", "packet"])
 def test_one_ki_change_at_source_even_when_monitor_wakes_late(source, levels, alarms, monkeypatch):
-    from packet_observer import detach_state, apply_scan
+    from dbv.client_bridge.packet_observer import detach_state, apply_scan
     from test_player_updates import stats
 
     c, state, advance = setup()
@@ -462,7 +462,7 @@ def test_previous_alert_preferences_survive_adding_ki_alarm():
 def test_offscreen_attack_text_suppresses_alarm_even_after_ki_sample(hit_offset, expected):
     import struct
     from unittest.mock import Mock
-    from packet_observer import apply_scan, detach_state, publish_server_feedback
+    from dbv.client_bridge.packet_observer import apply_scan, detach_state, publish_server_feedback
     c,state,_,sample=ki_scene()
     gs=state.game_state
     sample(100)

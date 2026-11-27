@@ -10,8 +10,8 @@ import pytest
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-import dashboard_api as api
-from dashboard_security import DASHBOARD_ORIGIN, SESSION_TOKEN
+from dbv.mcp_server import dashboard_api as api
+from dbv.mcp_server.dashboard_security import DASHBOARD_ORIGIN, SESSION_TOKEN
 
 
 def test_action_catalog_reuses_and_invalidates_descriptions(tmp_path):
@@ -105,7 +105,7 @@ def test_lap_reports_endpoint_is_read_only_and_requires_session(http_api, monkey
 
 def test_hunt_area_http_save_and_read(http_api, monkeypatch, tmp_path):
     from types import SimpleNamespace
-    from map_atlas import MapAtlas
+    from dbv.brain.navigation.map_atlas import MapAtlas
     atlas=MapAtlas(tmp_path,'a'*64)
     draft=atlas.save_draft('Saiyan',[[664,400,7],[665,400,7]])
     monkeypatch.setattr(api,'_state',SimpleNamespace(passive_map_monitor=SimpleNamespace(atlas=atlas)))
@@ -141,7 +141,7 @@ def test_annotation_endpoint_requires_origin_and_passes_only_valid_request(http_
 def test_manual_pet_label_applies_only_to_the_current_map_reference(http_api, monkeypatch):
     import time
     from types import SimpleNamespace
-    from game_state import GameState
+    from dbv.brain.state.game_state import GameState
     state = SimpleNamespace(connected=True, game_state=GameState())
     monkeypatch.setattr(api, "_state", state)
     tile = dict(x=10, y=20, z=7, occupants=1, occupant_types={"monster": 1})
@@ -167,8 +167,8 @@ def test_adaptive_record_start_stop_plan_and_raw_recovery(http_api, tmp_path, mo
     from collections import deque
     from types import SimpleNamespace
     from unittest.mock import Mock
-    import cavebot
-    from map_atlas import MapAtlas
+    from dbv.brain.cavebot import cavebot
+    from dbv.brain.navigation.map_atlas import MapAtlas
 
     atlas = MapAtlas(tmp_path / "atlas", "scope")
     atlas.observe({"cells": [{"x": x, "y": 101, "z": 7, "items": [], "kind": "clear"}
@@ -253,7 +253,7 @@ def test_nearby_item_module_is_disabled(http_api, monkeypatch):
 
 def test_alert_read_and_config_routes_keep_authentication(http_api,monkeypatch):
     from types import SimpleNamespace
-    from game_alerts import AlertCenter
+    from dbv.brain.state.game_alerts import AlertCenter
     center=AlertCenter()
     monkeypatch.setattr(api,'_state',SimpleNamespace(alert_center=center))
     request,_=http_api

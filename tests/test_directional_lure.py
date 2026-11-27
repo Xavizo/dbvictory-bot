@@ -3,8 +3,8 @@ import asyncio
 from unittest.mock import Mock
 
 import pytest
-from cavebot_lure import route_approaches
-from protocol import ClientOpcode
+from dbv.brain.cavebot.cavebot_lure import route_approaches
+from dbv.client_bridge.protocol import ClientOpcode
 from test_automation_safety import state
 from test_adaptive_cavebot import cell
 from test_v2_combat import armed,monster
@@ -27,7 +27,7 @@ def test_visible_monsters_ahead_do_not_stop_approach_or_start_gather_timer(state
     monster(state,cells,x=17,y=11,cid=0x40000002)
     tick_clock=Mock(return_value=100.)
     # Replace only the combat module's clock, leaving asyncio's clock alone.
-    import cavebot_combat as mod
+    from dbv.brain.cavebot import cavebot_combat as mod
     real_time=mod.time
     monkeypatch.setattr(mod,'time',type('Clock',(),{'monotonic':tick_clock,'time':staticmethod(real_time.time)})())
     async def exercise():
@@ -87,7 +87,7 @@ def test_first_contact_waits_before_outrunning_slow_monster_and_releases(state,t
 
 
 def test_pacing_uses_walkable_distance_around_a_wall():
-    from cavebot_lure import group_needs_time
+    from dbv.brain.cavebot.cavebot_lure import group_needs_time
     cells = [cell(x,y) for x in range(5) for y in range(5) if x != 1 or y == 0]
     assert group_needs_time(cells,(2,3,7),(2,4,7),{(0,3,7)},4)
     assert not group_needs_time(cells,(2,3,7),(2,2,7),{(0,3,7)},4)
@@ -148,7 +148,7 @@ def test_room_exit_still_finishes_small_group(state,tmp_path):
 def combat_clock(monkeypatch):
     import time
     from types import SimpleNamespace
-    import cavebot_combat
+    from dbv.brain.cavebot import cavebot_combat
     clock = Mock(return_value=100.)
     monkeypatch.setattr(cavebot_combat, 'time', SimpleNamespace(monotonic=clock, time=time.time))
     return clock
@@ -157,8 +157,8 @@ def combat_clock(monkeypatch):
 @pytest.mark.parametrize('boundary', [False, True], ids=['gathering', 'already-fighting'])
 def test_lure_closes_on_mob_beside_player_and_rejoins_route(state, tmp_path, combat_clock, boundary):
     from test_adaptive_cavebot import connect_fake_walk
-    from cavebot_walking import distance
-    from protocol import WALK_OPCODES
+    from dbv.brain.cavebot.cavebot_walking import distance
+    from dbv.client_bridge.protocol import WALK_OPCODES
 
     c, cells, sent = scene(state, tmp_path)
     cid, mob, tile = monster(state, cells, x=6, y=10)
@@ -242,7 +242,7 @@ def test_queued_lure_approach_rechecks_the_world(state, tmp_path, combat_clock, 
 
 
 def test_unresponsive_mob_across_occupied_or_protected_passage_has_no_melee_step():
-    from cavebot_lure import lure_melee_step
+    from dbv.brain.cavebot.cavebot_lure import lure_melee_step
     cells = [cell(x, 10) for x in range(5, 11)]
     origin, target = (10, 10, 7), (5, 10, 7)
     gate = cells[3]

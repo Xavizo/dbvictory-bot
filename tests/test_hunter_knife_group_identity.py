@@ -3,9 +3,9 @@ from collections import defaultdict
 
 import pytest
 
-from game_state import GameState
-from hunter_knife import FRESH
-from hunter_knife_action import KnifeAutomation
+from dbv.brain.state.game_state import GameState
+from dbv.brain.combat.hunter_knife import FRESH
+from dbv.brain.combat.hunter_knife_action import KnifeAutomation
 from test_hunter_knife import NAME, tile
 
 
@@ -70,7 +70,7 @@ def test_four_disappearing_monsters_match_personal_loot_by_cid(death_before_map)
                                      "moved", "overlap", "unreadable", "conflict", "pet",
                                      "generation_gap", "superseded_frame", "reappears", "floor_change", "new_game"])
 def test_missing_death_never_guesses_the_victim_from_loot_and_tile_alone(problem, monkeypatch):
-    monkeypatch.setattr("pet_tracking.time.time", lambda: 100.1)
+    monkeypatch.setattr("dbv.brain.state.pet_tracking.time.time", lambda: 100.1)
     game, worker = fight()
     queue = worker.queue
     cid, p = IDS[0], BODIES[0]

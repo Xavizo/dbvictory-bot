@@ -3,8 +3,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from potions import PotionScheduler, PotionDiagnostics, validate_config, run_potions
-from potions import rules_from_config
+from dbv.brain.combat.potions import PotionScheduler, PotionDiagnostics, validate_config, run_potions
+from dbv.brain.combat.potions import rules_from_config
 
 
 def config(**updates):
@@ -46,9 +46,9 @@ def test_same_item_across_conditions_and_new_ids_cannot_bypass_cooldown():
 
 
 def test_hunt_senzu_counts_only_consumption_and_freezes_last_window(monkeypatch):
-    from potions import SenzuUsage
+    from dbv.brain.combat.potions import SenzuUsage
     clock = [10.0]
-    monkeypatch.setattr('potions.time.monotonic', lambda:clock[0])
+    monkeypatch.setattr('dbv.brain.combat.potions.time.monotonic', lambda:clock[0])
     usage = SenzuUsage()
     def report(at, count):
         clock[0] = at
@@ -229,7 +229,7 @@ def test_inherited_cooldown_and_optional_longer_override():
 
 
 def test_using_message_is_not_success_and_rejection_wins(monkeypatch):
-    monkeypatch.setattr('potions.time.monotonic',lambda:10)
+    monkeypatch.setattr('dbv.brain.combat.potions.time.monotonic',lambda:10)
     diag=PotionDiagnostics();diag.until=1000;gs=stats(hp=100,mana=100)
     diag.record_use(8465,'use',gs,now=10)
     diag.observe_message(25,'Using one of 99 Senzu...',batch_id=1,now=10.04)
@@ -248,7 +248,7 @@ def test_using_message_is_not_success_and_rejection_wins(monkeypatch):
 
 
 def test_chat_other_batch_and_stock_changes_cannot_falsely_confirm(monkeypatch):
-    monkeypatch.setattr('potions.time.monotonic',lambda:10)
+    monkeypatch.setattr('dbv.brain.combat.potions.time.monotonic',lambda:10)
     diag=PotionDiagnostics();diag.until=1000;gs=stats()
     diag.record_use(10160,'use',gs,now=10)
     diag.observe_message(1,'Using one of 50 Special Ki Potion...',batch_id=1,now=10.01)
@@ -263,7 +263,7 @@ def test_chat_other_batch_and_stock_changes_cannot_falsely_confirm(monkeypatch):
 
 
 def test_multiple_pending_attempts_are_ambiguous(monkeypatch):
-    monkeypatch.setattr('potions.time.monotonic',lambda:10)
+    monkeypatch.setattr('dbv.brain.combat.potions.time.monotonic',lambda:10)
     diag=PotionDiagnostics();diag.until=1000
     for at in (10,10.01):diag.record_use(8465,'use',stats(),now=at)
     diag.observe_message(25,'Using one of 10 Senzu...',batch_id=1,now=10.04)

@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from game_state import GameState, parse_server_packet, scan_packet
-from packet_observer import apply_scan, detach_state, publish_server_feedback
-from potions import PotionDiagnostics
-from protocol import PacketReader
+from dbv.brain.state.game_state import GameState, parse_server_packet, scan_packet
+from dbv.client_bridge.packet_observer import apply_scan, detach_state, publish_server_feedback
+from dbv.brain.combat.potions import PotionDiagnostics
+from dbv.client_bridge.protocol import PacketReader
 
 
 def frame(text, mode=25):
@@ -17,7 +17,7 @@ def frame(text, mode=25):
 
 
 def test_only_real_damage_and_item_feedback_leave_general_history(monkeypatch):
-    import mcp_server
+    from dbv.mcp_server import server as mcp_server
     live = GameState()
     live.session_id = 12
     scan = detach_state(live, 0)

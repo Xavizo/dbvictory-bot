@@ -61,11 +61,11 @@ async def measure_steps(state, folder):
 
 
 async def measure_blockage(state, folder, pulses=16):
-    import mcp_server as server
-    from adaptive_cavebot import OFFSETS
-    from command_delivery import CommandReceipt
-    from potions import run_potions
-    from protocol import ClientOpcode, WALK_OPCODES
+    from dbv.mcp_server import server
+    from dbv.brain.cavebot.adaptive_cavebot import OFFSETS
+    from dbv.client_bridge.command_delivery import CommandReceipt
+    from dbv.brain.combat.potions import run_potions
+    from dbv.client_bridge.protocol import ClientOpcode, WALK_OPCODES
     from test_adaptive_cavebot import setup
     from test_automation_domains import configure, freshen, until
 
@@ -138,12 +138,12 @@ async def measure_blockage(state, folder, pulses=16):
 
 
 async def measure(folder, with_recovery=False):
-    import mcp_server as server
+    from dbv.mcp_server import server
 
     server.load_settings = lambda: {"actions": {}}
     state = server.state = server.BotState()
     if with_recovery:
-        from engine_recovery import EngineJournal, RecoveryOwner
+        from dbv.brain.state.engine_recovery import EngineJournal, RecoveryOwner
         owner = RecoveryOwner(folder)
         owner.begin("benchmark")
         state.game_state.engine_journal = EngineJournal(owner.path, "benchmark", owner.handover("benchmark"), 101)

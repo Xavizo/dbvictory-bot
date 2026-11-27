@@ -6,7 +6,7 @@ import sys
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from session_startup import LoginStartup
+from dbv.brain.state.session_startup import LoginStartup
 
 
 async def exercise(case):

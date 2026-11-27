@@ -6,13 +6,13 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from adaptive_cavebot import AdaptiveCavebot
-from cavebot_walking import WalkOutcome
-from dashboard_api import _Handler
-from movement_history import MovementHistory
-from packet_observer import log_walk_cancels
-from passive_map import PassiveMapMonitor
-from protocol import ClientOpcode, PacketReader
+from dbv.brain.cavebot.adaptive_cavebot import AdaptiveCavebot
+from dbv.brain.cavebot.cavebot_walking import WalkOutcome
+from dbv.mcp_server.dashboard_api import _Handler
+from dbv.brain.cavebot.movement_history import MovementHistory
+from dbv.client_bridge.packet_observer import log_walk_cancels
+from dbv.brain.navigation.passive_map import PassiveMapMonitor
+from dbv.client_bridge.protocol import ClientOpcode, PacketReader
 
 
 A, B = (100,100,7), (101,100,7)
@@ -66,7 +66,7 @@ def test_manual_walk_cancel_groups_five_minutes_and_correct_tail(session):
 
 
 def test_web_report_compares_manual_ground_click_with_planned_web_and_observed_change(session):
-    from protocol import build_use_item_ex_packet
+    from dbv.client_bridge.protocol import build_use_item_ex_packet
     now,h=session
     before=frame()
     tile=before['cells'][0]
@@ -157,7 +157,7 @@ def test_cavebot_timer_and_worker_finalize_on_disconnect(session):
 
 
 def test_manual_endpoint_and_stale_cancel_do_not_erase_new_movement(session,monkeypatch):
-    import dashboard_api
+    from dbv.mcp_server import dashboard_api
     now,h = session
     handler = NS(headers={},_json_response=lambda data,status=200:(status,data))
     monkeypatch.setattr(dashboard_api,"_state",NS(game_state=NS(movement_history=h)))

@@ -7,12 +7,12 @@ import struct
 from types import SimpleNamespace as NS
 
 import pytest
-import client_player_state as cp
-from client_profiles import UPDATED
-from game_state import GameState, scan_packet, _parse
-from passive_map import MapReadError
-from protocol import PacketReader, ServerOpcode, build_say_packet
-from speed_up import SpeedScheduler, run_speed
+from dbv.client_bridge import client_player_state as cp
+from dbv.client_bridge.client_profiles import UPDATED
+from dbv.brain.state.game_state import GameState, scan_packet, _parse
+from dbv.brain.navigation.passive_map import MapReadError
+from dbv.client_bridge.protocol import PacketReader, ServerOpcode, build_say_packet
+from dbv.brain.combat.speed_up import SpeedScheduler, run_speed
 
 
 @pytest.fixture
@@ -125,7 +125,7 @@ def test_packet_identity_cannot_override_verified_local_player():
 
 
 def callback(name, env):
-    tree=ast.parse((Path(__file__).resolve().parents[1]/'mcp_server.py').read_text(encoding='utf-8'))
+    tree=ast.parse((Path(__file__).resolve().parents[1]/'dbv'/'mcp_server'/'server.py').read_text(encoding='utf-8'))
     node=next(n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name==name)
     exec(compile(ast.Module(body=[node],type_ignores=[]),'<actual session callback>','exec'),env)
     return env[name]
@@ -133,8 +133,8 @@ def callback(name, env):
 
 def test_login_callback_replaces_old_state_and_old_delayed_start_cannot_run():
     async def exercise():
-        from session_startup import LoginStartup
-        from session_observations import session_observations
+        from dbv.brain.state.session_startup import LoginStartup
+        from dbv.brain.state.session_observations import session_observations
         starts=[]
         old=GameState();old.player_id=0x100002F6;old.haste_cast_at=100
         old.client_snapshot={'hp':100,'conditions':2}
@@ -166,7 +166,7 @@ def test_disconnect_cancels_passive_reader_as_well_as_user_actions():
     state=NS(game_state=GameState(),_action_tasks={'dll_bridge':object(),'speed_up':object()},
              _auto_task=None,automation_paused=True,game_proxy=NS(pause_injections=lambda:None),
              potion_diagnostics=NS(invalidate_inventory=lambda:invalidated.append(True)))
-    from session_startup import LoginStartup
+    from dbv.brain.state.session_startup import LoginStartup
     state.login_startup = LoginStartup()
     callback('on_disconnect',dict(state=state,observation_proxy=state.game_proxy,_stop_action=stopped.append))()
     assert stopped==['dll_bridge','speed_up']

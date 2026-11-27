@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-import passive_map as pm
-from map_navigation import navigation_features, load_confirmed_types, load_location_notes, ASSET_SHA256
+from dbv.brain.navigation import passive_map as pm
+from dbv.brain.navigation.map_navigation import navigation_features, load_confirmed_types, load_location_notes, ASSET_SHA256
 
 
 class Memory:
@@ -82,8 +82,8 @@ def test_snapshot_uses_verified_item_definition_and_known_stairs(world):
 
 @pytest.mark.parametrize('profile_name', ['UPDATED', 'NOVEMBER_26'])
 def test_updated_profile_decodes_relocated_map_without_old_confirmations(world, profile_name):
-    import client_profiles
-    from client_profiles import LEGACY
+    from dbv.client_bridge import client_profiles
+    from dbv.client_bridge.client_profiles import LEGACY
     UPDATED = getattr(client_profiles, profile_name)
     mem = world.mem
     for field in ("map_center", "item_types"):
@@ -298,7 +298,7 @@ def test_disconnected_monitor_does_not_open_process_or_change_actions():
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Win32 process enumeration")
 def test_process_enumeration_copies_pid_and_requests_read_only(monkeypatch):
-    import passive_map_win32 as win
+    from dbv.client_bridge import passive_map_win32 as win
     entry = SimpleNamespace(szExeFile=b"dbvStart.exe", th32ProcessID=123)
     def processes():
         yield entry

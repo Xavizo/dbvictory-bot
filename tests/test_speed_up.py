@@ -1,5 +1,5 @@
 import pytest
-from speed_up import SpeedScheduler,validate_config,fresh
+from dbv.brain.combat.speed_up import SpeedScheduler,validate_config,fresh
 
 
 def sample(t,active=False):return {'monotonic':t,'conditions':2 if active else 0,'hp':100}
@@ -70,7 +70,7 @@ def test_validation_rejects_invalid_windows(bad):
 
 
 def test_cooldown_confirmation_is_only_read_at_known_boundaries(monkeypatch):
-    import struct,game_state
+    import struct; from dbv.brain.state import game_state
     gs=game_state.GameState();monkeypatch.setattr(game_state.time,'monotonic',lambda:123)
     packet=b'\xa4'+bytes([195])+struct.pack('<I',1000)
     game_state.scan_packet(b'\xff'+packet,gs);assert not hasattr(gs,'haste_cast_at')
@@ -96,7 +96,7 @@ def test_unknown_delivery_waits_for_new_effect_evidence_instead_of_retrying_on_t
 @pytest.mark.parametrize("ack,expected", [(10.1, "confirmed"), (9.9, "pending"), (14., "pending")])
 def test_speed_effect_only_confirms_a_current_attempt(ack, expected):
     import asyncio
-    from command_delivery import CommandReceipt
+    from dbv.client_bridge.command_delivery import CommandReceipt
 
     async def run():
         scheduler = SpeedScheduler()

@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from hunter_knife import FRESH, ROCO, SPENT, loot_species
-from hunter_knife_action import KnifeAutomation
+from dbv.brain.combat.hunter_knife import FRESH, ROCO, SPENT, loot_species
+from dbv.brain.combat.hunter_knife_action import KnifeAutomation
 from test_hunter_knife import tile
 from test_hunter_knife_visible import CENTER, OWN, KnifeReplay
 

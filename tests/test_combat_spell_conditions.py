@@ -3,11 +3,11 @@ import asyncio
 import time
 from types import SimpleNamespace
 import pytest
-from cavebot_combat import validate_spell,validate_combat
-from combat_spell_conditions import evaluate_spell,evaluate_spells,spell_reaches,catalogue_aims
+from dbv.brain.cavebot.cavebot_combat import validate_spell,validate_combat
+from dbv.brain.combat.combat_spell_conditions import evaluate_spell,evaluate_spells,spell_reaches,catalogue_aims
 from test_v2_combat import armed,monster
 from test_automation_safety import state,proxy
-from protocol import ClientOpcode,PacketReader
+from dbv.client_bridge.protocol import ClientOpcode,PacketReader
 
 
 def stats(**kwargs):
@@ -47,7 +47,7 @@ def test_invalid_conditions_are_rejected(patch):
 
 
 def test_legacy_area_migrates_by_local_catalogue_and_explicit_override_wins(monkeypatch):
-    monkeypatch.setattr('combat_spell_conditions.catalogue_aims',lambda:{'shunkan':'self'})
+    monkeypatch.setattr('dbv.brain.combat.combat_spell_conditions.catalogue_aims',lambda:{'shunkan':'self'})
     assert validate_spell(dict(words='Shunkan'))['aim']=='self'
     assert validate_spell(dict(words='Shunkan',aim='target'))['aim']=='target'
     assert validate_spell(dict(words='Unknown'))['aim']=='target'

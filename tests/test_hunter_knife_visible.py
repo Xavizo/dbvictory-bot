@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import hunter_knife_action as knife
-from command_delivery import CommandReceipt
-from game_state import GameState
-from hunter_knife import FRESH, SPENT, publish_feedback
+from dbv.brain.combat import hunter_knife_action as knife
+from dbv.client_bridge.command_delivery import CommandReceipt
+from dbv.brain.state.game_state import GameState
+from dbv.brain.combat.hunter_knife import FRESH, SPENT, publish_feedback
 from test_hunter_knife import NAME, tile
 
 
@@ -40,10 +40,10 @@ class KnifeReplay:
         self.bot.inject_to_server = self.dispatch
         self.outcome = None
         monkeypatch.setattr(knife, "time", SimpleNamespace(monotonic=lambda: self.now, time=lambda: self.now))
-        monkeypatch.setattr("passive_map_win32.ReadOnlyClient", lambda: SimpleNamespace(close=lambda: None))
-        monkeypatch.setattr("client_player_state.ClientPlayerReader", lambda *_: object())
+        monkeypatch.setattr("dbv.client_bridge.passive_map_win32.ReadOnlyClient", lambda: SimpleNamespace(close=lambda: None))
+        monkeypatch.setattr("dbv.client_bridge.client_player_state.ClientPlayerReader", lambda *_: object())
         reader = SimpleNamespace(snapshot=lambda: {"slots": {6: 5908}, "sources": []})
-        monkeypatch.setattr("client_equipment.EquipmentReader", lambda *_: reader)
+        monkeypatch.setattr("dbv.client_bridge.client_equipment.EquipmentReader", lambda *_: reader)
 
     def publish(self):
         cells = []

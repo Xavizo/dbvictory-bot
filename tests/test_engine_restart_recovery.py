@@ -11,8 +11,8 @@ from mcp.client.stdio import stdio_client
 import pytest
 
 from test_mcp_local_transport import LOCAL, echo
-from transport_control import controller_endpoint
-from transport_session import LocalTransportSession
+from dbv.mcp_server.transport_control import controller_endpoint
+from dbv.mcp_server.transport_session import LocalTransportSession
 
 ROOT = Path(__file__).resolve().parents[1]
 PEER = Path(__file__).with_name("engine_restart_peer.py")
@@ -47,7 +47,7 @@ async def engine(tree, folder, env, *, abrupt_exit=False):
 async def probe(tree, folder, abrupt, hold_potion_receipt=False):
     manager = LocalTransportSession()
     reader = writer = None
-    local = (tree / "transport_control.py").is_file()
+    local = (tree / "dbv" / "mcp_server" / "transport_control.py").is_file()
     service = await asyncio.start_server(echo, LOCAL, 0)
     try:
         upstream = service.sockets[0].getsockname()[1]
@@ -71,7 +71,7 @@ async def probe(tree, folder, abrupt, hold_potion_receipt=False):
                 assert await reader.readexactly(6) == b"before"
             before = await call(first, "fixture_prime", {**await observation(42, 10),
                                 "hold_potion_receipt": hold_potion_receipt})
-            preview = await call(first, "session_recovery_preview") if (tree / "recovery_preview.py").exists() else None
+            preview = await call(first, "session_recovery_preview") if (tree / "dbv" / "brain" / "state" / "recovery_preview.py").exists() else None
             started = time.perf_counter()
         async with controller_endpoint(manager, upstream) as env, engine(tree, folder, env) as second:
             if local:

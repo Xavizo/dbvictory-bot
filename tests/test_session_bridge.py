@@ -4,8 +4,8 @@ import threading
 
 import pytest
 
-import session_bridge
-from session_bridge import BridgeUnavailable, ObserverBridge
+from dbv.client_bridge import session_bridge
+from dbv.client_bridge.session_bridge import BridgeUnavailable, ObserverBridge
 
 
 @pytest.fixture

@@ -1,5 +1,5 @@
 import pytest
-from client_profiles import LEGACY, UPDATED, select_profile
+from dbv.client_bridge.client_profiles import LEGACY, UPDATED, select_profile
 
 
 @pytest.mark.parametrize("profile", [LEGACY, UPDATED])

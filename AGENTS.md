@@ -25,3 +25,10 @@
 - Linux checks do not establish Windows compatibility. Report DLL compilation,
   attachment, login, dashboard launch, and gameplay as untested until exercised on
   the matching Windows client. Offsets in this repository are client-specific.
+
+- Source layout: Python code lives in the `dbv/` package. `dbv/client_bridge/` talks to
+  the game client, `dbv/brain/` decides what the bot does, `dbv/mcp_server/` exposes it to
+  MCP clients and the panel. `client_bridge` must not gain new imports from `brain` or
+  `mcp_server` (see `tests/test_source_layout.py`). Only launcher and updater entry points
+  stay as root `.py` files, because the launcher, updater and MCP configs call them by path.
+  Find player data through `dbv.paths`, never relative to a module's own file.

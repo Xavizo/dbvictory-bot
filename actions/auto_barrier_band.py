@@ -1,5 +1,5 @@
 """Barrier Band 3051: uzupełnia pusty slot; aktywny band ma ID 3088."""
-from barrier_band import run_band
+from dbv.brain.combat.barrier_band import run_band
 
 
 async def run(bot):

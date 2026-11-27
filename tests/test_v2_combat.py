@@ -4,9 +4,9 @@ import json
 import time
 from types import SimpleNamespace
 import pytest
-from cavebot_combat import validate_combat,matches,eligible_monsters,choose_target
-from map_atlas import MapAtlas
-from protocol import ClientOpcode,PacketReader
+from dbv.brain.cavebot.cavebot_combat import validate_combat,matches,eligible_monsters,choose_target
+from dbv.brain.navigation.map_atlas import MapAtlas
+from dbv.client_bridge.protocol import ClientOpcode,PacketReader
 from test_adaptive_cavebot import setup,cell,connect_fake_walk
 from test_automation_safety import state,proxy
 from test_dashboard_security import http_api
@@ -338,9 +338,9 @@ def test_lure_timeout_is_not_reported_as_a_complete_group(state,tmp_path):
 def test_target_preview_http_contract_is_wrapped_and_never_attacks(http_api,state,tmp_path,monkeypatch):
     import threading
     import sys
-    import mcp_server as server
-    import dashboard_api as api
-    from dashboard_security import DASHBOARD_ORIGIN,SESSION_TOKEN
+    from dbv.mcp_server import server
+    from dbv.mcp_server import dashboard_api as api
+    from dbv.mcp_server.dashboard_security import DASHBOARD_ORIGIN,SESSION_TOKEN
     c,cells=armed(state,tmp_path);monster(state,cells)
     loop=asyncio.new_event_loop();thread=threading.Thread(target=loop.run_forever,daemon=True);thread.start()
     monkeypatch.setattr(api,'_state',state);monkeypatch.setattr(api,'_main_loop',loop)
@@ -357,7 +357,7 @@ def test_target_preview_http_contract_is_wrapped_and_never_attacks(http_api,stat
 
 
 def test_visible_and_near_target_conditions_and_spell_ranges(state,tmp_path):
-    from cavebot_combat import spell_reaches
+    from dbv.brain.cavebot.cavebot_combat import spell_reaches
     c,cells=armed(state,tmp_path);cid,row,_=monster(state,cells,x=13,y=11)
     cfg=validate_combat(dict(rules=[dict(pattern='*')],engage='near',radius=1))
     sample=state.passive_map_monitor.snapshot()
@@ -410,7 +410,7 @@ def test_combat_only_waits_for_mobs_allows_manual_walk_and_never_sends_movement(
 
 
 def test_combat_profile_save_is_passive_and_start_stop_never_stops_manual_walking(state,tmp_path):
-    import mcp_server as server
+    from dbv.mcp_server import server
     c,cells,_=setup(state,tmp_path);sent=[]
     async def inject(payload,guard=None):
         assert guard and guard();sent.append(payload)
@@ -475,8 +475,8 @@ def test_drafts_delete_restore_keep_combat_and_do_not_overwrite_from_editor(tmp_
 
 
 def test_draft_api_requires_scope_origin_and_stopped_route(http_api,monkeypatch,tmp_path):
-    import dashboard_api as api
-    from dashboard_security import DASHBOARD_ORIGIN,SESSION_TOKEN
+    from dbv.mcp_server import dashboard_api as api
+    from dbv.mcp_server.dashboard_security import DASHBOARD_ORIGIN,SESSION_TOKEN
     a=MapAtlas(tmp_path,'a'*64);draft=a.save_draft('test',[[10,10,7],[11,10,7]])
     controller=SimpleNamespace(status='running',draft_id=draft)
     monkeypatch.setattr(api,'_state',SimpleNamespace(passive_map_monitor=SimpleNamespace(atlas=a),adaptive_cavebot=controller))

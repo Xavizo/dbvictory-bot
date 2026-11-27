@@ -21,7 +21,7 @@ using the loaded module base. DAT SHA-256 remains
 
 ## What changed
 
-`client_profiles.py` preserves both previous profiles and adds `NOVEMBER_26`.
+`dbv/client_bridge/client_profiles.py` preserves both previous profiles and adds `NOVEMBER_26`.
 Player readers take their layout from the selected profile. Startup, the
 bridge and injection all select `dbvobserver_marker_20261126.dll` and the
 `dbvbot_marker_20261126` pipe for this build. Older clients retain the previous
@@ -74,11 +74,11 @@ available without enabling the marker. Actual Windows hook behavior is pending.
 From the bot directory, without starting the launcher or game:
 
 ```powershell
-.\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_20261126.dll'
+.\venv\Scripts\python.exe tools/check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_20261126.dll'
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-`check_client_build.py` uses only Python built-ins. It checks the exact digest,
+`tools/check_client_build.py` uses only Python built-ins. It checks the exact digest,
 PE architecture, DAT digest, 35 code/type signatures for this build and the
 selected DLL's PE architecture and pipe name. It does not attach, write process
 memory, connect to a server, approve unknown hashes or discover replacement
@@ -119,7 +119,7 @@ Rebuilding may change the binary digest due to compiler and linker metadata.
 Validation used Python 3.12.3 in an isolated Linux environment; no packages were
 changed in the installed Windows environment.
 
-- `python check_client_build.py <client> --dll <new DLL>`: 31 static checks,
+- `python tools/check_client_build.py <client> --dll <new DLL>`: 31 static checks,
   executable/DAT identity and DLL architecture/pipe checks passed.
 - `python -m pytest -q`: **1749 passed, 23 skipped, 1 failed** in 104.50 seconds.
   The failure was
@@ -144,7 +144,7 @@ OS 10, version 372) failed the default-RSA decoder. Forwarded packet counters
 alone therefore did not establish working observation. A separate bounded
 Windows read returned valid HP/Ki while the dashboard had no decoded session.
 
-For this exact executable only, `client_protocol.py` reads the existing native
+For this exact executable only, `dbv/client_bridge/client_protocol.py` reads the existing native
 session key. Static Lua bindings identify Game::getProtocolGame at RVA `BBD20`
 and its shared pointer at Game `+24`; ProtocolGame RTTI gives vtable `8BE5FC`.
 Protocol::setXteaKey at `3ECC40` and getXteaKey at `3ECC60` agree on four U32
@@ -180,7 +180,7 @@ isolated candidate directory, without starting another bot or game connection:
 
 - `python -m pytest -q tests/test_client_protocol.py tests/test_packet_observer.py tests/test_relogin_identity.py tests/test_automation_safety.py tests/test_client_november_26.py`:
   **122 passed**.
-- `python check_client_build.py <client> --dll <installed DLL>`: **35 checks
+- `python tools/check_client_build.py <client> --dll <installed DLL>`: **35 checks
   passed**, with matching executable/DAT identity and DLL architecture/pipe.
 - The actual `read_live_protocol_key` adapter successfully read a stable key
   from the operator's running client using read-only access. Only success flags

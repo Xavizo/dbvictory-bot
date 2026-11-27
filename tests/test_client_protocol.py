@@ -7,10 +7,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from client_profiles import NOVEMBER_26, UPDATED
-from crypto import adler32_checksum, xtea_encrypt
-from passive_map import MapReadError
-from proxy import OTProxy
+from dbv.client_bridge.client_profiles import NOVEMBER_26, UPDATED
+from dbv.client_bridge.crypto import adler32_checksum, xtea_encrypt
+from dbv.brain.navigation.passive_map import MapReadError
+from dbv.client_bridge.proxy import OTProxy
 
 KEYS = (1, 2, 3, 4)
 
@@ -26,7 +26,7 @@ def login():
 
 
 def source():
-    from client_protocol import SIGNATURES
+    from dbv.client_bridge.client_protocol import SIGNATURES
     base, ptr, pid = 0x400000, 0x20000, 17
     link = base + 0xB79B50 + 0x24
     memory = {link: struct.pack('<II', ptr, 0x30000),
@@ -42,15 +42,15 @@ def source():
 
 
 def test_verified_protocol_key_is_read_without_executing_client_code():
-    from client_protocol import read_protocol_key
+    from dbv.client_bridge.client_protocol import read_protocol_key
     client, *_ = source()
     assert read_protocol_key(client, 17) == KEYS
 
 
 @pytest.mark.parametrize('expected_pid',[17,18])
 def test_live_adapter_closes_the_read_handle_on_success_or_rejection(monkeypatch, expected_pid):
-    from client_protocol import read_live_protocol_key
-    import passive_map_win32
+    from dbv.client_bridge.client_protocol import read_live_protocol_key
+    from dbv.client_bridge import passive_map_win32
     client, *_ = source()
     client.close = Mock()
     monkeypatch.setattr(passive_map_win32,'ReadOnlyClient',lambda:client)
@@ -63,7 +63,7 @@ def test_live_adapter_closes_the_read_handle_on_success_or_rejection(monkeypatch
 
 @pytest.mark.parametrize('problem', ['pid', 'profile', 'vtable', 'disabled', 'empty', 'signature', 'torn_key', 'torn_link'])
 def test_unverified_or_unstable_protocol_key_is_rejected(problem):
-    from client_protocol import read_protocol_key, SIGNATURES
+    from dbv.client_bridge.client_protocol import read_protocol_key, SIGNATURES
     client, memory, ptr, link = source()
     if problem == 'pid': client.pid = 18
     if problem == 'profile': client.profile = UPDATED
@@ -187,7 +187,7 @@ def test_connection_teardown_and_replacement_discard_pending_native_keys(monkeyp
 
 
 def test_failed_legacy_rsa_never_logs_packet_contents(caplog, monkeypatch):
-    import proxy as module
+    from dbv.client_bridge import proxy as module
     proxy = OTProxy('synthetic',1,1)
     proxy._proxy_rsa_key = proxy.default_rsa_key
     monkeypatch.setattr(module,'rsa_decrypt',lambda *_:b'\xff'*128)
@@ -198,7 +198,7 @@ def test_failed_legacy_rsa_never_logs_packet_contents(caplog, monkeypatch):
 
 
 def test_legacy_default_rsa_handshake_is_preserved():
-    from crypto import rsa_encrypt
+    from dbv.client_bridge.crypto import rsa_encrypt
     proxy = OTProxy('synthetic',1,1)
     plain = b'\0'+struct.pack('<4I',*KEYS)+bytes(111)
     payload = struct.pack('<BHH',10,10,372)+rsa_encrypt(plain,proxy.default_rsa_key)

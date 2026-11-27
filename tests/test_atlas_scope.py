@@ -1,10 +1,10 @@
 import json
 import sqlite3
 
-from atlas_scope import LINEAGE, inherit
-from map_annotations import MapAnnotations
-from map_atlas import MapAtlas
-from transition_learning import TransitionLearner
+from dbv.brain.navigation.atlas_scope import LINEAGE, inherit
+from dbv.brain.navigation.map_annotations import MapAnnotations
+from dbv.brain.navigation.map_atlas import MapAtlas
+from dbv.brain.navigation.transition_learning import TransitionLearner
 
 OLD = "a" * 64
 NEW = "b" * 64

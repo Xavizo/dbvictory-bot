@@ -1,11 +1,11 @@
 import struct
 from types import SimpleNamespace
 import pytest
-import client_player_state as cp
-from client_profiles import UPDATED
-from passive_map import MapReadError
-from game_state import GameState
-from potions import PotionScheduler, validate_config
+from dbv.client_bridge import client_player_state as cp
+from dbv.client_bridge.client_profiles import UPDATED
+from dbv.brain.navigation.passive_map import MapReadError
+from dbv.brain.state.game_state import GameState
+from dbv.brain.combat.potions import PotionScheduler, validate_config
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def test_unbounded_or_fractional_resource_values_remain_invalid(reader,offset,va
 
 
 def test_unverified_legacy_client_does_not_use_updated_local_offsets():
-    from client_profiles import LEGACY
+    from dbv.client_bridge.client_profiles import LEGACY
     with pytest.raises(MapReadError):cp.ClientPlayerReader(SimpleNamespace(profile=LEGACY),1)
 
 def test_verified_conditions_and_speed_are_optional_and_never_replace_health(reader):
@@ -131,7 +131,7 @@ def test_creature_diagnostic_failure_does_not_stop_bound_vitals(monkeypatch, tmp
     monkeypatch.setattr(action,'DEBUG_LOG',str(tmp_path/'diagnostic.log'))
     monkeypatch.setattr(action,'_make_bridge',lambda:bridge)
     monkeypatch.setattr(action,'_connect_with_inject',AsyncMock(return_value=True))
-    monkeypatch.setattr('passive_map_win32.ReadOnlyClient',lambda:source)
+    monkeypatch.setattr('dbv.client_bridge.passive_map_win32.ReadOnlyClient',lambda:source)
     monkeypatch.setattr(cp,'ClientPlayerReader',lambda *_:reader)
     monkeypatch.setattr(cp,'bind_local_player',AsyncMock(return_value=True))
     async def tick(_):

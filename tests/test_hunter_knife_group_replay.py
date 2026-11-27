@@ -1,7 +1,7 @@
 """Offline timelines for ownership recognition with several corpses on one tile."""
 import pytest
 
-from hunter_knife import FRESH, SkinningQueue
+from dbv.brain.combat.hunter_knife import FRESH, SkinningQueue
 from test_hunter_knife import A, NAME, tile
 
 
@@ -66,7 +66,7 @@ def test_late_matching_own_loot_can_complete_group_within_evidence_window(frame_
 
 def test_new_personal_credit_resolves_on_still_fresh_map_without_counting_the_frame_twice():
     from types import SimpleNamespace
-    from hunter_knife_action import KnifeAutomation
+    from dbv.brain.combat.hunter_knife_action import KnifeAutomation
 
     game = SimpleNamespace(position=A, attack_target_id=None, creatures={}, experience=100)
     worker = KnifeAutomation(game)

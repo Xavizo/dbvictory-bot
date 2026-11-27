@@ -4,11 +4,11 @@ import json
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock
 import pytest
-import mcp_server as server
-from bot_profiles import ProfileStore,bot_config,applied_bot_settings,require_stopped
-from cavebot_combat import validate_combat
-from game_alerts import default_config
-from pause_hotkey import PauseHotkey
+from dbv.mcp_server import server
+from dbv.brain.profiles import ProfileStore,bot_config,applied_bot_settings,require_stopped
+from dbv.brain.cavebot.cavebot_combat import validate_combat
+from dbv.brain.state.game_alerts import default_config
+from dbv.mcp_server.pause_hotkey import PauseHotkey
 from test_automation_safety import state
 from test_adaptive_cavebot import setup as route_setup
 
@@ -69,7 +69,7 @@ def test_bind_route_select_other_combat_and_delete_binding_without_editing_waypo
 
 
 def test_pause_key_debounces_repeats_serializes_and_reports_errors(monkeypatch):
-    import pause_hotkey
+    from dbv.mcp_server import pause_hotkey
     now=[1.0];monkeypatch.setattr(pause_hotkey.time,'monotonic',lambda:now[0])
     async def run():
         callback=AsyncMock();hotkey=PauseHotkey(asyncio.get_running_loop(),callback)

@@ -3,8 +3,10 @@
 import os
 from pathlib import Path
 import runpy
+import sys
 
 if __name__ == "__main__":
     root = Path(__file__).resolve().parent
     os.chdir(root)
-    runpy.run_path(str(root / "mcp_server.py"), run_name="__main__")
+    sys.path.insert(0, str(root))
+    runpy.run_module("dbv.mcp_server.server", run_name="__main__", alter_sys=True)

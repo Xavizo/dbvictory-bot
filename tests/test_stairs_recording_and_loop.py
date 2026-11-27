@@ -1,10 +1,10 @@
 """Recorded door/ladder approaches and local closure; never connect to a game."""
 import pytest
-from map_atlas import MapAtlas, recording_points, trace_links
+from dbv.brain.navigation.map_atlas import MapAtlas, recording_points, trace_links
 from test_adaptive_cavebot import cell, setup
 from test_automation_safety import state
 from test_transition_learning import sample, tile, step
-from transition_learning import TransitionLearner
+from dbv.brain.navigation.transition_learning import TransitionLearner
 
 
 def test_recording_keeps_open_door_crossing_before_ladder(tmp_path):

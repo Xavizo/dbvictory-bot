@@ -197,7 +197,7 @@ loot that drops. For now it recognises the corpses of these monsters only:
 - Mutant Wolf
 
 Other corpses are left alone. More monsters can be added in
-[`hunter_knife.py`](hunter_knife.py) once their corpse is identified.
+[`dbv/brain/combat/hunter_knife.py`](dbv/brain/combat/hunter_knife.py) once their corpse is identified.
 
 ### Diagnostics
 
@@ -257,13 +257,13 @@ installed folder. All learned data (atlas, profiles, reports) stays on your comp
 `local_data/`, and nothing is uploaded anywhere.
 
 ```
-Launcher ──► run_bot.py ──► MCP engine (mcp_server.py)
-                              ├── proxy.py ◄──► game client ◄──► game server
-                              ├── packet_observer.py → game_state.py
-                              ├── passive_map.py / client_player_state.py (read-only memory)
-                              ├── dll_bridge.py ◄── named pipe ◄── observer DLL (in client)
+Launcher ──► run_bot.py ──► MCP engine (dbv/mcp_server/server.py)
+                              ├── dbv/client_bridge/proxy.py ◄──► game client ◄──► game server
+                              ├── dbv/client_bridge/packet_observer.py → dbv/brain/state/game_state.py
+                              ├── dbv/brain/navigation/passive_map.py / dbv/client_bridge/client_player_state.py (read-only memory)
+                              ├── dbv/client_bridge/dll_bridge.py ◄── named pipe ◄── observer DLL (in client)
                               ├── actions/*.py (healing, combat, cavebot…)
-                              └── dashboard_api.py ──► dashboard/ (Electron + Next.js)
+                              └── dbv/mcp_server/dashboard_api.py ──► dashboard/ (Electron + Next.js)
 ```
 
 ## Installation
@@ -342,7 +342,7 @@ Closing the game client ends the bot session.
 
 The bot reads the client's memory, so every client build needs its own profile
 with verified addresses. Supported builds are listed in
-[`client_profiles.py`](client_profiles.py).
+[`dbv/client_bridge/client_profiles.py`](dbv/client_bridge/client_profiles.py).
 
 | Client build | `dbvStart.exe` SHA-256 | Status |
 |---|---|---|
@@ -352,7 +352,7 @@ Older builds still have profiles in the code but are no longer tested. To check
 your own client without starting the bot:
 
 ```powershell
-.\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe'
+.\venv\Scripts\python.exe tools/check_client_build.py 'C:\DBVClient_v5\dbvStart.exe'
 ```
 
 If the server updates the client, the launcher says so in plain words before
@@ -395,7 +395,7 @@ They appear in the panel and can be turned on and off at runtime.
 
 ```python
 """Eat food every 10 seconds."""
-from protocol import build_use_item_packet
+from dbv.client_bridge.protocol import build_use_item_packet
 
 FOOD_ID = 3583  # red ham
 INTERVAL = 10
@@ -407,7 +407,9 @@ async def run(bot):
         await bot.sleep(INTERVAL)
 ```
 
-See `BotContext` in [`mcp_server.py`](mcp_server.py) for everything the `bot` object offers (stats, position,
+Old flat imports such as `from protocol import ...` still work for one release, then only the `dbv.*` names do.
+
+See `BotContext` in [`dbv/mcp_server/server.py`](dbv/mcp_server/server.py) for everything the `bot` object offers (stats, position,
 creatures, `say`, `walk`, `use_item_in_container`, `use_item_on_map`, logging).
 
 ## Development

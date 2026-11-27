@@ -6,9 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 
-import adaptive_cavebot as nav
-import passive_map as pm
-from passive_map import PassiveMapMonitor
+from dbv.brain.cavebot import adaptive_cavebot as nav
+from dbv.brain.navigation import passive_map as pm
+from dbv.brain.navigation.passive_map import PassiveMapMonitor
 
 
 def test_confirmed_walk_measures_only_position_and_following_map(monkeypatch, caplog):
@@ -104,7 +104,7 @@ def test_torn_map_gets_one_quick_retry_without_stacking_poll_delays(monkeypatch,
         connected=True, game_state=object(), _action_tasks={"adaptive_cavebot": task}))
     source = SimpleNamespace(path=tmp_path / "fake", profile=SimpleNamespace(sha256="offline"),
                              read=None, base=0, close=Mock())
-    monkeypatch.setitem(sys.modules, "passive_map_win32", SimpleNamespace(ReadOnlyClient=lambda: source))
+    monkeypatch.setitem(sys.modules, "dbv.client_bridge.passive_map_win32", SimpleNamespace(ReadOnlyClient=lambda: source))
     monkeypatch.setattr(pm, "inspect_dat", lambda path: {})
     reader = Mock()
     reader.snapshot.side_effect = pm.MapChanged("test")
