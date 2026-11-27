@@ -71,6 +71,8 @@ def main():
         raise SystemExit(f"Stage folder must be named {PACKAGE_ROOT}")
     if not re.fullmatch(r"v\d+\.\d+\.\d+", args.version) or not re.fullmatch(r"[0-9a-f]{40}", args.revision):
         raise SystemExit("Bad version or revision")
+    if os.name == "nt":
+        stage = Path("\\\\?\\" + str(stage))  # node_modules paths can pass 260 characters
     for required in ("DBVictory Launcher.exe", "venv/Scripts/python.exe", "runtime/node/node.exe",
                      "dashboard/.next/BUILD_ID", "dashboard/node_modules/electron/dist/electron.exe"):
         if not (stage / required).is_file():
