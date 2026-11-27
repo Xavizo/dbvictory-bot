@@ -6,7 +6,7 @@ import time
 
 from dbv.brain.cavebot.cavebot_walking import distance, walkable
 from dbv.brain.state.item_observations import observed_inputs, wait_for_inputs
-from dbv.brain.combat.hunter_knife import FRESH_BODIES, KNIFE, ROCO, SkinningQueue, apply_config, body_counts, exposed_body_action, fresh_count, skinned
+from dbv.brain.combat.hunter_knife import FRESH_BODIES, KNIFE, ROCO, SkinningQueue, apply_config, with_learned, body_counts, exposed_body_action, fresh_count, skinned
 from dbv.client_bridge.command_delivery import CommandReceipt, attempted, confirm
 from dbv.brain.cavebot.adaptive_cavebot import tool_location
 from dbv.client_bridge.protocol import build_move_item_packet, build_use_item_ex_packet
@@ -335,6 +335,27 @@ def fresh_sample(bot):
     return None
 
 
+def learn(bot):
+    """Save corpses the player skinned by hand to the knife's list."""
+    learned = getattr(bot.state, "knife_learned", None)
+    rows = learned.snapshot() if learned else {}
+    if not rows:
+        return
+    actions = bot.state.settings.setdefault("actions", {})
+    cfg = with_learned(actions.get(NAME), rows)
+    learned.forget(rows)
+    if cfg is None:
+        return
+    actions[NAME] = {**actions.get(NAME, {}), "corpses": cfg["corpses"]}
+    save = getattr(bot, "save_settings", None)
+    if save:
+        try:
+            save()
+        except OSError:
+            logging.getLogger(__name__).exception("Hunter Knife: nie udało się zapisać listy ciał")
+    logging.getLogger(__name__).info("Hunter Knife 5908: nowe ciała z ręcznego skórowania %s", rows)
+
+
 async def run_knife(bot):
     from dbv.client_bridge.client_equipment import EquipmentReader
     from dbv.client_bridge.client_player_state import ClientPlayerReader
@@ -358,6 +379,7 @@ async def run_knife(bot):
                     and bot.state.settings.get("actions", {}).get(NAME, {}).get("enabled", False))
         applied = apply_config(bot.state.settings.get("actions", {}).get(NAME))
         while enabled():
+            learn(bot)
             corpses = apply_config(bot.state.settings.get("actions", {}).get(NAME))
             if corpses != applied:
                 # Claims and refused layers were made against the previous list.

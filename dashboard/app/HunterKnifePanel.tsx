@@ -1,7 +1,6 @@
 "use client";
 import { useState } from "react";
-import { toggleAction, type BotState } from "@/lib/api";
-import HunterKnifeConfig from "./HunterKnifeConfig";
+import { toggleAction, updateActionConfig, type BotState, type KnifeCorpse } from "@/lib/api";
 
 export default function HunterKnifePanel({ state, onRefresh }: {
   state: BotState | null;
@@ -9,16 +8,18 @@ export default function HunterKnifePanel({ state, onRefresh }: {
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [configuring, setConfiguring] = useState(false);
   const action = state?.actions.find(a => a.name === "auto_hunter_knife");
   if (!action) return null;
   const enabled = action.enabled;
   const info = state?.hunter_knife;
-  async function toggle() {
+  const corpses = info?.corpses ?? [];
+  const toggle = () => run(() => toggleAction("auto_hunter_knife", !enabled));
+  const save = (list: KnifeCorpse[]) => run(() => updateActionConfig("auto_hunter_knife", { corpses: list }));
+  async function run(task: () => Promise<void>) {
     setBusy(true);
     setError("");
     try {
-      await toggleAction("auto_hunter_knife", !enabled);
+      await task();
       onRefresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -27,15 +28,10 @@ export default function HunterKnifePanel({ state, onRefresh }: {
     }
   }
   return <section className="barrier-band-panel" aria-label="Hunter Knife">
-    <div><strong>Hunter Knife</strong><small>5908 · {info?.monsters ? `${info.monsters.length} potworów na liście` : "elementale ognia, Mutant Wolf, Roco i Gunso (także Chibi i Fury)"}</small></div>
+    <div><strong>Hunter Knife</strong><small>5908 · ciała z listy poniżej</small></div>
     <span className="barrier-band-status">{enabled ? info?.status ?? "Oczekiwanie" : "Wyłączony"}</span>
     <button className={`action-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled}
       aria-label="Automatyczny Hunter Knife" disabled={busy || !!state?.automation_paused} onClick={toggle}><span/></button>
-    <button type="button" className="secondary-button" aria-haspopup="dialog" disabled={!info?.monsters}
-      onClick={() => setConfiguring(true)}>Konfiguruj{!!info?.suggestions?.length && ` · nowe ciało (${info.suggestions.length})`}</button>
-    {configuring && info?.monsters && <HunterKnifeConfig monsters={info.monsters} defaults={info.default_monsters ?? []}
-      suggestions={info.suggestions ?? []} ignored={info.ignored_suggestions ?? []}
-      onClose={() => setConfiguring(false)} onSaved={onRefresh}/>}
     {info && <small className="barrier-band-help">Z walki i XP {info.from_combat ?? 0} · Wpisy Loot {info.personal_loot} · Obrobione {info.processed} · Odmowy właściciela {info.denied??0}
       {!!info.unassigned_bodies && ` · Ciała bez ustalonego właściciela ${info.unassigned_bodies}`}
       {!!info.unattributed && ` · Zbieg z ręcznym użyciem ${info.unattributed}`}
@@ -44,6 +40,16 @@ export default function HunterKnifePanel({ state, onRefresh }: {
       {info.last_timing_ms.delivery_wait != null && ` · wynik wysłania ${info.last_timing_ms.delivery_wait} ms`} · do zmiany pola {info.last_timing_ms.confirmation} ms</small>}
     {info?.last_issue && <small className="barrier-band-help">Ostatnia trudność · {info.last_issue.action === "skin" ? "skórowanie" : "odsuwanie ciała"} · ({info.last_issue.position.join(", ")}) · {info.last_issue.reason}
       {info.last_issue.spell && ` · ${info.last_issue.since_spell_ms} ms od próby czaru Cavebota ${info.last_issue.spell}`}</small>}
+    {info?.corpses && <div className="knife-corpses" aria-label="Ciała dla Hunter Knife">
+      <small>Ciała:</small>
+      {corpses.map(c => <span key={c.id} title={`Po oskórowaniu: ${c.skinned}`}>{c.id}
+        <button type="button" className="knife-remove" aria-label={`Usuń ciało ${c.id}`} disabled={busy}
+          onClick={() => save(corpses.filter(x => x.id !== c.id))}>×</button></span>)}
+      {!corpses.length && <small>brak</small>}
+      <button type="button" className="secondary-button" disabled={busy}
+        onClick={() => save(info.default_corpses ?? [])}>Przywróć domyślne</button>
+      <small className="barrier-band-help">Nowe ciało dodaje się samo, gdy raz oskórujesz je nożem ręcznie.</small>
+    </div>}
     {error && <p role="alert">{error}</p>}
   </section>;
 }

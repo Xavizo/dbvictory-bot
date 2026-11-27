@@ -95,7 +95,7 @@ class BotState:
     """Everything this process knows: proxies, the game session, actions and their settings."""
 
     def __init__(self):
-        from dbv.brain.combat.hunter_knife import CorpseSuggestions
+        from dbv.brain.combat.hunter_knife import LearnedCorpses
         from dbv.brain.combat.speed_up import SpeedScheduler
         from dbv.brain.profiles import ProfileStore
         from dbv.brain.state.game_alerts import AlertCenter
@@ -116,7 +116,7 @@ class BotState:
         self.speed_scheduler = SpeedScheduler()
         self.potion_scheduler = PotionScheduler()
         self.potion_diagnostics = PotionDiagnostics()
-        self.knife_suggestions = CorpseSuggestions()
+        self.knife_learned = LearnedCorpses()
         self.profile_store = ProfileStore()
         self._action_completed = set()  # actions whose run() returned normally
         self.action_logs = {}           # name -> deque of "[HH:MM:SS] text"
@@ -260,6 +260,10 @@ class BotContext:
     @property
     def state(self):
         return state
+
+    def save_settings(self):
+        """Persist ``state.settings`` after an action changed its own entry."""
+        save_settings(state.settings)
 
     async def inject_to_server(self, packet: bytes, *, guard=None):
         """Send a client packet to the server; returns the delivery result.
@@ -508,6 +512,8 @@ async def _async_update_action_config(name: str, changes: dict) -> dict:
     if name == "auto_hunter_knife":
         from dbv.brain.combat.hunter_knife import validate_config as validate_knife_config
         cfg = validate_knife_config(cfg)
+        # The panel saves the list it showed, which already included corpses learned by hand.
+        state.knife_learned.forget(list(state.knife_learned.snapshot()))
     state.settings.setdefault("actions", {})[name] = cfg
     save_settings(state.settings)
     return cfg
