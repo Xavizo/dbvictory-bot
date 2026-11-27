@@ -11,13 +11,16 @@
 #
 #   -PythonDir  existing relocatable Python to copy (default: `uv python install`)
 #   -MinGwBin   folder with 32-bit g++.exe for the DLLs
+#   -TestBuild  version the package vX.Y.Z-test.<first 7 hex of the commit>: a test build of a
+#               branch, published as a pre-release that only the launcher's test channel offers
 # Needs Node.js with npm on PATH.
 param(
     [string]$OutDir = "build\release",
     [string]$Repo = "Xavizo/dbvictory-bot",
     [string]$PythonVersion = "3.12",
     [string]$PythonDir,
-    [Parameter(Mandatory=$true)][string]$MinGwBin
+    [Parameter(Mandatory=$true)][string]$MinGwBin,
+    [switch]$TestBuild
 )
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -36,6 +39,7 @@ $Revision = (git rev-parse HEAD).Trim()
 $HostPython = (Get-Command python).Source
 $Version = (& $HostPython -I -c "import sys; sys.path.insert(0, r'$Root'); from pathlib import Path; from dbv_revision import version_for; print(version_for(Path(r'$Root'), '$Revision') or '')").Trim()
 if ($Version -notmatch '^v\d+\.\d+\.\d+$') { throw "Cannot derive the version of $Revision (needs full Git history)." }
+if ($TestBuild) { $Version = "$Version-test.$($Revision.Substring(0, 7))" }
 Write-Host "Building DBVictory Bot $Version ($($Revision.Substring(0,7)))"
 
 if (-not [IO.Path]::IsPathRooted($OutDir)) { $OutDir = Join-Path $Root $OutDir }

@@ -365,3 +365,115 @@ def test_a_progress_file_that_cannot_be_removed_does_not_fail_the_install(tmp_pa
         raise PermissionError("in use")
     monkeypatch.setattr(type(tmp_path), "unlink", locked)
     progress.clear()
+
+
+TEST = "c" * 40
+
+
+def published(latest, when):
+    return {**latest, "published": when}
+
+
+def test_a_test_build_sorts_before_its_release_and_after_older_ones():
+    assert gr._version("v1.2.0-test.abcdef0") < gr._version("v1.2.0") < gr._version("v1.2.1-test.abcdef0")
+    assert gr._version("v1.2.0-test.ABCDEF0") is None and gr._version("v1.2.0-beta") is None
+    assert gr.is_test_version("v1.2.0-test.abcdef0") and not gr.is_test_version("v1.2.0")
+
+
+def test_default_channel_never_looks_at_test_builds(root):
+    install_old(root, {})
+    assert gr.read_channel(root) == "stable"
+    stable = published(package({}, version="v1.0.0", revision=OLD)[0], "2026-11-01T00:00:00Z")
+
+    def no_tests(repo):
+        raise AssertionError("the default channel must not ask for test builds")
+    report = gr.status(root, fetch=lambda repo: stable, fetch_tests=no_tests)
+    assert report["state"] == "current" and report["channel"] == "stable"
+
+
+def test_test_channel_offers_the_newest_build_and_installs_it(root):
+    install_old(root, {"bot.py": b"old"})
+    stable = published(package({}, version="v1.0.0", revision=OLD)[0], "2026-11-01T00:00:00Z")
+    build, data = package({"bot.py": b"test"}, version="v1.1.0-test.ccccccc", revision=TEST)
+    build = published(build, "2026-11-02T00:00:00Z")
+    assert gr.set_channel(root, "test") == {"channel": "test"}
+    kw = {"fetch": lambda repo: stable, "fetch_tests": lambda repo: build}
+    report = gr.status(root, **kw)
+    assert report["state"] == "available" and report["pending"] == TEST and report["channel"] == "test"
+    assert "wersja testowa" in report["message"]
+    assert gr.install(root, TEST, opener=lambda req, timeout: Response(data), **kw)["updated"]
+    assert (root / "bot.py").read_bytes() == b"test"
+    assert dbv_revision.read_release(root)["version"] == "v1.1.0-test.ccccccc"
+    assert gr.status(root, **kw)["state"] == "current"
+
+
+def test_test_channel_prefers_a_regular_release_published_after_the_test_build(root):
+    install_old(root, {})
+    gr.set_channel(root, "test")
+    stable = published(package({}, version="v1.1.0", revision=NEW)[0], "2026-11-03T00:00:00Z")
+    build = published(package({}, version="v1.1.0-test.ccccccc", revision=TEST)[0], "2026-11-02T00:00:00Z")
+    report = gr.status(root, fetch=lambda repo: stable, fetch_tests=lambda repo: build)
+    assert report["pending"] == NEW
+    assert gr.status(root, fetch=lambda repo: stable, fetch_tests=lambda repo: None)["pending"] == NEW
+
+
+def test_leaving_the_test_channel_returns_to_the_regular_release_even_if_older(root):
+    install_old(root, {"bot.py": b"test"})
+    release = root / "release.json"
+    release.write_text(json.dumps({"version": "v1.2.0-test.ccccccc", "revision": TEST}))
+    (root / gr.MANIFEST_FILE).write_text(json.dumps(manifest({"bot.py": b"test", "release.json": release.read_bytes()})))
+    stable, data = package({"bot.py": b"stable"}, version="v1.1.0", revision=NEW)
+    report = gr.status(root, fetch=lambda repo: stable)
+    assert report["state"] == "available" and report["pending"] == NEW
+    assert gr.install(root, NEW, fetch=lambda repo: stable, opener=lambda req, timeout: Response(data))["updated"]
+    assert (root / "bot.py").read_bytes() == b"stable"
+
+
+def test_unknown_channel_is_refused_and_a_broken_file_means_stable(root):
+    install_old(root, {})
+    with pytest.raises(ValueError):
+        gr.set_channel(root, "nightly")
+    (gr._feed(root)).mkdir(parents=True, exist_ok=True)
+    (gr._feed(root) / "channel.json").write_text("{bad")
+    assert gr.read_channel(root) == "stable"
+
+
+def test_fetch_test_takes_the_newest_test_pre_release_only():
+    base = f"https://github.com/{gr.DEFAULT_REPO}/releases/download/"
+
+    def release(tag, when, prerelease=True, draft=False):
+        return {"tag_name": tag, "published_at": when, "prerelease": prerelease, "draft": draft,
+                "assets": [{"name": "release.json", "browser_download_url": f"{base}{tag}/release.json"},
+                           {"name": f"DBVictory-Bot-{tag}.zip",
+                            "browser_download_url": f"{base}{tag}/DBVictory-Bot-{tag}.zip"}]}
+    listing = [release("v1.3.0", "2026-11-09T00:00:00Z", prerelease=False),
+               release("v1.3.0-test.1111111", "2026-11-08T00:00:00Z", draft=True),
+               release("v1.2.9-rc1", "2026-11-07T00:00:00Z"),
+               release("v1.2.0-test.aaaaaaa", "2026-11-05T00:00:00Z"),
+               release("v1.2.1-test.bbbbbbb", "2026-11-06T00:00:00Z")]
+
+    def get(url, **kw):
+        if "api.github.com" in url:
+            assert "/releases?" in url
+            return json.dumps(listing).encode()
+        tag = url.split("/")[-2]
+        return json.dumps({"format": 1, "version": tag, "revision": "d" * 40, "asset": f"DBVictory-Bot-{tag}.zip",
+                           "sha256": "0" * 64, "size": 10}).encode()
+    found = gr.fetch_test(gr.DEFAULT_REPO, get)
+    assert found["version"] == "v1.2.1-test.bbbbbbb" and found["published"] == "2026-11-06T00:00:00Z"
+    listing[:] = listing[:3]
+    assert gr.fetch_test(gr.DEFAULT_REPO, get) is None
+
+
+def test_the_latest_regular_release_must_not_be_a_test_build():
+    tag = "v1.2.0-test.aaaaaaa"
+    base = f"https://github.com/{gr.DEFAULT_REPO}/releases/download/{tag}/"
+    info = {"assets": [{"name": "release.json", "browser_download_url": base + "release.json"},
+                       {"name": f"DBVictory-Bot-{tag}.zip", "browser_download_url": base + f"DBVictory-Bot-{tag}.zip"}]}
+
+    def get(url, **kw):
+        return json.dumps(info if "api.github.com" in url else {
+            "format": 1, "version": tag, "revision": "d" * 40, "asset": f"DBVictory-Bot-{tag}.zip",
+            "sha256": "0" * 64, "size": 10}).encode()
+    with pytest.raises(ValueError):
+        gr.fetch_latest(gr.DEFAULT_REPO, get)
