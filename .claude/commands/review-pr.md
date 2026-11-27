@@ -1,6 +1,6 @@
 # Code Review Skill
 
-You are performing a comprehensive code review for a Pull Request in the `pumanitro/tibia-ots-mcp-bot` repository.
+You are performing a comprehensive code review for a Pull Request in the this repository.
 
 ## Input
 
@@ -37,7 +37,7 @@ IMPORTANT: Launch ALL agents in a single message to maximize parallelism.
 
 **Prompt template:**
 
-> You are reviewing PR #<NUMBER> in pumanitro/tibia-ots-mcp-bot. Run `gh pr diff <NUMBER>` to get the full diff.
+> You are reviewing PR #<NUMBER> in this repository. Run `gh pr diff <NUMBER>` to get the full diff.
 >
 > **FIRST**, read the project memory for conventions:
 > - Read `C:\Users\patry\.claude\projects\C--Users-patry-Desktop-dbv-exp\memory\MEMORY.md` — key architectural patterns
@@ -94,7 +94,7 @@ IMPORTANT: Launch ALL agents in a single message to maximize parallelism.
 
 **Prompt template:**
 
-> You are reviewing PR #<NUMBER> in pumanitro/tibia-ots-mcp-bot. Run `gh pr diff <NUMBER>` to get the full diff.
+> You are reviewing PR #<NUMBER> in this repository. Run `gh pr diff <NUMBER>` to get the full diff.
 >
 > **FIRST**, read these reference files for protocol context:
 > - Read `C:\Users\patry\Desktop\dbv_exp\protocol.py` — full OT protocol opcodes and packet builders
@@ -141,7 +141,7 @@ IMPORTANT: Launch ALL agents in a single message to maximize parallelism.
 
 **Prompt template:**
 
-> You are reviewing PR #<NUMBER> in pumanitro/tibia-ots-mcp-bot. Run `gh pr diff <NUMBER>` to get the full diff.
+> You are reviewing PR #<NUMBER> in this repository. Run `gh pr diff <NUMBER>` to get the full diff.
 > Also run `gh pr view <NUMBER> --json title,body` to understand the PR intent.
 >
 > This is a Tibia OT Server bot with these core subsystems:
@@ -188,7 +188,7 @@ IMPORTANT: Launch ALL agents in a single message to maximize parallelism.
 
 **Prompt template:**
 
-> You are reviewing PR #<NUMBER> in pumanitro/tibia-ots-mcp-bot. Run `gh pr diff <NUMBER>` to get the full diff.
+> You are reviewing PR #<NUMBER> in this repository. Run `gh pr diff <NUMBER>` to get the full diff.
 >
 > This is a game bot that:
 > - Runs a local TCP proxy intercepting game traffic
@@ -312,7 +312,7 @@ After presenting the full report, ask the user:
 For each finding that has a file path and line reference, post an individual inline comment using:
 
 ```bash
-gh api repos/pumanitro/tibia-ots-mcp-bot/pulls/<PR_NUMBER>/comments \
+gh api repos/{owner}/{repo}/pulls/<PR_NUMBER>/comments \
   -f body="<comment body>" \
   -f path="<file path>" \
   -f commit_id="$(gh pr view <PR_NUMBER> --json headRefOid -q .headRefOid)" \

@@ -11,9 +11,11 @@ coding agent (Codex or Claude Code) through MCP.
 > **Read this first.** Using a bot breaks DBVictory's rules and can get your
 > account banned. You use this software at your own risk.
 >
-> The bot only supports **specific builds of the game client**. When the server
-> ships a new client, the bot refuses to attach until a matching profile is
-> added. See [Supported client builds](#supported-client-builds).
+> **Compatible client:** the DBVictory client build of **26 November 2026**
+> (`dbvStart.exe`, SHA-256 `af433830…7486e4`). The bot only supports specific
+> client builds. When the server ships a new client, the bot refuses to attach
+> until a matching profile is added. See
+> [Supported client builds](#supported-client-builds).
 
 ## What it does
 
@@ -26,7 +28,8 @@ coding agent (Codex or Claude Code) through MCP.
 - Auto targeting with per-monster rules, attack spells and runes
 - Spell conditions (cast only when the required monsters, HP or Ki are present)
 - Area (wave) spells when several monsters are in range
-- Hunter Knife: skins your own corpses and confirms the loot
+- Hunter Knife: skins your own corpses and confirms the loot (only some
+  monsters for now, see [Hunter Knife](#hunter-knife))
 
 **Cavebot and atlas**
 - Record and replay hunting routes, including stairs, ladders, ropes, doors and digging
@@ -79,6 +82,40 @@ The atlas fills itself while you play. You don't need to record anything: walk
 around, change floors and fight, and the bot remembers tiles, transitions,
 monster sightings and where you gained XP. All of it is stored locally in
 `local_data/`.
+
+### What the live map sees
+
+The live map reads every tile in the client's view (18 × 14 tiles) straight
+from the client, not from screenshots. For each tile it knows:
+
+- whether you can walk there, or it is blocked, has no ground or should be avoided
+- every item on it, with the client's own flags (for example whether it blocks
+  movement or can be moved)
+- who stands there, by type: you, other players, NPCs, pets and monsters
+
+It also recognises the objects you can use to get somewhere: **doors, stairs,
+ladders, holes, covered holes (shovel), rope spots, teleports, spider webs and
+level doors** (with the level they require). A movable corpse lying on a tile is
+treated as an obstacle, so routes go around it or clear it.
+
+**Tools are found automatically.** When a route needs a rope, a shovel or an
+AiO, the bot looks for it in your open backpacks and equipment
+slots. It recognises the rope, the shovel and both the **small and medium
+All-in-One (AiO)** tools, including an AiO worn in its equipment slot. Spider
+webs need an AiO to cut.
+
+### The atlas learns, and you can teach it
+
+Every time you walk through a door, take stairs, fall through a hole or use a
+rope spot during manual play, the atlas records the entry, the exit and what you
+did. It counts how often it saw each passage, and the route planner uses the
+confirmed ones. Learning pauses while automation is running or
+your character is dead, so the bot only learns from what you did yourself.
+
+You don't have to wait for it to learn. On the live map, right-click a tile (or
+press **Shift+F10**) and choose the object type, such as stairs, hole or door.
+Your marks are saved with the atlas and used by the planner straight away. The
+learned passages are listed under **Diagnostyka → Wyuczone przejścia**.
 
 ### Creating a route
 
@@ -148,6 +185,30 @@ other actions keep running. To pause all automation at once, use **Pauza
 wszystkich** (pause all) on the Automation tab or press **Pause/Break**. **Historia decyzji i raporty okrążeń** (decision history and loop reports)
 explains why the bot did what it did and sums up each loop.
 
+### Hunter Knife
+
+The Hunter Knife skins only corpses of monsters you killed and confirms the
+loot that drops. For now it recognises the corpses of these monsters only:
+
+- Fire Elemental, Fire Elementalis, Mutant Fire Elemental, Fury Mutant Fire
+  (Elemental)
+- Roco, Chibi Roco, Fury Roco
+- Gunso, Chibi Gunso, Fury Gunso
+- Mutant Wolf
+
+Other corpses are left alone. More monsters can be added in
+[`hunter_knife.py`](hunter_knife.py) once their corpse is identified.
+
+### Diagnostics
+
+The **Diagnostyka** (Diagnostics) tab shows whether each part of the session is
+working: the panel, the game session, the observer DLL and its bridge, and how
+many packets have passed. It also lists the passages the atlas has learned,
+nearest first, and lets you record a run or save the last movement block for a
+bug report.
+
+![Diagnostics tab with learned passages and session status](docs/screenshots/diagnostics.png)
+
 ### Alerts
 
 The bell collects game events: a private message, a message in local chat, a
@@ -155,6 +216,8 @@ player on screen, or a sudden Ki drop. You can turn each kind on or off, give it
 a sound, and choose whether it fires always or only while the cavebot is running.
 
 ## How it works
+
+![The launcher, ready to start](docs/screenshots/launcher.jpg)
 
 1. The **launcher** (`DBVictory Launcher.exe`, or the `Uruchom bota` shortcut)
    checks the installed version, opens the game client and prepares the engine.
@@ -170,8 +233,11 @@ a sound, and choose whether it fires always or only while the cavebot is running
 6. The **panel** (Electron) opens. It only listens on `127.0.0.1` and requires a
    per-session token. You enter the game and turn on the features you want.
 
-All learned data (atlas, profiles, reports) stays on your computer in
-`local_data/`. Nothing is uploaded anywhere.
+The launcher works entirely on your computer. It does not download anything
+from the internet: it starts the bot from the folder you cloned, and the
+**Ostatnie zmiany** (recent changes) list comes from the release notes in that
+folder. All learned data (atlas, profiles, reports) stays on your computer in
+`local_data/`, and nothing is uploaded anywhere.
 
 ```
 Launcher ──► run_bot.py ──► MCP engine (mcp_server.py)
@@ -238,8 +304,18 @@ Closing the game client ends the bot session.
 
 The bot reads the client's memory, so every client build needs its own profile
 with verified addresses. Supported builds are listed in
-[`client_profiles.py`](client_profiles.py); the current one is the
-**2026-11-26** client (`af433830…7486e4`).
+[`client_profiles.py`](client_profiles.py).
+
+| Client build | `dbvStart.exe` SHA-256 | Status |
+|---|---|---|
+| 2026-11-26 | `af43383076c0abc7192b407210efc54da6b6cbaf4ff8a2aa18f22a7f7d7486e4` | Current, confirmed in game |
+
+Older builds still have profiles in the code but are no longer tested. To check
+your own client without starting the bot:
+
+```powershell
+.\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe'
+```
 
 If the server updates the client, the bot reports an unknown build and does not
 attach. Adding a new build is a developer task described in the
