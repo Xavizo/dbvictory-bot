@@ -455,3 +455,17 @@ This project is a fork of the original DBVictory proxy bot by
 cavebot. It has since been almost completely rewritten: the launcher and
 updater, client profiles, native observer, atlas, combat, healing, Hunter Knife
 and most of the panel are new.
+
+## License
+
+The bot's own code is released under the [MIT License](LICENSE). Some pieces
+keep their own terms and are not covered by it:
+
+- **Python runtime and Python packages** bundled in release builds
+  (`venv\`) are under their own licenses (the PSF License for CPython, and each
+  package's license from `requirements.txt`).
+- **JavaScript packages** used by the panel (`dashboard/package.json`) are under
+  their own licenses.
+- **Game client data**, such as spell icons in `dashboard/spells/icons/`, map
+  data in `config/starter-map.json.gz` and client offsets, comes from the
+  DBVictory game and its client and belongs to their owners.
