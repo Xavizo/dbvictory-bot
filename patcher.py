@@ -270,7 +270,7 @@ def main():
 
     if patched_rsa > 0 and patched_ip > 0:
         log.info("SUCCESS! The client should now connect through the proxy.")
-        log.info("Start the bot (python bot.py) and then login in the game client.")
+        log.info("Start the bot (python run_bot.py) and then log in in the game client.")
     elif patched_rsa > 0:
         log.warning("RSA key patched but no server IP found to patch.")
         log.warning("You may need to manually edit hosts file or DNS to redirect.")

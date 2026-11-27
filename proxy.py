@@ -62,7 +62,7 @@ class OTProxy:
         self.server_writer = None
 
         # Callbacks for bot
-        self.on_server_packet = None          # legacy — only bot.py/start.py use it
+        self.on_server_packet = None          # optional per-opcode callback
         self._client_packet_callbacks = []    # list of (opcode, reader) callables
         self.on_login_success = None
         self.on_game_disconnected = None
@@ -457,7 +457,7 @@ class OTProxy:
                     log.warning("Passive observer unavailable; relay continues")
                 continue
 
-            # Legacy bot.py/start.py callbacks retain their existing interface.
+            # Optional per-opcode and raw callbacks, used when no observer tap is set.
             for raw in frames if self.logged_in and (self.on_server_packet or self.on_raw_server_data) else []:
                 try:
                     decrypted = self._decrypt_game_packet(raw)

@@ -101,7 +101,7 @@ async def run(bot):
                         await bot.inject_to_server(build_attack_packet(target))
                     last_send_time = now
 
-                # Publish target for other actions (auto_rune_and_spell, aoe_spell)
+                # Publish target for other actions (auto_combat)
                 # and cavebot pause-on-monster
                 gs.attack_target = target
                 gs.attack_target_id = target

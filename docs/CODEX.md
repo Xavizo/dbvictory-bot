@@ -68,7 +68,7 @@ Dla osoby przygotowującej wydanie kroki są następujące.
    pakietu w kolejce. Do kompilacji używa zależności z kopii roboczej.
 
    ```powershell
-   $instalacja = 'D:\Projekty\tibia-ots-mcp-bot'
+   $instalacja = 'C:\DBVictoryBot'
    $wersja = git rev-parse HEAD
    & "$instalacja\venv\Scripts\python.exe" dbv_release.py --installation $instalacja publish . $wersja
    ```
@@ -1035,10 +1035,7 @@ rules, reordered/replaced rule IDs, manual uses and lowered settings cannot
 bypass a pending deadline. Multiple enabled rules for one item use its longest
 configured cooldown. A threshold is sampled once per use/configuration change,
 clamped to 1–100%. Timers survive action toggles within the same MCP session.
-Unknown cooldowns (0) prevent enabling an active rule. The legacy `auto_senzu`,
-`mana_recovery_20` and `mana_recovery_70` actions cannot run alongside this engine;
-both toggle and startup paths reject the conflict without silently switching
-another action off.
+Unknown cooldowns (0) prevent enabling an active rule.
 Use mode supports ordinary item use and use-on-self; confirm the mode in the
 manual-use diagnostics for this client. No live potion use has been validated
 by the offline suite. Stale stats (>5s), invalid values, death or disconnected

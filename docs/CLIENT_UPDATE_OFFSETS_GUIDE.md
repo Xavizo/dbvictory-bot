@@ -56,7 +56,7 @@ Save this as `tools\derive.py` in your candidate checkout (it is a maintenance
 helper, not part of the shipped bot). Run it against the new exe:
 
 ```powershell
-python -I tools\derive.py 'D:\Gry\DBVClient_v5\dbvStart.exe'
+python -I tools\derive.py 'C:\DBVClient_v5\dbvStart.exe'
 ```
 
 It prints candidates for the deterministic anchors (A, B, D) outright, and for
@@ -343,7 +343,7 @@ stopped, so the key is now read from the live `ProtocolGame` object
 
 ```powershell
 .\build_dll.ps1 -ClientVersion YYYYMMDD
-.\venv\Scripts\python.exe check_client_build.py 'D:\Gry\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_YYYYMMDD.dll'
+.\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_YYYYMMDD.dll'
 .\venv\Scripts\python.exe -m pytest -q
 ```
 

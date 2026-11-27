@@ -74,7 +74,7 @@ available without enabling the marker. Actual Windows hook behavior is pending.
 From the bot directory, without starting the launcher or game:
 
 ```powershell
-.\venv\Scripts\python.exe check_client_build.py 'D:\Gry\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_20261126.dll'
+.\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_20261126.dll'
 .\venv\Scripts\python.exe -m pytest -q
 ```
 

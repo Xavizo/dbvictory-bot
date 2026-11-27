@@ -42,7 +42,6 @@ def fresh_health(gs):
 
 log=logging.getLogger(__name__)
 NAME="adaptive_cavebot"
-LEGACY={"cavebot","cavebot2"}
 MANUAL_MOVES={ClientOpcode.NEW_WALK,ClientOpcode.AUTO_WALK,ClientOpcode.STOP_WALK,ClientOpcode.FOLLOW,*[ClientOpcode(n) for n in (0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d)]}
 WALK_OPCODES={0x65,0x66,0x67,0x68,0x6a,0x6b,0x6c,0x6d}
 
@@ -314,8 +313,7 @@ class AdaptiveCavebot:
         monitor=getattr(st,"passive_map_monitor",None)
         if not combat and (not monitor or not monitor.atlas or monitor.atlas.scope!=self.scope):raise ValueError("Zmienił się profil atlasu.")
         for name,task in st._action_tasks.items():
-            if not combat and name in LEGACY and not task.done():raise ValueError("Inny silnik ruchu jest uruchomiony.")
-            if self.combat.config['enabled'] and name in {'auto_targeting','auto_targeting2','auto_combat','auto_rune_and_spell','aoe_spell'} and not task.done():raise ValueError('Inna akcja walki jest uruchomiona.')
+            if self.combat.config['enabled'] and name in {'auto_targeting','auto_combat'} and not task.done():raise ValueError('Inna akcja walki jest uruchomiona.')
         if not combat and getattr(st,"_auto_task",None) and not st._auto_task.done():raise ValueError("Inny automatyczny ruch jest uruchomiony.")
 
     def prepare_combat_only(self,config):
@@ -359,7 +357,7 @@ class AdaptiveCavebot:
         self.route_draft=deepcopy(draft)
         self.draft_id=draft_id;self.combat=CombatRuntime(self,validate_combat(self.state.settings.get('combat_profile',draft.get('combat'))))
         if self.combat.config['enabled']:
-            conflicts={'auto_targeting','auto_targeting2','auto_combat','auto_rune_and_spell','aoe_spell'}
+            conflicts={'auto_targeting','auto_combat'}
             if any(n in conflicts and not t.done() for n,t in self.state._action_tasks.items()):raise ValueError('Wyłącz osobne akcje ataku i czarów przed walką V2.')
         points=draft['points'];pos=list(self.state.game_state.position)
         observations=deepcopy(list(monitor.learner.records.values())) if monitor.learner else []

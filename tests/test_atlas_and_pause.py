@@ -212,7 +212,7 @@ def test_atlas_api_is_authenticated_scoped_and_preview_only(state,monkeypatch,tm
         http.route_jobs[job["ticket"]][1].result(timeout=2)
         assert request("POST",route_url,poll)==(200,{"covered":1})
         assert request("POST",route_url,poll)[0]==400
-        assert not state._action_tasks and not state.playback_active and state.game_proxy is None
+        assert not state._action_tasks and state.game_proxy is None
     finally:
         http.shutdown();http.server_close();thread.join(timeout=2)
 
