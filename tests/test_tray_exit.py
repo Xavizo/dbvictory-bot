@@ -92,7 +92,7 @@ asyncio.run(server.serve_with_tray_exit())
             if standalone:
                 assert (tmp_path / "child-stopped").exists()
                 from run_bot import launcher_lock
-                with launcher_lock(tmp_path / ".codex" / "standalone.lock"):
+                with launcher_lock(tmp_path / ".dbvictory" / "standalone.lock"):
                     pass
         finally:
             if process.poll() is None:

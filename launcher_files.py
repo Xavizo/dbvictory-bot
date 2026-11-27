@@ -9,14 +9,19 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
-
 ROOT = Path(__file__).resolve().parent
+
+
+def state_dir(root):
+    """dbv.paths.state_dir, repeated: this file runs before an update has installed dbv/."""
+    current, legacy = Path(root) / ".dbvictory", Path(root) / ".codex"
+    return legacy if not current.exists() and legacy.is_dir() else current
 
 
 def window_executable(root):
     source = root / "launcher" / "UpdateWindow.cs"
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    cache = root / ".codex" / "launcher-ui" / digest
+    cache = state_dir(root) / "launcher-ui" / digest
     target = cache / "UpdateWindow.exe"
     if target.is_file():
         return target
@@ -67,7 +72,7 @@ def show_window(root, check_only=False):
 def desktop_files(root):
     """Keep the finalized checkout stable while its consumer reads and uses it."""
     from launcher_lock import launcher_lock
-    feed = root / ".codex" / "updates"
+    feed = state_dir(root) / "updates"
     while True:
         result = show_window(root)
         if result == 2:
@@ -75,7 +80,7 @@ def desktop_files(root):
             return
         if result:
             raise RuntimeError("Okno aktualizacji zakończyło się błędem.")
-        with launcher_lock(root / ".codex" / "standalone.lock"):
+        with launcher_lock(state_dir(root) / "standalone.lock"):
             if (feed / "pending.json").exists() or (feed / "transaction.json").exists():
                 continue  # A new release arrived while the window was closing.
             yield True

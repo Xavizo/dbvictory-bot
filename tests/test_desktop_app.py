@@ -316,7 +316,7 @@ def test_extract_and_install_progress_count_files_and_bad_reports_are_ignored(tm
 @run
 async def test_installing_shows_the_installers_progress_until_it_finishes(tmp_path):
     launcher, host, session, window = await launcher_with_client(tmp_path, None)
-    feed = tmp_path / ".codex" / "updates" / "github"
+    feed = tmp_path / ".dbvictory" / "updates" / "github"
     feed.mkdir(parents=True)
     watches = []
     launcher.every = lambda seconds, callback: watches.append(callback) or Handle()

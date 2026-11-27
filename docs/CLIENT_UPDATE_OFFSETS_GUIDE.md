@@ -43,7 +43,7 @@ There are only four kinds of anchor, and every value in a profile comes from one
   the PE by hand. (`pefile`/`capstone` are nice‑to‑have, not required.)
 - The repo's own **`tools/check_client_build.py`** — your acceptance judge.
 - The x86 MinGW already in the repo runtime
-  (`.codex\runtime\mingw32\bin\g++.exe`) to build the DLL.
+  (`.dbvictory\runtime\mingw32\bin\g++.exe`) to build the DLL.
 
 Keep the **previous** `dbvStart.exe` next to the new one. Diffing old→new is far
 faster than deriving from scratch, because the layout usually only *moves*.

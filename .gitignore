@@ -11,6 +11,7 @@ bot_settings.json
 local_data/
 /recordings/
 .codex/
+.dbvictory/
 
 # Diagnostics written while the bot runs
 sniff_log.txt

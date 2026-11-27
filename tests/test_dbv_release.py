@@ -108,7 +108,7 @@ def test_busy_does_not_change_files_or_consume_pending(repos, monkeypatch):
     assert release.apply_pending(installed)["pending"] == version
     assert git(installed, "rev-parse", "HEAD") == base
     monkeypatch.setattr(release, "_ports_busy", lambda: False)
-    with release._file_lock(installed / ".codex/standalone.lock"):
+    with release._file_lock(installed / ".dbvictory/standalone.lock"):
         assert release.apply_pending(installed)["state"] == "busy"
     assert release.apply_pending(installed)["updated"]
 
@@ -132,7 +132,7 @@ def test_bundle_integrity_is_checked_before_applying(repos):
     installed, source, base = repos
     version = commit(source, "engine.py", "new")
     release.publish(installed, source, version)
-    bundle = next((installed / ".codex/updates").glob("*/code.bundle"))
+    bundle = next((installed / ".dbvictory/updates").glob("*/code.bundle"))
     with bundle.open("ab") as handle:
         handle.write(b"oops")
     with pytest.raises(ValueError, match="Suma kontrolna"):
@@ -158,7 +158,7 @@ def test_renderer_requires_complete_build_and_rejects_corruption(repos):
     old = panel(installed / "dashboard/.next", "old")
     build = panel(source / "dashboard/.next", "new")
     release.publish(installed, source, version, build)
-    (next((installed / ".codex/updates").glob("*/panel")) / "static/chunks/shell.js").write_text("tampered")
+    (next((installed / ".dbvictory/updates").glob("*/panel")) / "static/chunks/shell.js").write_text("tampered")
     with pytest.raises(ValueError, match="Suma kontrolna panelu"):
         release.apply_pending(installed)
     assert git(installed, "rev-parse", "HEAD") == base
@@ -194,7 +194,7 @@ def test_interruption_between_panel_swap_and_commit_is_recoverable(repos, monkey
 
 def test_invalid_manifest_path_is_rejected(repos):
     installed, source, base = repos
-    feed = installed / ".codex/updates"
+    feed = installed / ".dbvictory/updates"
     feed.mkdir(parents=True)
     release._write_json(feed / "pending.json", dict(format=1, package="../../outside", base=base,
                         revision=base, panel=None, bundle="1" * 64))

@@ -401,7 +401,7 @@ of success and an agent-observed measurement are different evidence; label them.
 | Update says `busy` after closing the window | X hides the dashboard. Use tray → **Zakończ bota**, close the launcher and recheck. Do not force-kill an unidentified Python process. |
 | “Osobna aktualizacja zależności lub DLL” during publish | Use maintenance path B; the native/dependency guard is working as intended. |
 
-Local `.codex/standalone-stderr.log` and `dll_bridge_debug.txt` can help with
+Local `.dbvictory/standalone-stderr.log` and `dll_bridge_debug.txt` can help with
 startup stages. Inspect a bounded, allowlisted excerpt. Older logs may contain
 raw login bytes from earlier logging code: do not paste/upload whole logs.
 Never print a session key as a diagnostic. Keep payload capture disabled unless
