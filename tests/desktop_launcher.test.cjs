@@ -6,7 +6,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 // The launcher page's rendering. Its logic is tested in tests/test_desktop_app.py.
 
-async function launcherRenderer() {
+async function launcherRenderer(language="pl") {
   const desktop = path.resolve(__dirname,"../launcher/desktop");
   class Element {
     children = [];
@@ -22,10 +22,12 @@ async function launcherRenderer() {
   const document = {createElement:()=>new Element(),createTextNode:text=>({textContent:text}),querySelector(selector){
     if(!nodes.has(selector))nodes.set(selector,new Element());
     return nodes.get(selector);
-  }};
-  const env = vm.createContext({document,window:{desktop:{onState(){},state:()=>({then(){}})}}});
+  },querySelectorAll:()=>[],documentElement:{}};
+  const pending={then(){}};
+  const env = vm.createContext({document,window:{desktop:{onState(){},state:()=>pending,texts:()=>pending}}});
   for(const file of ["effects.js","render.js"])
     vm.runInContext(await fs.readFile(path.join(desktop,file),"utf8"),env);
+  env.useTexts({language,texts:JSON.parse(await fs.readFile(path.join(desktop,"i18n",language+".json"),"utf8"))});
   return {env,nodes,desktop};
 }
 
@@ -102,4 +104,20 @@ test("the test-build switch shows only for release installs and reflects the cha
   env.update({...state,channel:"stable",readOnly:true});
   assert.equal(nodes.get("#testChannel").checked,false);
   assert.equal(nodes.get("#testChannel").disabled,true);
+});
+
+test("the renderer speaks English from the same state once the player switches", async () => {
+  const {env,nodes}=await launcherRenderer("en");
+  env.update({phase:"prepared",folder:"",text:"",changes:[]});
+  assert.equal(nodes.get("#primary").textContent,"Connect to the game");
+  assert.equal(nodes.get("#heading").textContent,"Character selection");
+  env.update({phase:"ready",folder:"D:\\Gry",text:"",changes:[],installed:true,clientOpen:false});
+  assert.equal(nodes.get("#badge").textContent,"Installed");
+});
+
+test("both launcher languages name the same texts", async () => {
+  const dir=path.resolve(__dirname,"../launcher/desktop/i18n");
+  const pl=JSON.parse(await fs.readFile(path.join(dir,"pl.json"),"utf8")), en=JSON.parse(await fs.readFile(path.join(dir,"en.json"),"utf8"));
+  assert.deepEqual(Object.keys(en).sort(),Object.keys(pl).sort());
+  for (const key of Object.keys(pl)) assert.deepEqual((en[key].match(/\{\w+\}/g)||[]).sort(),(pl[key].match(/\{\w+\}/g)||[]).sort(),key);
 });
