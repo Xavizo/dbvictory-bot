@@ -22,7 +22,9 @@ $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
 function Invoke-Checked([string]$Command, [string[]]$Arguments) {
-    & $Command @Arguments
+    # Windows PowerShell 5.1 turns any stderr line of a native tool into an error; judge by exit code.
+    $ErrorActionPreference = "Continue"
+    & $Command @Arguments 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { throw "$Command $($Arguments -join ' ') failed with exit code $LASTEXITCODE" }
 }
 
@@ -96,13 +98,18 @@ if (Test-Path $cache) { Remove-Item -Recurse -Force $cache }
 
 # 5. Observer DLLs for every reviewed client build.
 $env:PATH = "$MinGwBin;$env:PATH"
+$ErrorActionPreference = "Continue"  # compilers write warnings to stderr; both scripts throw on failure
 foreach ($client in "legacy", "20261116", "20261126") {
-    & (Join-Path $Stage "build_dll.ps1") -ClientVersion $client
+    & (Join-Path $Stage "build_dll.ps1") -ClientVersion $client 2>&1 | ForEach-Object { "$_" }
 }
 Set-Location $Root
 
 # 6. Launcher.
-& (Join-Path $Stage "launcher\build_desktop.ps1") -OutputFile (Join-Path $Stage "DBVictory Launcher.exe")
+& (Join-Path $Stage "launcher\build_desktop.ps1") -OutputFile (Join-Path $Stage "DBVictory Launcher.exe") 2>&1 | ForEach-Object { "$_" }
+$ErrorActionPreference = "Stop"
+foreach ($built in "dll\dbvbot.dll", "dll\dbvobserver_marker_20261117.dll", "dll\dbvobserver_marker_20261126.dll", "DBVictory Launcher.exe") {
+    if (-not (Test-Path (Join-Path $Stage $built))) { throw "Build did not produce $built" }
+}
 
 # 7. Version file, checksum manifest, zip and release description.
 Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_package.py"), $Stage, "--version", $Version,

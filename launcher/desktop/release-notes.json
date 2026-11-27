@@ -1,5 +1,14 @@
 [
   {
+    "version":"v1.40.0",
+    "changes":[
+      {"title":"Paczka do pobrania","detail":"Bota można pobrać z GitHuba jako gotowy plik zip z launcherem, panelem, Pythonem i Node.js. Nie trzeba niczego instalować ani używać Gita."},
+      {"title":"Aktualizacje z GitHuba","detail":"Launcher sprawdza nowe wydania przy starcie. Możesz je zainstalować albo odłożyć. Ustawienia, trasy i mapa zostają bez zmian."},
+      {"title":"Folder klienta i integracja AI","detail":"Launcher sam szuka folderu klienta, a przycisk „Zmień” pozwala wskazać inny. Codex lub Claude można podłączyć w „Integracja AI”, ale bot działa też bez nich."},
+      {"title":"Komunikat o aktualizacji klienta","detail":"Gdy gra dostanie nowego klienta, launcher wyjaśni, że bot poczeka na nowe wydanie, a grać można normalnie."}
+    ]
+  },
+  {
     "version":"v1.38.4",
     "changes":[
       {"title":"Instrukcja aktualizacji klienta","detail":"Dokumentacja plików, weryfikacji zgodności, kompilacji DLL, instalacji i diagnostyki kolejnych wersji klienta. Zapisano potwierdzenie działania v1.38.3."}
