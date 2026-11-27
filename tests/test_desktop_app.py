@@ -362,3 +362,26 @@ def test_the_launcher_and_panel_windows_use_the_bots_icon():
     reserved, kind, count = struct.unpack_from("<HHH", data)
     sizes = {data[6 + 16 * i] or 256 for i in range(count)}
     assert (reserved, kind) == (0, 1) and {16, 32, 48, 256} <= sizes
+
+
+def test_tidy_hides_only_the_releases_own_internals(tmp_path):
+    files = {"DBVictory.exe": ["x", 1], "DBVictory Launcher.exe": ["x", 1], "README.md": ["x", 1],
+             "run_bot.py": ["x", 1], "dbv/paths.py": ["x", 1], "venv/Scripts/python.exe": ["x", 1]}
+    (tmp_path / "release-manifest.json").write_text(json.dumps({"format": 1, "files": files}), encoding="utf-8")
+    for name in ("DBVictory.exe", "DBVictory Launcher.exe", "README.md", "run_bot.py", "dbv", "venv", "local_data",
+                 "my notes.txt"):
+        (tmp_path / name).mkdir() if "." not in name else (tmp_path / name).write_text("")
+    hidden = []
+    assert desktop_app.tidy(tmp_path, hide=hidden.append) == [
+        "DBVictory Launcher.exe", "dbv", "release-manifest.json", "run_bot.py", "venv"]
+    assert {p.name for p in hidden} == {"DBVictory Launcher.exe", "dbv", "release-manifest.json", "run_bot.py", "venv"}
+    (tmp_path / "release-manifest.json").unlink()
+    assert desktop_app.tidy(tmp_path, hide=hidden.append) == []  # a source checkout is left alone
+
+
+def test_the_bot_runs_under_its_own_executables_when_the_release_ships_them(tmp_path):
+    scripts = tmp_path / "venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    assert desktop_host.python_exe(tmp_path) == scripts / "python.exe"
+    (scripts / "DBVictory Engine.exe").write_text("")
+    assert desktop_host.python_exe(tmp_path) == scripts / "DBVictory Engine.exe"

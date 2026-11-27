@@ -1,6 +1,6 @@
 """DBVictory Launcher: the start window, in a pywebview (WebView2) window.
 
-Started by `DBVictory Launcher.exe` as `pythonw -m launcher.desktop_app [--check]`
+Started by `DBVictory.exe` as `venv/Scripts/DBVictory.exe -m launcher.desktop_app [--check]`
 with the installation as working directory. The window shows
 launcher/desktop/index.html; this module is the logic behind its buttons:
 check and install releases, find and open the game client, run the engine
@@ -91,6 +91,54 @@ def read_progress(path, now=None):
     except (OSError, ValueError):
         return None  # missing, or caught mid-write
     return describe_progress(report, time.time() if now is None else now) if isinstance(report, dict) else None
+
+
+# What a player opens or keeps in the installation folder; the release's other top-level
+# entries are program internals.
+SHOWN = {"DBVictory.exe", "README.md"}
+
+
+def internals(root):
+    """Top-level names of a release installation's program files, minus SHOWN.
+
+    Read from the release's manifest, so nothing the player created is ever
+    touched; a source checkout (no manifest) has none.
+    """
+    try:
+        files = json.loads((Path(root) / "release-manifest.json").read_text(encoding="utf-8"))["files"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    names = {name.split("/", 1)[0] for name in files} | {"release-manifest.json", "release.json", "venv"}
+    return sorted(n for n in names - SHOWN if n and n not in (".", "..") and "\\" not in n and ":" not in n)
+
+
+def tidy(root, hide=None):
+    """Hide the program internals in Explorer so the folder shows DBVictory.exe.
+
+    Nothing moves: every path (updates, AI integrations, shortcuts) stays the
+    same, and Explorer's "Hidden items" shows them again. Runs at every start,
+    because an update writes files without the attribute.
+    """
+    if hide is None:
+        if os.name != "nt":
+            return []
+        import ctypes
+        kernel = ctypes.windll.kernel32
+
+        def hide(path):
+            attributes = kernel.GetFileAttributesW(str(path))
+            if attributes != 0xFFFFFFFF and not attributes & 0x2:  # FILE_ATTRIBUTE_HIDDEN
+                kernel.SetFileAttributesW(str(path), attributes | 0x2)
+    hidden = []
+    for name in internals(root):
+        path = Path(root) / name
+        if path.exists():
+            try:
+                hide(path)
+                hidden.append(name)
+            except OSError:
+                pass
+    return hidden
 
 
 def pid_alive(pid):
@@ -217,7 +265,8 @@ class Launcher:
                 await asyncio.sleep(0.9)
                 # The new launcher must load the new code; start it through the EXE after this process exits.
                 self.quitting = True
-                self.window.relaunch(self.root / "DBVictory Launcher.exe")
+                exe = self.root / "DBVictory.exe"
+                self.window.relaunch(exe if exe.is_file() else self.root / "DBVictory Launcher.exe")
                 return
         elif not self.read_only and github and report["state"] == "recovery":
             self.set("applying", report["message"], version=report.get("installed_label"))
@@ -690,6 +739,10 @@ def main(argv=None):
     read_only = "--check" in argv
     if not _single_instance():
         return 0
+    try:
+        tidy(Path.cwd())
+    except Exception:
+        pass  # cosmetic; never keep the launcher from starting
     import webview
     root = Path.cwd()  # the EXE starts us with the installation as working directory
     page = host_module.DESKTOP_DIR / "index.html"

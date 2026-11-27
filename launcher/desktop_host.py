@@ -27,7 +27,10 @@ def valid_sha(value):
 
 
 def python_exe(root):
-    return Path(root) / "venv" / "Scripts" / "python.exe"
+    """The engine's Python: python.exe with the bot's name and icon when the release ships it."""
+    scripts = Path(root) / "venv" / "Scripts"
+    branded = scripts / "DBVictory Engine.exe"
+    return branded if branded.is_file() else scripts / "python.exe"
 
 
 async def _run(command, cwd, timeout=None):

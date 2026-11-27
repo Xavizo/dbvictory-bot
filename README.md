@@ -275,7 +275,9 @@ Launcher ──► run_bot.py ──► MCP engine (dbv/mcp_server/server.py)
    Python and the observer DLLs. No Git, Python or Node install needed.
 2. Extract it to a short path you can write to, for example `C:\DBVictory-Bot`
    (not `Program Files`; very long paths can break the extraction).
-3. Run **`DBVictory Launcher.exe`**. Windows SmartScreen may warn about an
+3. Run **`DBVictory.exe`**. On its first start the launcher hides the program's
+   internal files, so the folder shows `DBVictory.exe` (Explorer's **Hidden items**
+   shows them again; nothing moves). Windows SmartScreen may warn about an
    unknown publisher: choose **Więcej informacji → Uruchom mimo to**
    (More info → Run anyway). Some antivirus programs flag the observer DLL,
    because it attaches to the game client.
