@@ -42,7 +42,7 @@ function capture(state:BotState|null, online:boolean, now:number) {
     route:route?.name??null, status:route?.status??null, lap:route?.loops??null,
     mode:route?.mode??null,
     xp, senzu:inGame ? state?.senzu_usage?.total??null:null,
-    deaths:inGame ? state?.cavebot?.playback.stats?.kills??null:null,
+    deaths:inGame ? state?.session_kills??null:null,
     profile:route ? state?.profile_selection?.combat??null:null,
     waypoint:waypointNumber(route?.waypoint?.current), reached:waypointNumber(route?.waypoint?.last_reached),
     index:route?.index??null,revision:route?.waypoint?.navigation_revision??null,

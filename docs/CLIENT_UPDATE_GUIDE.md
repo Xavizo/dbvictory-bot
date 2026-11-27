@@ -110,8 +110,7 @@ client-update path; an update need only change the ones its evidence requires.
 `dll/dbvbot.cpp`, `dll/observer.cpp`, `dll/target_observer.cpp` and
 `dll/target_sync.h` are older/alternate implementations, not the November 26
 marker build. `offsets.json` still has legacy/parser settings but is **not**
-the authoritative profile for the current native memory readers.
-`xtea_finder.py` is not the v1.38.3 startup key reader. Editing only one of these
+the authoritative profile for the current native memory readers. Editing only one of these
 older files will not adapt the current connection path.
 
 ### Launcher, dashboard and distribution

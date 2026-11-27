@@ -19,7 +19,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, parse_qs
 from uuid import uuid4
-import browse_fields
 from dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
 from cavebot_combat import validate_combat
 from map_atlas import database_busy
@@ -122,10 +121,6 @@ class _Handler(BaseHTTPRequestHandler):
             if center is None:
                 return self._json_response({"error": "Alerty niedostępne."}, 503)
             return self._json_response(center.snapshot())
-        if browse_fields.NEARBY_ITEM_TEST_ENABLED and self.path == "/api/nearby-items/containers":
-            return self._run_control("_async_nearby_items", "containers")
-        if browse_fields.NEARBY_ITEM_TEST_ENABLED and self.path == "/api/nearby-items":
-            return self._run_control("_async_nearby_items")
         if self.path == "/api/state":
             return self._handle_get_state()
         if urlsplit(self.path).path == "/api/message-history":
@@ -223,20 +218,6 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._run_control("_async_alerts", body["command"], body)
             except (ValueError, TypeError) as exc:
                 return self._json_response({"error": str(exc)}, 400)
-        if browse_fields.NEARBY_ITEM_TEST_ENABLED and self.path == "/api/nearby-items":
-            try:
-                if not 0 < int(self.headers.get("Content-Length", 0)) <= 256:
-                    raise ValueError("Nieprawidłowy rozmiar żądania.")
-                body = self._read_body()
-                if (not isinstance(body, dict) or set(body) not in ({"token", "destination"}, {"token", "destination", "container"})
-                        or not isinstance(body["token"], str) or len(body["token"]) != 32
-                        or body["destination"] not in ("backpack", "feet")
-                        or ("container" in body and (body["destination"] != "backpack"
-                            or not isinstance(body["container"], str) or len(body["container"]) != 32))):
-                    raise ValueError("Nieprawidłowy wybór przedmiotu lub celu.")
-                return self._run_control("_async_nearby_items", body)
-            except (TypeError, ValueError) as exc:
-                return self._json_response({"error": str(exc)}, 400)
         if self.path == "/api/emergency-stop":
             return self._run_control("_async_emergency_stop")
         if self.path == "/api/automation/unlock":
@@ -327,12 +308,6 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_cavebot_record_start()
         if self.path == "/api/cavebot/record/stop":
             return self._handle_cavebot_record_stop()
-        if self.path == "/api/cavebot/play":
-            return self._handle_cavebot_play()
-        if self.path == "/api/cavebot/play/stop":
-            return self._handle_cavebot_play_stop()
-        if self.path == "/api/cavebot/logs/spacer":
-            return self._handle_cavebot_logs_spacer()
 
         self._json_response({"error": "not found"}, 404)
 
@@ -713,55 +688,6 @@ class _Handler(BaseHTTPRequestHandler):
             count = len(rec.get("waypoints", []))
             self._json_response({"ok": True, "message": f"Saved '{rec['name']}' ({count} waypoints)"})
 
-    def _handle_cavebot_play(self):
-        body = self._read_body()
-        name = body.get("name", "").strip()
-        loop = body.get("loop", False)
-        if not name:
-            self._json_response({"error": "name is required"}, 400)
-            return
-        if _main_loop is None or _state is None:
-            self._json_response({"error": "bot not started"}, 503)
-            return
-
-        main_mod = sys.modules["__main__"]
-        future = asyncio.run_coroutine_threadsafe(
-            main_mod._async_play_recording(name, loop), _main_loop
-        )
-        try:
-            result = future.result(timeout=5)
-            if not result.startswith("Playing recording"):
-                return self._json_response({"error": result}, 409)
-            self._json_response({"ok": True, "message": result})
-        except Exception as e:
-            self._json_response({"error": str(e)}, 500)
-
-    def _handle_cavebot_play_stop(self):
-        if _main_loop is None or _state is None:
-            self._json_response({"error": "bot not started"}, 503)
-            return
-
-        main_mod = sys.modules["__main__"]
-        future = asyncio.run_coroutine_threadsafe(
-            main_mod._async_stop_playback(), _main_loop
-        )
-        try:
-            result = future.result(timeout=5)
-            self._json_response({"ok": True, "message": result})
-        except Exception as e:
-            self._json_response({"error": str(e)}, 500)
-
-    def _handle_cavebot_logs_spacer(self):
-        if _state is None:
-            self._json_response({"error": "bot not started"}, 503)
-            return
-        if "cavebot" not in _state.action_logs:
-            import collections
-            _state.action_logs["cavebot"] = collections.deque(maxlen=500)
-        for _ in range(20):
-            _state.action_logs["cavebot"].append("")
-        self._json_response({"ok": True, "message": "Spacer added"})
-
     def _handle_list_recordings(self):
         import cavebot
         recs = cavebot.list_recordings()
@@ -812,57 +738,6 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 _started = False
-
-
-# ── Playback stats helper ─────────────────────────────────────────
-
-def _build_playback_stats(st, gs) -> dict:
-    """Compute hunting session statistics for the dashboard."""
-    elapsed = time.time() - st.playback_start_time if st.playback_start_time else 0
-    elapsed_hours = elapsed / 3600 if elapsed > 0 else 0
-    xp_gained = gs.experience - st.playback_start_experience if st.playback_start_experience is not None else 0
-    xp_per_hour = int(xp_gained / elapsed_hours) if elapsed_hours > 0 else 0
-    senzu_per_hour = round(st.playback_senzu_used / elapsed_hours, 1) if elapsed_hours > 0 else 0
-
-    # Predicted level in 1 hour: linear extrapolation from current XP rate
-    predicted_level = gs.level
-    if xp_per_hour > 0 and gs.experience > 0:
-        predicted_xp = gs.experience + xp_per_hour
-        from farming_telemetry import experience_for_level
-        lvl = gs.level
-        while True:
-            next_lvl = lvl + 1
-            xp_needed = experience_for_level(next_lvl)
-            if xp_needed > predicted_xp:
-                break
-            lvl = next_lvl
-            if lvl > gs.level + 100:  # safety cap
-                break
-        predicted_level = lvl
-
-    # Sample senzu_per_hour into time-series (every 60s)
-    now = time.time()
-    if (st.playback_start_time
-            and elapsed > 10
-            and now - st._last_senzu_sample_time >= 60):
-        st.playback_senzu_series.append([int(elapsed), senzu_per_hour])
-        # Cap series to ~24h of 60s samples (1440 entries)
-        if len(st.playback_senzu_series) > 1440:
-            st.playback_senzu_series = st.playback_senzu_series[-1440:]
-        st._last_senzu_sample_time = now
-
-    return {
-        "loop_count": st.playback_loop_count,
-        "kills": gs.session_kills,
-        "senzu_used": st.playback_senzu_used,
-        "xp_gained": xp_gained,
-        "xp_per_hour": xp_per_hour,
-        "predicted_level_1h": predicted_level,
-        "session_seconds": int(elapsed),
-        "senzu_per_hour": senzu_per_hour,
-        "senzu_series": st.playback_senzu_series,
-        "segment_stats": dict(getattr(st, "segment_stats", {})),
-    }
 
 
 # ── Shared state builder (used by HTTP and WebSocket) ──────────────
@@ -1012,7 +887,6 @@ def _build_state_json() -> str:
     # Cavebot state
     import cavebot as _cb
     rec_waypoints = list(st.recording_waypoints) if st.recording_active else []
-    cavebot_logs = list(st.action_logs.get("cavebot", []))
     cavebot_state = {
         "recording": {
             "active": st.recording_active,
@@ -1025,23 +899,13 @@ def _build_state_json() -> str:
             "observed_path": list(getattr(st,"recording_observed_path",[])[-512:]) if st.recording_active else [],
             "trace_limited": getattr(st,"recording_trace_limited",False) if st.recording_active else False,
         },
-        "playback": {
-            "active": st.playback_active,
-            "recording_name": st.playback_recording_name,
-            "index": st.playback_index,
-            "total": st.playback_total,
-            "loop": st.playback_loop,
-            "logs": cavebot_logs[-100:],
-            "minimap": st.playback_minimap,
-            "actions_map_count": len(st.playback_actions_map),
-            "stats": _build_playback_stats(st, gs),
-        },
         "recordings": _cb.list_recordings(),
     }
 
     knife = getattr(gs, "hunter_knife", None)
     return json.dumps({
         "connected": st.connected,
+        "session_kills": getattr(gs, "session_kills", 0),
         "login_startup": {"phase": st.login_startup.phase} if getattr(st, "login_startup", None) else None,
         "pause_hotkey": st.pause_hotkey.snapshot() if getattr(st,"pause_hotkey",None) else None,
         "profile_selection": {"combat":st.settings.get("selected_combat_profile"),"bot":st.settings.get("selected_bot_profile"),"routes":st.settings.get("route_combat_profiles",{})},

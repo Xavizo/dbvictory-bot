@@ -14,7 +14,7 @@ from barrier_band import validate_config as validate_band
 from potions import validate_config as validate_potions
 
 ROOT=Path(__file__).parent/'local_data/profiles.json'
-INTERNAL={'dll_bridge','adaptive_cavebot','cavebot','cavebot2'}
+INTERNAL={'dll_bridge','adaptive_cavebot'}
 
 
 def bot_config(settings):

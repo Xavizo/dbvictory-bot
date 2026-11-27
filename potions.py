@@ -14,7 +14,6 @@ ITEMS = {10161: "Special Health Potion", 10160: "Special Ki Potion", 8465: "Senz
 STOCK_REPORT = re.compile(r"Using one of (\d{1,9}) (Special Health Potion|Special Ki Potion|Senzu)\.\.\.")
 USE_REFUSAL = re.compile(r"(?:\[(Senzu)\] )?(You are exhausted(?: \([0-9.]+\))?\.?|You cannot use this object\.|You can not use this object\.|You don't have this item\.)")
 POTIONS = {"health": (10161, "hp", "max_hp"), "ki": (10160, "mana", "max_mana")}
-LEGACY_HEALING_ACTIONS = frozenset({"auto_senzu", "mana_recovery_20", "mana_recovery_70"})
 DEFAULTS = {"shared_cooldown": 0.0, "defer_senzu_ki": False}
 for _kind, _threshold in (("health", 60.0), ("ki", 40.0)):
     DEFAULTS.update({f"{_kind}_enabled": True, f"{_kind}_threshold": _threshold,
@@ -314,8 +313,6 @@ async def run_potions(bot):
                     continue
                 bot.state.potion_diagnostics.record_use(item_id, rule["mode"], gs, source="auto")
                 scheduler.record_item_use(item_id, cfg, time.monotonic(), stamp, rule=rule)
-                if item_id == 8465 and getattr(bot.state, "playback_active", False):
-                    bot.state.playback_senzu_used += 1
                 bot.log(f"Rule {rule['id']}: requested {ITEMS[item_id]} ({item_id}); {trigger}; cooldown respected")
         await wait_for_inputs(bot, POTION_INPUTS, cursor, .05)
 

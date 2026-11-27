@@ -59,11 +59,10 @@ def http_api(monkeypatch):
 @pytest.mark.parametrize("method,path", [
     ("GET", "/api/profiles"), ("POST", "/api/profiles"),
     ("GET", "/api/alerts"), ("POST", "/api/alerts"),
-    ("GET", "/api/state"), ("POST", "/api/actions/power_up/toggle"),
-    ("DELETE", "/api/actions/power_up"),
+    ("GET", "/api/state"), ("POST", "/api/actions/eat_food/toggle"),
+    ("DELETE", "/api/actions/eat_food"),
     ("POST", "/api/emergency-stop"), ("POST", "/api/automation/unlock"),
-    ("POST", "/api/potions/diagnostics"), ("GET", "/api/nearby-items"), ("POST", "/api/nearby-items"),
-    ("GET", "/api/nearby-items/containers"),
+    ("POST", "/api/potions/diagnostics"),
     ("POST", "/api/map/annotation"), ("POST", "/api/map/pet"),
     ("POST", "/api/map/drafts"), ("POST", "/api/adaptive/preview"),
     ("GET", "/api/map/grounds"), ("POST", "/api/map/grounds"),
@@ -77,7 +76,7 @@ def test_unauthenticated_requests_are_rejected(http_api, method, path):
 def test_authentication_and_origin_enforced_before_mutation(http_api):
     request, mutations = http_api
     headers = {"Origin": DASHBOARD_ORIGIN, "Authorization": f"Bearer {SESSION_TOKEN}"}
-    path = "/api/actions/power_up/toggle"
+    path = "/api/actions/eat_food/toggle"
     for origin in ("https://evil.example", "null", DASHBOARD_ORIGIN + ".evil.example"):
         assert request("POST", path, **{**headers, "Origin": origin})[0] == 403
     assert request("POST", path, **{**headers, "Authorization": "Bearer wrong"})[0] == 401
@@ -87,7 +86,7 @@ def test_authentication_and_origin_enforced_before_mutation(http_api):
     assert status == 200
     assert response_headers["Access-Control-Allow-Origin"] == DASHBOARD_ORIGIN
     assert response_headers["Cache-Control"] == "no-store"
-    assert mutations == ["power_up"]
+    assert mutations == ["eat_food"]
 
 
 def test_lap_reports_endpoint_is_read_only_and_requires_session(http_api, monkeypatch):
@@ -250,34 +249,6 @@ def test_nearby_item_module_is_disabled(http_api, monkeypatch):
     assert request('GET', route, **headers)[0] == 404
     assert request('GET', route + '/containers', **headers)[0] == 404
     assert request('POST', route, body=json.dumps({'token': 'a'*32, 'destination': 'feet'}), **headers)[0] == 404
-
-
-def test_nearby_item_http_routes_limit_clicks_to_offered_destinations(http_api, monkeypatch):
-    monkeypatch.setattr(api.browse_fields, 'NEARBY_ITEM_TEST_ENABLED', True)
-    request, _ = http_api
-    headers = {'Origin': DASHBOARD_ORIGIN, 'Authorization': f'Bearer {SESSION_TOKEN}'}
-    calls = []
-
-    def control(handler, *args):
-        calls.append(args)
-        handler._json_response({'ok': True, 'message': []})
-
-    monkeypatch.setattr(api._Handler, '_run_control', control)
-    route = '/api/nearby-items'
-    assert request('GET', route, **headers)[0] == 200
-    click = {'token': 'a' * 32, 'destination': 'backpack'}
-    for destination in ('feet', 'backpack'):
-        click['destination'] = destination
-        assert request('POST', route, body=json.dumps(click), **headers)[0] == 200
-        assert calls[-1] == ('_async_nearby_items', dict(click))
-    assert request('GET', route + '/containers', **headers)[0] == 200
-    assert calls[-1] == ('_async_nearby_items', 'containers')
-    assert request('POST', route, body=json.dumps({**click, 'container': 'b' * 32}), **headers)[0] == 200
-    for invalid in ({**click, 'container': 2}, {**click, 'destination': 'feet', 'container': 'b' * 32},
-                    {**click, 'destination': [10, 10, 7]}, {**click, 'count': 5}, {'token': 'a' * 32}):
-        assert request('POST', route, body=json.dumps(invalid), **headers)[0] == 400
-    assert len(calls) == 5
-    assert calls[0] == ('_async_nearby_items',)
 
 
 def test_alert_read_and_config_routes_keep_authentication(http_api,monkeypatch):
