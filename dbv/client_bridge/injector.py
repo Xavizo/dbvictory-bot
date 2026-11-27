@@ -87,26 +87,28 @@ def _win32():
         raise InjectionError("DLL injection needs Windows")
     from ctypes import wintypes as w
     k = ctypes.WinDLL("kernel32", use_last_error=True)
-    sig = {
-        k.OpenProcess: ([w.DWORD, w.BOOL, w.DWORD], w.HANDLE),
-        k.CloseHandle: ([w.HANDLE], w.BOOL),
-        k.IsWow64Process: ([w.HANDLE, ctypes.POINTER(w.BOOL)], w.BOOL),
-        k.VirtualAllocEx: ([w.HANDLE, ctypes.c_void_p, ctypes.c_size_t, w.DWORD, w.DWORD], ctypes.c_void_p),
-        k.VirtualFreeEx: ([w.HANDLE, ctypes.c_void_p, ctypes.c_size_t, w.DWORD], w.BOOL),
-        k.WriteProcessMemory: ([w.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
+    # ctypes functions are unhashable, so the table is keyed by name.
+    signatures = {
+        "OpenProcess": ([w.DWORD, w.BOOL, w.DWORD], w.HANDLE),
+        "CloseHandle": ([w.HANDLE], w.BOOL),
+        "IsWow64Process": ([w.HANDLE, ctypes.POINTER(w.BOOL)], w.BOOL),
+        "VirtualAllocEx": ([w.HANDLE, ctypes.c_void_p, ctypes.c_size_t, w.DWORD, w.DWORD], ctypes.c_void_p),
+        "VirtualFreeEx": ([w.HANDLE, ctypes.c_void_p, ctypes.c_size_t, w.DWORD], w.BOOL),
+        "WriteProcessMemory": ([w.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
                                 ctypes.POINTER(ctypes.c_size_t)], w.BOOL),
-        k.CreateRemoteThread: ([w.HANDLE, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p,
+        "CreateRemoteThread": ([w.HANDLE, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p,
                                 ctypes.c_void_p, w.DWORD, ctypes.c_void_p], w.HANDLE),
-        k.WaitForSingleObject: ([w.HANDLE, w.DWORD], w.DWORD),
-        k.GetExitCodeThread: ([w.HANDLE, ctypes.POINTER(w.DWORD)], w.BOOL),
-        k.GetModuleHandleW: ([w.LPCWSTR], w.HMODULE),
-        k.GetProcAddress: ([w.HMODULE, w.LPCSTR], ctypes.c_void_p),
-        k.CreateToolhelp32Snapshot: ([w.DWORD, w.DWORD], w.HANDLE),
-        k.Module32FirstW: ([w.HANDLE, ctypes.c_void_p], w.BOOL),
-        k.Module32NextW: ([w.HANDLE, ctypes.c_void_p], w.BOOL),
+        "WaitForSingleObject": ([w.HANDLE, w.DWORD], w.DWORD),
+        "GetExitCodeThread": ([w.HANDLE, ctypes.POINTER(w.DWORD)], w.BOOL),
+        "GetModuleHandleW": ([w.LPCWSTR], w.HMODULE),
+        "GetProcAddress": ([w.HMODULE, w.LPCSTR], ctypes.c_void_p),
+        "CreateToolhelp32Snapshot": ([w.DWORD, w.DWORD], w.HANDLE),
+        "Module32FirstW": ([w.HANDLE, ctypes.c_void_p], w.BOOL),
+        "Module32NextW": ([w.HANDLE, ctypes.c_void_p], w.BOOL),
     }
-    for fn, (args, result) in sig.items():
-        fn.argtypes, fn.restype = args, result
+    for name, (args, result) in signatures.items():
+        function = getattr(k, name)
+        function.argtypes, function.restype = args, result
     return k
 
 
