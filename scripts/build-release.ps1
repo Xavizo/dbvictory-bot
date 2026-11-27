@@ -2,20 +2,20 @@
 # Used by .github/workflows/release.yml; also runs locally on Windows.
 #
 # The package bundles a relocatable Python in venv\Scripts (so every existing
-# venv\Scripts\python.exe path keeps working), Node.js in runtime\node, the
-# built panel with Electron, the observer DLLs and DBVictory Launcher.exe.
-# tools\release_trim.py then drops what only the build needed (compilers,
-# type checkers, pip, Tk), so players download and unpack less.
+# venv\Scripts\python.exe path keeps working), the prebuilt panel with
+# Electron for its window, the observer DLLs and DBVictory Launcher.exe.
+# The engine serves the panel itself, so Node.js is only used here, to build it.
+# tools\release_trim.py then drops what only the build needed (Next.js, React,
+# compilers, pip, Tk), so players download and unpack less.
 #
 #   -PythonDir  existing relocatable Python to copy (default: `uv python install`)
-#   -NodeDir    existing Node.js folder to copy (default: download the version on PATH)
 #   -MinGwBin   folder with 32-bit g++.exe for the DLLs
+# Needs Node.js with npm on PATH.
 param(
     [string]$OutDir = "build\release",
     [string]$Repo = "Xavizo/dbvictory-bot",
     [string]$PythonVersion = "3.12",
     [string]$PythonDir,
-    [string]$NodeDir,
     [Parameter(Mandatory=$true)][string]$MinGwBin
 )
 $ErrorActionPreference = "Stop"
@@ -76,36 +76,21 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
 }
 Invoke-Checked $Python @("-c", "import mcp, Crypto, websockets, pymem; print('Python OK')")
 
-# 3. Node.js for the panel.
-$NodeTarget = Join-Path $Stage "runtime\node"
-if (-not $NodeDir) {
-    $nodeVersion = (node --version).Trim()
-    $name = "node-$nodeVersion-win-x64"
-    $zip = Join-Path $Work "$name.zip"
-    Invoke-WebRequest "https://nodejs.org/dist/$nodeVersion/$name.zip" -OutFile $zip
-    $sums = (Invoke-WebRequest "https://nodejs.org/dist/$nodeVersion/SHASUMS256.txt" -UseBasicParsing).Content
-    $expected = ($sums -split "`n" | Where-Object { $_ -match "  $name\.zip$" }) -replace '\s.*$', ''
-    if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $expected.Trim()) { throw "Node.js checksum mismatch" }
-    Invoke-Checked tar @("-xf", $zip, "-C", $Work)
-    $NodeDir = Join-Path $Work $name
-}
-New-Item -ItemType Directory -Force (Split-Path $NodeTarget) | Out-Null
-Copy-Item -Recurse $NodeDir $NodeTarget
-
-# 4. Panel and Electron, built with the bundled Node.
-$env:PATH = "$NodeTarget;$env:PATH"
+# 3. Panel and Electron, built with the Node.js on PATH (not shipped).
+$Npm = (Get-Command npm.cmd).Source
+$Node = (Get-Command node.exe).Source
 $env:NEXT_TELEMETRY_DISABLED = "1"
 Push-Location (Join-Path $Stage "dashboard")
 try {
-    Invoke-Checked (Join-Path $NodeTarget "npm.cmd") @("ci", "--no-audit", "--no-fund")
+    Invoke-Checked $Npm @("ci", "--no-audit", "--no-fund")
     # Electron fetches its binary on first use, not on install; players must not need that download.
-    Invoke-Checked (Join-Path $NodeTarget "node.exe") @("node_modules\electron\install.js")
-    Invoke-Checked (Join-Path $NodeTarget "npm.cmd") @("run", "build")
+    Invoke-Checked $Node @("node_modules\electron\install.js")
+    Invoke-Checked $Npm @("run", "build")
 } finally { Pop-Location }
 $cache = Join-Path $Stage "dashboard\.next\cache"
 if (Test-Path $cache) { Remove-Item -Recurse -Force $cache }
 
-# 5. Observer DLLs for every reviewed client build.
+# 4. Observer DLLs for every reviewed client build.
 $env:PATH = "$MinGwBin;$env:PATH"
 $ErrorActionPreference = "Continue"  # compilers write warnings to stderr; both scripts throw on failure
 foreach ($client in "legacy", "20261116", "20261126") {
@@ -113,35 +98,33 @@ foreach ($client in "legacy", "20261116", "20261126") {
 }
 Set-Location $Root
 
-# 6. Launcher.
+# 5. Launcher.
 & (Join-Path $Stage "launcher\build_desktop.ps1") -OutputFile (Join-Path $Stage "DBVictory Launcher.exe") 2>&1 | ForEach-Object { "$_" }
 $ErrorActionPreference = "Stop"
 foreach ($built in "dll\dbvbot.dll", "dll\dbvobserver_marker_20261117.dll", "dll\dbvobserver_marker_20261126.dll", "DBVictory Launcher.exe") {
     if (-not (Test-Path (Join-Path $Stage $built))) { throw "Build did not produce $built" }
 }
 
-# 7. Drop what only the build needed, then prove the trimmed runtime still starts.
+# 6. Drop what only the build needed, then prove the trimmed runtime still starts.
 Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_trim.py"), $Stage)
 Invoke-Checked $Python @("-c", "import mcp, Crypto, websockets, pymem, ssl, sqlite3, ctypes, win32api, win32job; from mcp.os.win32 import utilities; print('Trimmed Python OK')")
 Invoke-Checked (Join-Path $Stage "dashboard\node_modules\electron\dist\electron.exe") @("--version")
-# `next start` writes caches and a trace into .next; ship the build exactly as `next build` left it.
-$builtPanel = Join-Path $Stage "dashboard\.next"
-$pristine = Join-Path $Work "next-pristine"
-Copy-Item -Recurse $builtPanel $pristine
-$panel = Start-Process -FilePath (Join-Path $NodeTarget "npm.cmd") -ArgumentList "run", "start" -WorkingDirectory (Join-Path $Stage "dashboard") -PassThru -WindowStyle Hidden
+# The engine serves the panel with dbv.mcp_server.panel_server; it only reads .next.
+$panel = Start-Process -FilePath $Python -ArgumentList "-m", "dbv.mcp_server.panel_server", (Join-Path $Stage "dashboard") -WorkingDirectory $Stage -PassThru -WindowStyle Hidden
 try {
-    Invoke-Checked (Join-Path $NodeTarget "node.exe") @((Join-Path $Stage "dashboard\node_modules\wait-on\bin\wait-on"), "--timeout", "60000", "http-get://127.0.0.1:4747")
-    $page = Invoke-WebRequest "http://127.0.0.1:4747/" -UseBasicParsing
-    if ($page.StatusCode -ne 200 -or $page.Content -notmatch "/_next/static/") { throw "Trimmed panel did not serve its page" }
+    $page = $null
+    foreach ($attempt in 1..60) {
+        try { $page = Invoke-WebRequest "http://127.0.0.1:4747/" -UseBasicParsing; break } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $page -or $page.StatusCode -ne 200 -or $page.Content -notmatch '"(/_next/static/[^"]+\.js)"') { throw "Trimmed panel did not serve its page" }
+    $asset = Invoke-WebRequest ("http://127.0.0.1:4747" + $Matches[1]) -UseBasicParsing
+    if ($asset.StatusCode -ne 200 -or $asset.Headers["Content-Type"] -notmatch "javascript") { throw "Trimmed panel did not serve its scripts" }
     Write-Host "Trimmed panel OK"
 } finally {
-    cmd /c "taskkill /T /F /PID $($panel.Id) >nul 2>&1"
-    Start-Sleep -Seconds 2  # let the killed server release its files in .next
+    Stop-Process -Id $panel.Id -Force -ErrorAction SilentlyContinue
 }
-Remove-Tree $builtPanel
-Move-Item $pristine $builtPanel
 
-# 8. Version file, checksum manifest, zip, patch against the latest release and release description.
+# 7. Version file, checksum manifest, zip, patch against the latest release and release description.
 $previous = Join-Path $Work "previous-manifest.json"
 Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_previous.py"), "--repo", $Repo, "--out", $previous)
 $packageArgs = @("-I", (Join-Path $Root "tools\release_package.py"), $Stage, "--version", $Version,

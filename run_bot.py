@@ -28,7 +28,6 @@ from datetime import timedelta
 import json
 import os
 from pathlib import Path
-import shutil
 import socket
 from dbv.mcp_server.tray_exit import EXIT_FILE_ENV, tray_input
 from launcher_lock import launcher_lock
@@ -56,15 +55,9 @@ def prepare_environment(game_port):
     env = {**os.environ, 'PYTHONUTF8':'1', 'PYTHONUNBUFFERED':'1',
            'DBV_GAME_PORT':str(game_port), 'DBV_ALLOW_PACKET_CAPTURE':'0'}
     env.pop('DBV_DASHBOARD_TOKEN', None)
-    # Prefer the already installed local runtime; don't download or install tools.
-    # A downloaded release ships Node.js in runtime/node.
-    runtimes = [ROOT/'runtime'/'node', *sorted((ROOT/'.codex/runtime').glob('node-v*-win-x64'), reverse=True)]
-    for runtime in runtimes:
-        if (runtime/'node.exe').is_file() and (runtime/'npm.cmd').is_file():
-            env['PATH'] = str(runtime)+os.pathsep+env.get('PATH','')
-            break
-    if not shutil.which('npm.cmd', path=env.get('PATH')):
-        raise RuntimeError('Brak Node.js/npm. Zainstaluj narzędzia przed uruchomieniem bota.')
+    # The engine serves the built panel itself; only Electron's window is needed.
+    if not (ROOT/'dashboard/node_modules/electron/dist/electron.exe').is_file():
+        raise RuntimeError('Brak Electrona panelu (dashboard/node_modules/electron). Zainstaluj zależności panelu.')
     if not (ROOT/'dashboard/.next/BUILD_ID').is_file():
         raise RuntimeError('Brak skompilowanego panelu. Wymagana kompilacja dashboard.')
     return env

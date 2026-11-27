@@ -104,7 +104,7 @@ def main():
         raise SystemExit("Bad version or revision")
     if os.name == "nt":
         stage = Path("\\\\?\\" + str(stage))  # node_modules paths can pass 260 characters
-    for required in ("DBVictory Launcher.exe", "venv/Scripts/python.exe", "runtime/node/node.exe",
+    for required in ("DBVictory Launcher.exe", "venv/Scripts/python.exe", "dbv/mcp_server/panel_server.py",
                      "dashboard/.next/BUILD_ID", "dashboard/node_modules/electron/dist/electron.exe"):
         if not (stage / required).is_file():
             raise SystemExit(f"Stage is missing {required}")

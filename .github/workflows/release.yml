@@ -19,6 +19,7 @@ on:
       - "tools/release_package.py"
       - "tools/release_trim.py"
       - "tools/release_previous.py"
+      - "dbv/mcp_server/panel_server.py"
       - "github_release.py"
       - "launcher/**"
       - "requirements.txt"

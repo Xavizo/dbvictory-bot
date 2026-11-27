@@ -46,7 +46,8 @@ def stage(tmp_path):
              "runtime/node/node.exe", "runtime/node/npm.cmd", "runtime/node/node_modules/npm/index.js",
              "runtime/node/node_modules/npm/docs/output/npm.html",
              "dashboard/.next/BUILD_ID", "dashboard/.next/static/x.js.map",
-             "tests/test_x.py", "docs/screenshots/a.png", "docs/vbot/architecture.md", "requirements-dev.txt"]
+             "tests/test_x.py", "dashboard/electron/main.js", "dashboard/electron/tray.test.js",
+             "dashboard/package.json", "dbv/mcp_server/panel_server.py", "docs/screenshots/a.png", "docs/vbot/architecture.md", "requirements-dev.txt"]
     files += [f"dashboard/{key}/package.json" for key in LOCK["packages"] if key]
     files += ["dashboard/node_modules/next/dist/server/next.js", "dashboard/node_modules/next/dist/server/next.js.map",
               "dashboard/node_modules/next/dist/server/next.d.ts", "dashboard/node_modules/next/README.md",
@@ -66,7 +67,12 @@ def present(root):
     return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
 
 
-def test_runtime_packages_follow_node_resolution():
+def test_only_electron_ships_because_the_engine_serves_the_built_panel():
+    assert release_trim.runtime_packages(LOCK) == {"node_modules/electron"}
+
+
+def test_runtime_packages_follow_node_resolution(monkeypatch):
+    monkeypatch.setattr(release_trim, "RUNTIME_PACKAGES", ("next", "react", "electron", "wait-on"))
     keep = release_trim.runtime_packages(LOCK)
     assert keep == {"node_modules/next", "node_modules/@next/env", "node_modules/styled-jsx",
                     "node_modules/client-only", "node_modules/postcss", "node_modules/nanoid",
@@ -80,12 +86,9 @@ def test_trim_keeps_what_players_run(tmp_path):
     files = present(root)
     for kept in ("venv/Scripts/python.exe", "venv/Scripts/Lib/site-packages/mcp/__init__.py",
                  "venv/Scripts/Lib/site-packages/win32/win32api.pyd", "venv/Scripts/Lib/asyncio/__init__.py",
-                 "venv/Scripts/DLLs/_ssl.pyd", "runtime/node/node.exe", "runtime/node/npm.cmd",
-                 "runtime/node/node_modules/npm/index.js", "dashboard/.next/BUILD_ID", "dashboard/.next/static/x.js.map",
-                 "dashboard/node_modules/next/dist/server/next.js", "dashboard/node_modules/next/LICENSE",
-                 "dashboard/node_modules/next/license.md", "dashboard/node_modules/wait-on/package.json",
-                 "dashboard/node_modules/wait-on/node_modules/minimist/package.json",
-                 "dashboard/node_modules/rxjs/package.json", "dashboard/node_modules/electron/dist/electron.exe",
+                 "venv/Scripts/DLLs/_ssl.pyd", "dashboard/.next/BUILD_ID", "dashboard/.next/static/x.js.map",
+                 "dashboard/electron/main.js", "dashboard/package.json", "dbv/mcp_server/panel_server.py",
+                 "dashboard/node_modules/electron/dist/electron.exe",
                  "dashboard/node_modules/electron/dist/locales/pl.pak", "dashboard/node_modules/electron/index.js",
                  "dashboard/node_modules/electron/cli.js", "dashboard/node_modules/electron/path.txt",
                  "dashboard/node_modules/.bin/next", "dashboard/package-lock.json", "docs/vbot/architecture.md"):
@@ -96,7 +99,9 @@ def test_trim_keeps_what_players_run(tmp_path):
                     "venv/Scripts/Lib/site-packages/PyWin32.chm", "venv/Scripts/Lib/tkinter/__init__.py",
                     "venv/Scripts/Lib/ensurepip/__init__.py", "venv/Scripts/DLLs/tcl86t.dll",
                     "venv/Scripts/tcl/tcl8.6/init.tcl", "venv/Scripts/Scripts/pip.exe",
-                    "runtime/node/node_modules/npm/docs/output/npm.html",
+                    "runtime/node/node.exe", "runtime/node/node_modules/npm/index.js",
+                    "dashboard/electron/tray.test.js", "dashboard/node_modules/next/dist/server/next.js",
+                    "dashboard/node_modules/react/package.json", "dashboard/node_modules/wait-on/package.json",
                     "dashboard/node_modules/typescript/package.json", "dashboard/node_modules/concurrently/package.json",
                     "dashboard/node_modules/minimist/package.json", "dashboard/node_modules/sharp/package.json",
                     "dashboard/node_modules/@img/sharp-win32-x64/package.json",
@@ -108,3 +113,4 @@ def test_trim_keeps_what_players_run(tmp_path):
         assert dropped not in files, dropped
     assert not (root / "dashboard/node_modules/@img").exists()
     assert not (root / "venv/Scripts/tcl").exists()
+    assert not (root / "runtime").exists()
