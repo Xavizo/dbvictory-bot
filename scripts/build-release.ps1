@@ -88,6 +88,7 @@ Copy-Item -Recurse $NodeDir $NodeTarget
 
 # 4. Panel and Electron, built with the bundled Node.
 $env:PATH = "$NodeTarget;$env:PATH"
+$env:NEXT_TELEMETRY_DISABLED = "1"
 Push-Location (Join-Path $Stage "dashboard")
 try {
     Invoke-Checked (Join-Path $NodeTarget "npm.cmd") @("ci", "--no-audit", "--no-fund")
