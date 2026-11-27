@@ -120,9 +120,25 @@ def _repo(release):
     return repo
 
 
+def _tls():
+    """Windows roots plus certifi's: Python, unlike Windows itself, does not fetch missing roots on demand."""
+    import ssl
+    context = ssl.create_default_context()
+    try:
+        import certifi
+        context.load_verify_locations(certifi.where())
+    except (ImportError, OSError):
+        pass
+    return context
+
+
+def _open(request, timeout):
+    return urllib.request.urlopen(request, timeout=timeout, context=_tls())
+
+
 def _get(url, *, limit, accept="application/octet-stream"):
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+    with _open(request, TIMEOUT) as response:
         data = response.read(limit + 1)
     if len(data) > limit:
         raise ValueError("Odpowiedź serwera aktualizacji jest za duża.")
@@ -215,6 +231,8 @@ def status(root, check_only=False, *, fetch=fetch_latest):
         latest = fetch(_repo(release))
     except (OSError, ValueError, urllib.error.URLError) as error:
         reason = getattr(error, "reason", None) or error
+        if isinstance(error, urllib.error.HTTPError) and error.code == 404:
+            reason = "na GitHubie nie ma jeszcze opublikowanego wydania"
         return _result(root, "current", f"Zainstalowana wersja {label}. "
                        f"Nie udało się sprawdzić aktualizacji ({reason}). Możesz grać na tej wersji.")
     if _version(latest["version"]) <= _version(release["version"]):
@@ -247,7 +265,7 @@ def _hash_file(path):
     return digest.hexdigest()
 
 
-def _download(latest, target, opener=urllib.request.urlopen):
+def _download(latest, target, opener=_open):
     if target.is_file() and target.stat().st_size == latest["size"] and _hash_file(target) == latest["sha256"]:
         return target
     part = target.with_name(target.name + ".part")
@@ -412,7 +430,7 @@ def cleanup(root):
         path.unlink(missing_ok=True)
 
 
-def install(root, revision, *, fetch=fetch_latest, opener=urllib.request.urlopen):
+def install(root, revision, *, fetch=fetch_latest, opener=_open):
     root = _long(root)
     release = read_release(root)
     if release is None:
