@@ -4,10 +4,10 @@ import time
 
 import pytest
 
-from cavebot_walking import WalkOutcome
-from adaptive_cavebot import OFFSETS, MovementDeferred
-from game_state import scan_packet
-from protocol import ServerOpcode, WALK_OPCODES
+from dbv.brain.cavebot.cavebot_walking import WalkOutcome
+from dbv.brain.cavebot.adaptive_cavebot import OFFSETS, MovementDeferred
+from dbv.brain.state.game_state import scan_packet
+from dbv.client_bridge.protocol import ServerOpcode, WALK_OPCODES
 from test_adaptive_cavebot import cell, connect_fake_walk, setup
 from test_automation_safety import state
 
@@ -37,7 +37,7 @@ def test_cancel_from_saiyan_walk_releases_position_wait(state, tmp_path, caplog,
     cells = [cell(x, y, origin[2]) for x in range(origin[0], origin[0]+3)
              for y in range(origin[1], origin[1]+3)]
     ctrl, _, _ = setup(state, tmp_path, cells, [list(origin), list(target)])
-    caplog.set_level(logging.INFO, logger="adaptive_cavebot")
+    caplog.set_level(logging.INFO, logger="dbv.brain.cavebot.adaptive_cavebot")
 
     async def inject(payload, guard):
         assert guard()

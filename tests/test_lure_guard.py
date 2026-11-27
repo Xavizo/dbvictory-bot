@@ -2,9 +2,9 @@
 import asyncio,time
 from types import SimpleNamespace
 import pytest
-import cavebot_combat
-from protocol import ClientOpcode,PacketReader
-from adaptive_cavebot import MovementDeferred
+from dbv.brain.cavebot import cavebot_combat
+from dbv.client_bridge.protocol import ClientOpcode,PacketReader
+from dbv.brain.cavebot.adaptive_cavebot import MovementDeferred
 from test_automation_safety import state,proxy
 from test_adaptive_cavebot import setup,cell,connect_fake_walk
 from test_v2_combat import armed,monster,configure_rules

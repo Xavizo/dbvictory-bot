@@ -6,8 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
-import cavebot
-from protocol import ClientOpcode, PacketReader
+from dbv.brain.cavebot import cavebot
+from dbv.client_bridge.protocol import ClientOpcode, PacketReader
 
 
 def new_walk(directions, origin=(500, 900, 7), count=None):

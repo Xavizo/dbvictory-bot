@@ -447,7 +447,7 @@ does not select them. Existing movement/combat fixes remain in place. No client
 files were modified, and the session is not automatically restarted after this
 rollback. A future live check must be coordinated in a safe location.
 This is historical: the later visual-only marker uses separate code and the
-marker observer selected in `client_profiles.py`; it does not restore the
+marker observer selected in `dbv/client_bridge/client_profiles.py`; it does not restore the
 withdrawn Game target/shared-pointer hook.
 
 
@@ -821,7 +821,7 @@ connections. That integration used a separate read-only `dll/dbvobserver_2026111
 It reads the visible 18x14 map and creature metadata and accepts no commands.
 Attack, XTEA, keyboard and lighting hooks from the legacy bridge are not loaded.
 Automatic DLL targeting was therefore unavailable for that observer. Current
-startup selects the later visual-only marker observer from `client_profiles.py`;
+startup selects the later visual-only marker observer from `dbv/client_bridge/client_profiles.py`;
 see the November 26 section for the new build. HP/Ki are read from the verified LocalPlayer double fields by a separate read-only
 Python sampler. Atomic snapshots expire after 500 ms; delayed packet statistics
 cannot overwrite them. Windows comparison with the client confirmed matching
@@ -1129,7 +1129,7 @@ decorative/approach object 1957. Teleport IDs 11652 and 11941 were confirmed at
 (74,79,7) and (75,79,7); underlying ground IDs are not classified as teleports.
 Destinations and required interactions are unknown.
 
-`map_navigation.py` classifies object types independently of tile collision.
+`dbv/brain/navigation/map_navigation.py` classifies object types independently of tile collision.
 The map preserves blocking/avoidance while displaying S/L/D/T/down-arrow symbols.
 LensHelp attribute 29 is read as U16 at +4 only after checking the verified
 holder vtable (RVA 0x8B6900, PE RTTI `stdext::any::holder<unsigned short>`).
@@ -1164,7 +1164,7 @@ they are not guessed or used for navigation. Open holes and custom variants
 without metadata still need classification. Location-specific observations are
 recorded separately as described below; they never relabel every item of an ID.
 
-`passive_map_win32.py` opens only QUERY_INFORMATION | VM_READ and validates the
+`dbv/client_bridge/passive_map_win32.py` opens only QUERY_INFORMATION | VM_READ and validates the
 client executable SHA256 before using the version-specific layout. Reads are
 bounded and performed in a separate thread. The verified MSVC map uses ordered
 tree nodes, unlike the old DLL tile scanner's unordered-map assumption. Item
@@ -1224,7 +1224,7 @@ and [map storage](https://github.com/OTAcademy/otclientv8/blob/master/src/client
 
 ## Passive transition learning
 
-`transition_learning.py` correlates manual client movement/use metadata with
+`dbv/brain/navigation/transition_learning.py` correlates manual client movement/use metadata with
 read-only map snapshots. The **Uczenie przejść** panel lists the last 20 variants:
 position before, actual entrance, observed landing, step/use/use-with or
 preparation-then-step, object/tool IDs, vertical direction and repeat count.

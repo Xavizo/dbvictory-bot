@@ -3,9 +3,9 @@ import struct
 
 import pytest
 
-from game_state import GameState, scan_packet
-from packet_observer import apply_scan, detach_state
-from protocol import ServerOpcode
+from dbv.brain.state.game_state import GameState, scan_packet
+from dbv.client_bridge.packet_observer import apply_scan, detach_state
+from dbv.client_bridge.protocol import ServerOpcode
 
 
 FURY = "[Fury Mutant Fire Elemental]: nothing."

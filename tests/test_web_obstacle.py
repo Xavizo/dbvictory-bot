@@ -3,9 +3,9 @@ import asyncio
 
 import pytest
 
-from map_atlas import MapAtlas
-from map_navigation import load_confirmed_types, navigation_features
-from navigation_tools import cuttable_web, supported_transition, web_edge
+from dbv.brain.navigation.map_atlas import MapAtlas
+from dbv.brain.navigation.map_navigation import load_confirmed_types, navigation_features
+from dbv.brain.navigation.navigation_tools import cuttable_web, supported_transition, web_edge
 from test_adaptive_cavebot import cell, setup
 from test_automation_safety import state
 from test_dig_and_paged_atlas import fake_tools
@@ -16,8 +16,8 @@ ORIGIN, WEB, END = [10,10,7], [11,10,7], [12,10,7]
 
 
 def test_web_prefers_confirmed_aio_even_for_older_sketch():
-    from adaptive_cavebot import tool_location
-    from navigation_tools import transition_tools
+    from dbv.brain.cavebot.adaptive_cavebot import tool_location
+    from dbv.brain.navigation.navigation_tools import transition_tools
 
     edge = dict(web_edge(ORIGIN, WEB, 183), tool_id=8899, tool_ids=[8899, 8900])
     inventory = {"sources": [{"container": 0, "index": 1, "item_id": 8899}], "slots": {10: 8900}}
@@ -112,7 +112,7 @@ def test_route_web_sequence(state,tmp_path,monkeypatch,tool,mode,iid):
 
 
 def test_occupied_web_defers_before_using_tool(state,tmp_path):
-    from adaptive_cavebot import MovementDeferred
+    from dbv.brain.cavebot.adaptive_cavebot import MovementDeferred
     tile = web_tile()
     controller,_,_ = setup(state,tmp_path,[cell(*ORIGIN),tile],[ORIGIN,WEB])
     tile["occupants"] = 1
@@ -165,8 +165,8 @@ def test_unknown_or_conflicting_web_layer():
 @pytest.mark.parametrize('kind',['web','pile'])
 def test_body_cleared_then_fresh_tool_target_and_step(state,tmp_path,monkeypatch,kind):
     from test_dig_and_paged_atlas import edge as dig_edge
-    from protocol import ClientOpcode
-    from adaptive_cavebot import MovementDeferred
+    from dbv.client_bridge.protocol import ClientOpcode
+    from dbv.brain.cavebot.adaptive_cavebot import MovementDeferred
     import struct
 
     edge = web_edge(ORIGIN, WEB) if kind=='web' else dig_edge(8900)
@@ -223,10 +223,10 @@ def test_body_cleared_then_fresh_tool_target_and_step(state,tmp_path,monkeypatch
 @pytest.mark.parametrize("reject_first,site_count", [(False, 2), (True, 2), (False, 1)])
 def test_two_bodies_on_web_and_report(state, tmp_path, monkeypatch, reject_first, site_count):
     import struct
-    from adaptive_cavebot import BODY_ACK_SECONDS, MovementDeferred
-    from movement_history import MovementHistory
-    from navigation_tools import covering_bodies
-    from protocol import ClientOpcode
+    from dbv.brain.cavebot.adaptive_cavebot import BODY_ACK_SECONDS, MovementDeferred
+    from dbv.brain.cavebot.movement_history import MovementHistory
+    from dbv.brain.navigation.navigation_tools import covering_bodies
+    from dbv.client_bridge.protocol import ClientOpcode
 
     tile = web_tile()
     sites = [cell(11, 9), cell(11, 11)][:site_count]
@@ -304,8 +304,8 @@ def test_two_bodies_on_web_and_report(state, tmp_path, monkeypatch, reject_first
 
 
 def test_unidentified_containers_are_not_moved_and_occupied_destinations_wait(state,tmp_path):
-    from navigation_tools import covering_body
-    from adaptive_cavebot import MovementDeferred
+    from dbv.brain.navigation.navigation_tools import covering_body
+    from dbv.brain.cavebot.adaptive_cavebot import MovementDeferred
     tile=web_tile()
     controller,_,_=setup(state,tmp_path,[cell(*ORIGIN),tile],[ORIGIN,WEB])
     tile['items'].append(dict(id=4040,stack=2,flags=['container','force_use']))
@@ -320,8 +320,8 @@ def test_unidentified_containers_are_not_moved_and_occupied_destinations_wait(st
 
 
 def test_hunt_handles_intact_and_cut_web_on_ordinary_ground(tmp_path):
-    from hunt_routes import GroundMap,manual_circuit
-    from navigation_tools import has_cut_web
+    from dbv.brain.hunts.hunt_routes import GroundMap,manual_circuit
+    from dbv.brain.navigation.navigation_tools import has_cut_web
     kinds=load_confirmed_types(asset_sha256=CURRENT_DAT)
     only_web={i:f for i,f in kinds.items() if f['kind']=='web'}
     atlas=MapAtlas(tmp_path,'2'*64,web_definitions=only_web)

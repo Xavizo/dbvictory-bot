@@ -1,10 +1,10 @@
 """Manual object observations on synthetic maps. No game connection."""
 import pytest
-from protocol import ClientOpcode as Op, PacketReader, build_say_packet
-from client_profiles import LEGACY, UPDATED
-from map_annotations import MapAnnotations
-from map_navigation import load_confirmed_types, navigation_features
-from transition_learning import TransitionLearner, decode_command
+from dbv.client_bridge.protocol import ClientOpcode as Op, PacketReader, build_say_packet
+from dbv.client_bridge.client_profiles import LEGACY, UPDATED
+from dbv.brain.navigation.map_annotations import MapAnnotations
+from dbv.brain.navigation.map_navigation import load_confirmed_types, navigation_features
+from dbv.brain.navigation.transition_learning import TransitionLearner, decode_command
 from test_transition_learning import ORIGIN, ENTRY, EXIT, sample, step, use, tile, transition
 
 

@@ -3,11 +3,11 @@ import asyncio
 
 import pytest
 
-from map_atlas import MapAtlas
-from protocol import build_use_item_packet
+from dbv.brain.navigation.map_atlas import MapAtlas
+from dbv.client_bridge.protocol import build_use_item_packet
 from test_adaptive_cavebot import cell, setup, connect_fake_walk
 from test_automation_safety import state
-from transition_learning import TransitionLearner
+from dbv.brain.navigation.transition_learning import TransitionLearner
 
 
 START = [1035, 1299, 7]

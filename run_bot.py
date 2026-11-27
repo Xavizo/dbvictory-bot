@@ -30,7 +30,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
-from tray_exit import EXIT_FILE_ENV, tray_input
+from dbv.mcp_server.tray_exit import EXIT_FILE_ENV, tray_input
 from launcher_lock import launcher_lock
 from dbv.paths import INSTALL_ROOT
 
@@ -86,7 +86,7 @@ async def call(session, name, args=None):
     print(text, flush=True)
     failed = result.isError or text.startswith('ERROR:')
     if failed and ('Wersja klienta zmieniła się' in text or 'Nieobsługiwana wersja klienta' in text):
-        from client_profiles import CLIENT_UPDATED_MESSAGE
+        from dbv.client_bridge.client_profiles import CLIENT_UPDATED_MESSAGE
         raise RuntimeError(CLIENT_UPDATED_MESSAGE)
     if result.isError or text.startswith('ERROR:'):
         raise RuntimeError(f'Nie powiodło się: {name}. Sesja nie została uruchomiona ponownie.')
@@ -218,8 +218,8 @@ async def local_controller_console(params, upstream_port, console_input):
 async def run_local_transport(upstream_port):
     from mcp import StdioServerParameters
     from mcp.shared.exceptions import McpError
-    from transport_control import controller_endpoint
-    from transport_session import LocalTransportSession
+    from dbv.mcp_server.transport_control import controller_endpoint
+    from dbv.mcp_server.transport_session import LocalTransportSession
 
     manager = LocalTransportSession()
     console_input = LocalConsoleInput(sys.stdin)

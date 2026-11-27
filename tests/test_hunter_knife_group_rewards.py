@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hunter_knife import FRESH, SPENT, SkinningQueue
+from dbv.brain.combat.hunter_knife import FRESH, SPENT, SkinningQueue
 from test_hunter_knife import NAME, tile
 
 

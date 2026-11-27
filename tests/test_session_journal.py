@@ -1,6 +1,6 @@
 import json
 
-from session_journal import SessionJournal
+from dbv.brain.state.session_journal import SessionJournal
 
 
 def make(tmp_path, **kw):

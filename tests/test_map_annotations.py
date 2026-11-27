@@ -3,8 +3,8 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from map_annotations import MapAnnotations, validate_note
-from passive_map import PassiveMapMonitor
+from dbv.brain.navigation.map_annotations import MapAnnotations, validate_note
+from dbv.brain.navigation.passive_map import PassiveMapMonitor
 
 
 def note(**changes):

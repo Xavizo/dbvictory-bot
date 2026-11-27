@@ -13,7 +13,7 @@ def load_ports(**overrides):
     env = {k: v for k, v in os.environ.items() if k not in {"DBV_LOGIN_PORT", "DBV_GAME_PORT"}}
     env.update(overrides)
     return subprocess.run(
-        [sys.executable, "-c", "import constants; print(constants.LOGIN_PORT, constants.GAME_PORT)"],
+        [sys.executable, "-c", "from dbv.client_bridge import constants; print(constants.LOGIN_PORT, constants.GAME_PORT)"],
         cwd=ROOT, env=env, capture_output=True, text=True,
     )
 

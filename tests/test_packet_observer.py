@@ -9,10 +9,10 @@ from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from crypto import xtea_encrypt, adler32_checksum
-from game_state import GameState, scan_packet
-from packet_observer import PacketObserver, apply_scan, decrypt_game_packet, detach_state, parse_detached, publish_server_feedback
-from proxy import OTProxy
+from dbv.client_bridge.crypto import xtea_encrypt, adler32_checksum
+from dbv.brain.state.game_state import GameState, scan_packet
+from dbv.client_bridge.packet_observer import PacketObserver, apply_scan, decrypt_game_packet, detach_state, parse_detached, publish_server_feedback
+from dbv.client_bridge.proxy import OTProxy
 from test_game_alerts import talk
 from test_player_updates import stats, login, creature_move, floors
 
@@ -40,7 +40,7 @@ def test_invalid_frames_are_not_parsed(raw):
 @pytest.mark.parametrize('payload',[stats(),login(),creature_move()+b'\x66opaque',
     floors((80,95,8),range(8,11)),b'\xa2\x02\x00',b'\x82\x06\x07',talk(6)])
 def test_detached_parser_preserves_existing_observed_fields(payload,monkeypatch):
-    monkeypatch.setattr('game_state._dump_stats_debug',lambda *a:None)
+    monkeypatch.setattr('dbv.brain.state.game_state._dump_stats_debug',lambda *a:None)
     actual=GameState();actual.packet_position=actual.position=(80,95,7)
     expected=GameState();expected.packet_position=expected.position=(80,95,7)
     scan_packet(payload,expected)
@@ -81,9 +81,9 @@ def test_newer_health_position_creatures_and_manual_selection_are_preserved():
 def test_detached_client_snapshot_does_not_expire_mid_parse(monkeypatch):
     gs=GameState();gs.client_state_required=True
     gs.client_snapshot={'monotonic':1,'hp':55,'position':(50,60,7)}
-    monkeypatch.setattr('client_player_state.time.monotonic',lambda:1.1)
+    monkeypatch.setattr('dbv.client_bridge.client_player_state.time.monotonic',lambda:1.1)
     detached=detach_state(gs,0)
-    monkeypatch.setattr('client_player_state.time.monotonic',lambda:100)
+    monkeypatch.setattr('dbv.client_bridge.client_player_state.time.monotonic',lambda:100)
     assert gs.hp==0 and detached.state.hp==55
     assert detach_state(gs,0).state.hp == 0
     assert detached.state.client_snapshot is not gs.client_snapshot
@@ -143,7 +143,7 @@ def test_walk_cancel_retains_its_ingress_time_after_worker_publication():
 
 
 def test_senzu_and_pet_feedback_keep_the_identity_and_time_of_the_live_run():
-    from potions import PotionDiagnostics, SenzuUsage
+    from dbv.brain.combat.potions import PotionDiagnostics, SenzuUsage
     from test_pet_tracking import START, PET, look, sample
 
     gs = GameState()
@@ -178,7 +178,7 @@ def test_senzu_and_pet_feedback_keep_the_identity_and_time_of_the_live_run():
 
 
 def test_delayed_potion_response_cannot_confirm_a_newer_use():
-    from potions import PotionDiagnostics
+    from dbv.brain.combat.potions import PotionDiagnostics
     gs=GameState();diagnostics=PotionDiagnostics();diagnostics.until=1000
     diagnostics.record_use(10161,'use',gs,now=11)
     scan=detach_state(gs,0);scan.received_at=10
@@ -191,7 +191,7 @@ def test_delayed_potion_response_cannot_confirm_a_newer_use():
 
 
 def test_packet_gap_preserves_native_map_but_invalidates_learning_correlations():
-    from passive_map import PassiveMapMonitor
+    from dbv.brain.navigation.passive_map import PassiveMapMonitor
     monitor=PassiveMapMonitor(NS())
     result={'status':'ready','cells':[{'x':10,'y':20,'z':7}],'captured_at':time.time()}
     monitor._result=result;monitor.learner=Mock()
@@ -261,17 +261,17 @@ def test_ordered_publication_and_no_secret_metadata():
 
 
 def test_walk_log_uses_only_client_inputs_before_reply_without_a_running_route(caplog, monkeypatch):
-    from passive_map import PassiveMapMonitor
-    from protocol import ClientOpcode as Op, PacketReader
-    from packet_observer import log_walk_cancels
+    from dbv.brain.navigation.passive_map import PassiveMapMonitor
+    from dbv.client_bridge.protocol import ClientOpcode as Op, PacketReader
+    from dbv.client_bridge.packet_observer import log_walk_cancels
 
-    caplog.set_level('INFO', logger='packet_observer')
+    caplog.set_level('INFO', logger='dbv.client_bridge.packet_observer')
     gs = GameState()
     gs.position = (550,310,7)
     monitor = PassiveMapMonitor(NS(connected=True, game_state=gs))
     monitor._result = dict(center=list(gs.position), captured_at=time.time())
     now = 30.
-    monkeypatch.setattr('passive_map.time', NS(time=time.time, perf_counter=lambda: now))
+    monkeypatch.setattr('dbv.brain.navigation.passive_map.time', NS(time=time.time, perf_counter=lambda: now))
     monitor.record_client_packet(Op.WALK_EAST, PacketReader(b''))
     now += .2
     monitor.record_client_packet(Op.WALK_NORTH, PacketReader(b''))
@@ -292,7 +292,7 @@ def test_walk_log_uses_only_client_inputs_before_reply_without_a_running_route(c
 
 
 def test_log_distinguishes_skipped_copy_from_partly_parsed_frame(caplog):
-    caplog.set_level('INFO', logger='packet_observer')
+    caplog.set_level('INFO', logger='dbv.client_bridge.packet_observer')
     async def exercise():
         st, obs, applied, gaps = harness()
         try:

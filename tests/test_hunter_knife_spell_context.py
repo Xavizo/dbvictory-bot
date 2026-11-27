@@ -3,8 +3,8 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-import hunter_knife_action as knife
-from hunter_knife import FRESH, SPENT, OwnedStack
+from dbv.brain.combat import hunter_knife_action as knife
+from dbv.brain.combat.hunter_knife import FRESH, SPENT, OwnedStack
 from test_hunter_knife import A, tile
 
 

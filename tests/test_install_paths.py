@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # (run_mcp, run_bot's pre-update stub, launcher_files) run before the updater has installed
 # dbv/, so they find the root themselves. recovery_preview re-runs itself; map_navigation
 # reads a program catalogue that moves together with it. mcp_server's sys.path line is skipped.
-SELF_LOCATING = {"run_mcp.py", "run_bot.py", "launcher_files.py", "recovery_preview.py",
-                 "map_navigation.py", "dbv/paths.py"}
+SELF_LOCATING = {"run_mcp.py", "run_bot.py", "launcher_files.py", "dbv/brain/state/recovery_preview.py",
+                 "dbv/brain/navigation/map_navigation.py", "dbv/paths.py"}
 FILE_LOOKUP = re.compile(r"__file__")
 
 
@@ -34,7 +34,7 @@ def test_data_folders_hang_off_the_install_root():
 
 
 def test_modules_read_data_from_the_install_root():
-    import bot_profiles, cavebot, movement_history, session_journal
+    from dbv.brain import profiles as bot_profiles; from dbv.brain.cavebot import cavebot; from dbv.brain.cavebot import movement_history; from dbv.brain.state import session_journal
 
     assert bot_profiles.ROOT == ROOT / "local_data" / "profiles.json"
     assert cavebot.RECORDINGS_DIR == ROOT / "recordings"

@@ -1,8 +1,8 @@
 import pytest
 
-from hunt_areas import save_area, sector
-from hunt_routes import propose
-from map_atlas import MapAtlas
+from dbv.brain.hunts.hunt_areas import save_area, sector
+from dbv.brain.hunts.hunt_routes import propose
+from dbv.brain.navigation.map_atlas import MapAtlas
 from test_atlas_and_pause import cell, sample
 
 
@@ -42,7 +42,7 @@ def test_proposal_covers_three_floors_and_saves_as_separate_playable_geometry(tm
 
 
 def test_dense_anchors_are_removed_on_replay_while_labels_and_actions_stay(tmp_path):
-    from hunt_routes import sparse_waypoints
+    from dbv.brain.hunts.hunt_routes import sparse_waypoints
     atlas, _, edges = fixture(tmp_path)
     points=[[x,32,7] for x in range(26,35)]+[[34,32,8],[35,32,8],[36,32,8],[36,32,7],[26,32,7]]
     links=[dict(from_index=8,id='7-8'),dict(from_index=11,id='8-7')]
@@ -55,7 +55,7 @@ def test_dense_anchors_are_removed_on_replay_while_labels_and_actions_stay(tmp_p
 
 
 def test_long_walk_with_one_bend_preserves_tiles_without_dense_anchors(tmp_path):
-    from hunt_routes import sparse_waypoints
+    from dbv.brain.hunts.hunt_routes import sparse_waypoints
     atlas = MapAtlas(tmp_path, "b"*64)
     atlas.observe(sample([cell(x,y,7) for x in range(24,34) for y in range(32,50)]))
     points = [[x,32,7] for x in range(24,29)] + [[28,y,7] for y in range(33,49)]
@@ -97,7 +97,7 @@ def test_sector_selection_preserves_entrance_and_only_uses_remaining_stairs(tmp_
 
 
 def test_optimization_keeps_unique_exploration_and_cuts_a_repeated_return(tmp_path):
-    from hunt_routes import shorter_draft
+    from dbv.brain.hunts.hunt_routes import shorter_draft
     atlas=MapAtlas(tmp_path,'e'*64)
     atlas.observe(sample([cell(x,32,7) for x in range(24,47)]))
     points=[[x,32,7] for x in (24,32,24,32,46,24)]
@@ -133,7 +133,7 @@ def test_sightings_guide_visits_without_following_a_lured_monster_or_crossing_a_
             latest=dict(cells=[[24,32,7],[32,32,7]],observations=[dict(kind='death',point=[32,32,7])]),
             sightings=[dict(point=[39,39,7],observer_cell=[32,32,7],count=3),
                        dict(point=[33,32,7],observer_cell=[96,32,7],count=100)])])
-    monkeypatch.setattr('hunt_routes.catalogue',info)
+    monkeypatch.setattr('dbv.brain.hunts.hunt_routes.catalogue',info)
     route = propose(atlas,[],dict(scope=atlas.scope,ground='draft:'+draft))
     assert route['sightings']==3 and route['covered']==2
     assert [39,39,7] not in route['path']
@@ -142,7 +142,7 @@ def test_sightings_guide_visits_without_following_a_lured_monster_or_crossing_a_
 
 
 def test_manual_loop_uses_largest_round_trip_despite_seed_and_one_way_exit(tmp_path):
-    from hunt_routes import manual_circuit
+    from dbv.brain.hunts.hunt_routes import manual_circuit
     atlas=MapAtlas(tmp_path,'a'*64)
     # First XP is on 6. From there a one-way drop reaches the main floor.
     atlas.observe(sample([cell(x,32,6) for x in range(24,31)] +
@@ -266,7 +266,7 @@ def test_compare_only_inside_selection_and_preserves_saved_geometry(tmp_path):
 
 
 def test_spawn_model_uses_observed_group_and_carries_respawn_between_laps():
-    from hunt_comparison import HuntYield
+    from dbv.brain.hunts.hunt_comparison import HuntYield
     cells={(0,0,7),(8,0,7)}
     marks=[dict(point=[1,1,7],observer_cell=[0,0,7],count=200)]
     together=[dict(observer_cell=[0,0,7],points=[[1,1,7],[2,1,7],[3,1,7]])]
@@ -292,7 +292,7 @@ def test_spawn_model_uses_observed_group_and_carries_respawn_between_laps():
     assert no_packs['xp_hour'] is None
 
 def test_restock_evidence_needs_local_kill_departure_and_new_close_contact():
-    from hunt_comparison import observed_returns
+    from dbv.brain.hunts.hunt_comparison import observed_returns
     spot = (0,0,7)
     def event(kind, second, pos, creature=None):
         return dict(kind=kind, ms=second*1000, position=pos, monster_position=creature, detail='Mutant')
@@ -307,8 +307,8 @@ def test_restock_evidence_needs_local_kill_departure_and_new_close_contact():
 
 
 def test_comparison_uses_parallel_corridor_and_keeps_dead_end_when_forced(tmp_path):
-    from hunt_corridors import repeat_count
-    from hunt_routes import shorter_draft
+    from dbv.brain.hunts.hunt_corridors import repeat_count
+    from dbv.brain.hunts.hunt_routes import shorter_draft
     atlas = MapAtlas(tmp_path, '6'*64)
     upper = [(x,35,7) for x in range(24,57)]
     lower = [(x,36,7) for x in range(25,56)]
@@ -329,7 +329,7 @@ def test_comparison_uses_parallel_corridor_and_keeps_dead_end_when_forced(tmp_pa
 
 
 def test_corridor_variation_keeps_both_ends_of_each_action():
-    from hunt_corridors import patch, separate_corridors
+    from dbv.brain.hunts.hunt_corridors import patch, separate_corridors
     path = [(x,35,7) for x in range(25,48)]
     clear = set(path+[(x,36,7) for x in range(26,47)])
     upstairs = (47,35,6)
@@ -345,7 +345,7 @@ def test_missing_floor_suggests_revisiting_a_direction_without_adding_a_passage(
     # Put these stair tiles inside the selected rooms, isolating the missing direction.
     edges = [dict(e, entry=[e['origin'][0],33,e['origin'][2]]) for e in edges]
     atlas.observe(sample([cell(*e['entry'],item=1956) for e in edges]))
-    from hunt_areas import catalogue
+    from dbv.brain.hunts.hunt_areas import catalogue
     selected = next(a['cells'] for a in catalogue(atlas)['areas'] if a['id']==req['ground'])
     review = dict(edges[-1], evidence='review', reason='sample_gap')
     rows = [*edges[:-1], review, dict(review, entry=None, count=10)]
@@ -363,7 +363,7 @@ def test_default_prefers_connected_floors_over_a_larger_disconnected_flat_region
     sel=[[x,32,7] for x in range(80,160,8)] + [[32,32,z] for z in (7,8,9)]
     atlas.observe(sample([cell(x,32,7) for x in range(80,160)]))
     sel += [[32,24,z] for z in (7,8,9)]
-    from hunt_routes import GroundMap, circuit
+    from dbv.brain.hunts.hunt_routes import GroundMap, circuit
     from collections import Counter
     allowed=set(map(tuple,sel))
     route=circuit(atlas,edges,GroundMap(atlas,edges,allowed=allowed),allowed,Counter(),[],choose_region=True)

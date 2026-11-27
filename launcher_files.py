@@ -102,7 +102,7 @@ def main():
                 from dbv_release import defer_pending
                 print(json.dumps(defer_pending(ROOT, args.revision), ensure_ascii=False))
         elif args.operation == "client-check":
-            from client_profiles import client_support
+            from dbv.client_bridge.client_profiles import client_support
             print(json.dumps(client_support(Path(args.revision)), ensure_ascii=False))
         elif args.operation == "install":
             import github_release

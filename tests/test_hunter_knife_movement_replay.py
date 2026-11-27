@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import command_delivery
-import hunter_knife_action as knife
-from command_delivery import CommandReceipt
-from hunter_knife import FRESH, SPENT
+from dbv.client_bridge import command_delivery
+from dbv.brain.combat import hunter_knife_action as knife
+from dbv.client_bridge.command_delivery import CommandReceipt
+from dbv.brain.combat.hunter_knife import FRESH, SPENT
 
 
 BODY = (100, 100, 7)
@@ -49,9 +49,9 @@ async def replay(monkeypatch, route_step, *, receipt_status="dispatched", effect
                             passive_map_monitor=monitor, settings={"actions": {knife.NAME: config}})
     bot = SimpleNamespace(player_id=10, state=state, position=START, is_connected=True)
     reader = SimpleNamespace(snapshot=lambda: {"slots": {6: 5908}, "sources": []})
-    monkeypatch.setattr("passive_map_win32.ReadOnlyClient", lambda: SimpleNamespace(close=lambda: None))
-    monkeypatch.setattr("client_player_state.ClientPlayerReader", lambda *_: object())
-    monkeypatch.setattr("client_equipment.EquipmentReader", lambda *_: reader)
+    monkeypatch.setattr("dbv.client_bridge.passive_map_win32.ReadOnlyClient", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr("dbv.client_bridge.client_player_state.ClientPlayerReader", lambda *_: object())
+    monkeypatch.setattr("dbv.client_bridge.client_equipment.EquipmentReader", lambda *_: reader)
 
     attempts = []
     moved = False
@@ -152,7 +152,7 @@ def test_unknown_delivery_allows_one_retry_only_when_effect_is_missing(monkeypat
 
 @pytest.mark.parametrize("manual", [None, 10.31])
 def test_stack_effect_confirms_only_uncontested_use_and_splits_local_delivery_wait(manual):
-    from hunter_knife import OwnedStack, body_counts
+    from dbv.brain.combat.hunter_knife import OwnedStack, body_counts
 
     async def observe():
         game = SimpleNamespace(knife_manual_use_at=manual)

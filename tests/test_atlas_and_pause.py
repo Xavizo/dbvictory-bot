@@ -5,10 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-import mcp_server as server
-from map_atlas import MapAtlas,recording_points
-from map_annotations import validate_note
-from passive_map import PassiveMapMonitor
+from dbv.mcp_server import server
+from dbv.brain.navigation.map_atlas import MapAtlas,recording_points
+from dbv.brain.navigation.map_annotations import validate_note
+from dbv.brain.navigation.passive_map import PassiveMapMonitor
 from test_automation_safety import state,proxy
 
 
@@ -155,8 +155,8 @@ def test_atlas_api_is_authenticated_scoped_and_preview_only(state,monkeypatch,tm
     from http.client import HTTPConnection
     from http.server import HTTPServer
     import threading
-    import dashboard_api as api
-    from dashboard_security import SESSION_TOKEN,DASHBOARD_ORIGIN
+    from dbv.mcp_server import dashboard_api as api
+    from dbv.mcp_server.dashboard_security import SESSION_TOKEN,DASHBOARD_ORIGIN
     atlas=MapAtlas(tmp_path,"a"*64)
     atlas.observe(sample([cell(10,10),cell(11,10)]))
     state.passive_map_monitor=SimpleNamespace(atlas=atlas,learner=None)
@@ -199,7 +199,7 @@ def test_atlas_api_is_authenticated_scoped_and_preview_only(state,monkeypatch,tm
         def slow_proposal(*_):
             assert release.wait(3)
             return {"covered":1}
-        monkeypatch.setattr("hunt_routes.propose",slow_proposal)
+        monkeypatch.setattr("dbv.brain.hunts.hunt_routes.propose",slow_proposal)
         assert request("POST",route_url,query,authenticated=False)[0]==401
         assert request("POST",route_url,dict(query,scope="other"))[0]==400
         status,job=request("POST",route_url,query)

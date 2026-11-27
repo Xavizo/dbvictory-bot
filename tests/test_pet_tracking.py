@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from cavebot_combat import CombatRuntime, validate_combat, validate_spell
-from combat_spell_conditions import evaluate_spell
-from game_state import GameState, parse_server_packet, scan_packet
-from passive_map import PassiveMapMonitor
-from protocol import ClientOpcode, PacketReader, ServerOpcode, build_look_packet
+from dbv.brain.cavebot.cavebot_combat import CombatRuntime, validate_combat, validate_spell
+from dbv.brain.combat.combat_spell_conditions import evaluate_spell
+from dbv.brain.state.game_state import GameState, parse_server_packet, scan_packet
+from dbv.brain.navigation.passive_map import PassiveMapMonitor
+from dbv.client_bridge.protocol import ClientOpcode, PacketReader, ServerOpcode, build_look_packet
 
 PET, WILD = 0x40000021, 0x40000022
 START = (51, 50, 7)
@@ -136,7 +136,7 @@ def test_manual_label_follows_one_visible_creature_and_expires(identity, caplog)
     gs = GameState()
     first = sample(gs, [(START, 1, identity)])
     ref = first["cells"][0]["pet_ref"]
-    with caplog.at_level("INFO", logger="pet_tracking"):
+    with caplog.at_level("INFO", logger="dbv.brain.state.pet_tracking"):
         gs.pets.label_visible(START, ref, "Bills")
     expected_identity = f"game ID {PET}" if identity == PET else "visible on map only; no game ID"
     assert caplog.messages == [f"Pet confirmed: 'Bills', {expected_identity}"]

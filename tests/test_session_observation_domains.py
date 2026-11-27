@@ -3,13 +3,13 @@ import asyncio
 import time
 from types import SimpleNamespace as NS
 
-from game_state import GameState
-from hunt_areas import save_area
-from hunt_encounters import HuntEncounters
-from hunt_sightings import FirstSightings
-from hunt_world import world_zone_update
-from map_atlas import MapAtlas
-from session_observations import (
+from dbv.brain.state.game_state import GameState
+from dbv.brain.hunts.hunt_areas import save_area
+from dbv.brain.hunts.hunt_encounters import HuntEncounters
+from dbv.brain.hunts.hunt_sightings import FirstSightings
+from dbv.brain.hunts.hunt_world import world_zone_update
+from dbv.brain.navigation.map_atlas import MapAtlas
+from dbv.brain.state.session_observations import (
     note_observation_gap, observation_family_status, publish_semantic_result, session_observations,
 )
 
@@ -106,7 +106,7 @@ def test_adaptive_loss_reappearance_and_out_of_order_death_keep_correct_lifetime
     recorder = HuntEncounters()
     monitor = NS(snapshot=lambda:{"status":"ready"})
     visible = []
-    monkeypatch.setattr("hunt_encounters.eligible_monsters", lambda *args: list(visible))
+    monkeypatch.setattr("dbv.brain.hunts.hunt_encounters.eligible_monsters", lambda *args: list(visible))
     visible.append(dict(id=7, name="Wolf", position=[13,20,7]))
     recorder.sample(game,monitor,0,10,0,False)
     visible.clear()
@@ -150,7 +150,7 @@ def test_recording_excludes_confirmed_pet_after_label_expires(monkeypatch):
     game.creatures[7] = dict(health=100,t=10)
     game.attack_target_id = 7
     visible = [dict(id=7,name="Bills",position=[13,20,7])]
-    monkeypatch.setattr("hunt_encounters.eligible_monsters", lambda *args: list(visible))
+    monkeypatch.setattr("dbv.brain.hunts.hunt_encounters.eligible_monsters", lambda *args: list(visible))
     monitor = NS(snapshot=lambda:{"status":"ready"})
     recorder = HuntEncounters()
     recorder.sample(game,monitor,0,10,0,False)
@@ -168,7 +168,7 @@ def test_xp_on_previous_floor_is_not_assigned_to_death_after_stairs(monkeypatch)
     recorder = HuntEncounters()
     monitor = NS(snapshot=lambda:{"status":"ready"})
     visible = [dict(id=7, name="Wolf", position=[13,20,7])]
-    monkeypatch.setattr("hunt_encounters.eligible_monsters", lambda *args: list(visible))
+    monkeypatch.setattr("dbv.brain.hunts.hunt_encounters.eligible_monsters", lambda *args: list(visible))
     recorder.sample(game,monitor,0,10,100,False)
     game.position=(12,20,6)
     game.session_kills=1

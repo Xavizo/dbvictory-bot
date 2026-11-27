@@ -3,11 +3,11 @@ import asyncio
 import json
 import time
 import pytest
-import dashboard_api as api
-from map_atlas import MapAtlas,trace_links,recording_points
-from adaptive_cavebot import step_clear,detour
-from protocol import ClientOpcode,PacketReader
-from dashboard_security import DASHBOARD_ORIGIN,SESSION_TOKEN
+from dbv.mcp_server import dashboard_api as api
+from dbv.brain.navigation.map_atlas import MapAtlas,trace_links,recording_points
+from dbv.brain.cavebot.adaptive_cavebot import step_clear,detour
+from dbv.client_bridge.protocol import ClientOpcode,PacketReader
+from dbv.mcp_server.dashboard_security import DASHBOARD_ORIGIN,SESSION_TOKEN
 from test_adaptive_cavebot import cell,setup,connect_fake_walk
 from test_automation_safety import state
 from test_dashboard_security import http_api

@@ -6,11 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-import mcp_server as server
-from adaptive_cavebot import AdaptiveCavebot,OFFSETS,detour,step_clear
-from map_atlas import MapAtlas
-from cavebot_walking import WalkOutcome
-from protocol import WALK_OPCODES,ClientOpcode,PacketReader
+from dbv.mcp_server import server
+from dbv.brain.cavebot.adaptive_cavebot import AdaptiveCavebot,OFFSETS,detour,step_clear
+from dbv.brain.navigation.map_atlas import MapAtlas
+from dbv.brain.cavebot.cavebot_walking import WalkOutcome
+from dbv.client_bridge.protocol import WALK_OPCODES,ClientOpcode,PacketReader
 from test_automation_safety import state,proxy
 
 
@@ -88,8 +88,8 @@ def test_doorway_cursor_survives_occupied_landing_and_two_rounds(state,tmp_path)
 
 def test_walkable_ground_under_loose_container_in_historical_and_live_maps():
     import json
-    from map_atlas import decode_tile
-    from passive_map import classify_tile
+    from dbv.brain.navigation.map_atlas import decode_tile
+    from dbv.brain.navigation.passive_map import classify_tile
     items=[dict(id=408,stack=0,flags=['ground','not_moveable']),dict(id=2519,stack=1,flags=['container','not_pathable'])]
     assert classify_tile(items,False)[0]=='clear'
     assert classify_tile(items,True)[0]=='blocked'
@@ -318,8 +318,8 @@ def test_adaptive_http_control_requires_token_origin_and_valid_command(state,mon
     from http.client import HTTPConnection
     from http.server import HTTPServer
     import sys,threading,json
-    import dashboard_api as api
-    from dashboard_security import SESSION_TOKEN,DASHBOARD_ORIGIN
+    from dbv.mcp_server import dashboard_api as api
+    from dbv.mcp_server.dashboard_security import SESSION_TOKEN,DASHBOARD_ORIGIN
     async def exercise():
         monkeypatch.setattr(api,'_state',state);monkeypatch.setattr(api,'_main_loop',asyncio.get_running_loop())
         monkeypatch.setattr(sys.modules['__main__'],'_async_adaptive_control',server._async_adaptive_control,raising=False)
@@ -403,7 +403,7 @@ def test_autowalk_cannot_compete_with_active_v2(state):
 
 
 def test_acknowledged_walking_does_not_inherit_item_use_delay(state,tmp_path,monkeypatch):
-    import adaptive_cavebot as module
+    from dbv.brain.cavebot import adaptive_cavebot as module
     c,_,_=setup(state,tmp_path)
     clock=[100.0];sleeps=[];positions=[]
     monkeypatch.setattr(module,'time',SimpleNamespace(monotonic=lambda:clock[0],time=time.time))

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-import mcp_server as server
+from dbv.mcp_server import server
 
 
 def test_status_uses_existing_connection_without_probing(monkeypatch):
@@ -21,7 +21,7 @@ def test_disconnected_bridge_is_not_reported_as_healthy(monkeypatch):
 def pipe_module():
     if not hasattr(ctypes, "WinDLL"):
         pytest.skip("Native Windows ctypes API")
-    import dll_bridge
+    from dbv.client_bridge import dll_bridge
     return dll_bridge
 
 

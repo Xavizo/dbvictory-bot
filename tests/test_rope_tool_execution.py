@@ -2,7 +2,7 @@
 import asyncio
 from types import SimpleNamespace
 import pytest
-from adaptive_cavebot import supported_transition, transition_tools
+from dbv.brain.cavebot.adaptive_cavebot import supported_transition, transition_tools
 from test_adaptive_cavebot import cell, setup
 from test_automation_safety import state
 from test_dig_and_paged_atlas import fake_tools, edge as dig_edge
@@ -58,7 +58,7 @@ def test_invalid_rope_conditions_pause_without_walk_or_repeat(state,tmp_path,mon
 
 @pytest.mark.parametrize('change',['object','occupant','tool','position','pause','disconnect'])
 def test_rope_queue_rechecks_inventory_spot_and_lifetime(state,tmp_path,monkeypatch,change):
-    import client_equipment
+    from dbv.client_bridge import client_equipment
     c,spot,e=configured(state,tmp_path);c.status='running'
     fake_tools(monkeypatch,(8900,))
     inventory=dict(slots={},sources=[dict(container=1,index=0,item_id=8900)])
@@ -92,7 +92,7 @@ def test_equivalent_tools_are_selected_by_function():
 
 @pytest.mark.parametrize('slot',range(1,11))
 def test_tool_source_accepts_every_verified_equipment_slot(slot):
-    from adaptive_cavebot import tool_location
+    from dbv.brain.cavebot.adaptive_cavebot import tool_location
     inventory=dict(slots={slot:8900},sources=[])
     assert tool_location(inventory,[3003,8899,8900])==((65535,slot,0),8900,0)
     assert tool_location(inventory,[3003,3457]) is None
@@ -100,7 +100,7 @@ def test_tool_source_accepts_every_verified_equipment_slot(slot):
 
 @pytest.mark.parametrize('moved_before_send',[False,True])
 def test_rope_uses_aio_from_slot_ten_and_rechecks_source(state,tmp_path,monkeypatch,moved_before_send):
-    import client_equipment
+    from dbv.client_bridge import client_equipment
     c,spot,e=configured(state,tmp_path);c.status='running'
     fake_tools(monkeypatch,())
     inventory=dict(slots={10:8900},sources=[])
@@ -142,7 +142,7 @@ def test_dig_can_substitute_separate_shovel_for_recorded_aio(state,tmp_path,monk
 
 @pytest.mark.parametrize('kind',['rope','dig'])
 def test_saved_tool_link_survives_learning_a_different_approach(tmp_path,kind):
-    from map_atlas import MapAtlas,trace_links,review_recorded_actions
+    from dbv.brain.navigation.map_atlas import MapAtlas,trace_links,review_recorded_actions
     e=edge() if kind=='rope' else dig_edge(8900)
     a,b=e['origin'],e['exit'];latest={**e,'origin':[e['entry'][0]+1,e['entry'][1],e['entry'][2]]}
     other={**latest,'id':'separate','tool_id':3003 if kind=='rope' else 3457}
@@ -162,7 +162,7 @@ def test_saved_tool_link_survives_learning_a_different_approach(tmp_path,kind):
 
 
 def test_saved_gate_link_keeps_approach_after_later_use_from_another_side(tmp_path):
-    from map_atlas import MapAtlas,trace_links
+    from dbv.brain.navigation.map_atlas import MapAtlas,trace_links
     from test_gate_entry_planning import evidence,gate
     a,b=[10,10,7],[11,10,7];row=evidence();row['origin']=[12,10,7]
     atlas=MapAtlas(tmp_path,'d'*64)

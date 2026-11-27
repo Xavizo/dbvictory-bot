@@ -3,8 +3,8 @@ import json
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-import mcp_server as server
-from proxy import OTProxy
+from dbv.mcp_server import server
+from dbv.client_bridge.proxy import OTProxy
 
 
 @pytest.fixture
@@ -97,8 +97,8 @@ def test_dashboard_control_endpoints_change_real_state_without_game(state, monke
     from http.server import HTTPServer
     import sys
     import threading
-    import dashboard_api as api
-    from dashboard_security import SESSION_TOKEN, DASHBOARD_ORIGIN
+    from dbv.mcp_server import dashboard_api as api
+    from dbv.mcp_server.dashboard_security import SESSION_TOKEN, DASHBOARD_ORIGIN
 
     async def exercise():
         monkeypatch.setattr(api, "_state", state)

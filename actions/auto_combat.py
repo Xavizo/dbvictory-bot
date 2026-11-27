@@ -16,8 +16,8 @@ import os
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from protocol import ClientOpcode, build_use_on_creature_packet
-from constants import ITEM_RUNE_3165, MONSTER_ID_MIN
+from dbv.client_bridge.protocol import ClientOpcode, build_use_on_creature_packet
+from dbv.client_bridge.constants import ITEM_RUNE_3165, MONSTER_ID_MIN
 
 INTERVAL = 0.2
 

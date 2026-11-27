@@ -3,10 +3,10 @@ import asyncio
 import struct
 import time
 import pytest
-import combat_wave as wave
-from cavebot_combat import validate_spell,validate_combat
-from combat_spell_conditions import evaluate_spell,evaluate_spells
-from protocol import ClientOpcode,Direction,PacketReader,build_turn_packet
+from dbv.brain.combat import combat_wave as wave
+from dbv.brain.cavebot.cavebot_combat import validate_spell,validate_combat
+from dbv.brain.combat.combat_spell_conditions import evaluate_spell,evaluate_spells
+from dbv.client_bridge.protocol import ClientOpcode,Direction,PacketReader,build_turn_packet
 from test_v2_combat import armed,monster
 from test_adaptive_cavebot import cell,setup
 from test_automation_safety import state,proxy
@@ -140,7 +140,7 @@ def test_facing_field_is_optional_and_does_not_drop_healing(reader):
 
 
 def test_unreadable_facing_does_not_interrupt_healing(reader):
-    from passive_map import MapReadError
+    from dbv.brain.navigation.passive_map import MapReadError
     r,_=reader;read=r.source.read
     def missing(addr,size):
         if addr==r.ptr+0x58:raise MapReadError('facing only')

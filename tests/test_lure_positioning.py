@@ -2,7 +2,7 @@
 import asyncio
 import pytest
 
-from cavebot_lure import lure_stopping_path
+from dbv.brain.cavebot.cavebot_lure import lure_stopping_path
 from test_adaptive_cavebot import cell, setup, connect_fake_walk
 from test_automation_safety import state
 from test_v2_combat import armed, monster

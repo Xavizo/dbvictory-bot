@@ -6,9 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 
-import cavebot
-from adaptive_recording import hunting_excerpt, sector, stays_near_trace, watch_hunt_evidence
-from map_atlas import MapAtlas
+from dbv.brain.cavebot import cavebot
+from dbv.brain.cavebot.adaptive_recording import hunting_excerpt, sector, stays_near_trace, watch_hunt_evidence
+from dbv.brain.navigation.map_atlas import MapAtlas
 
 
 def recording(xs, rewards):
@@ -197,13 +197,13 @@ def test_separate_unconnected_hunts_do_not_produce_partial_full_coverage():
 
 
 def test_passive_encounters_keep_origin_and_distinguish_target_aoe_and_disappearance():
-    from hunt_encounters import HuntEncounters
+    from dbv.brain.hunts.hunt_encounters import HuntEncounters
     from unittest.mock import patch
     gs = SimpleNamespace(position=(100,101,7), creatures={1:{}}, session_kills=0, kill_log=[], attack_target_id=11)
     recorder = HuntEncounters()
     monitor = SimpleNamespace(snapshot=lambda:{})
     visible = [dict(id=i,name="Brolly",position=[100+i,102,7]) for i in (11,12,13)]
-    with patch("hunt_encounters.eligible_monsters",return_value=visible):
+    with patch("dbv.brain.hunts.hunt_encounters.eligible_monsters",return_value=visible):
         recorder.sample(gs,monitor,0,100,0,False)
     gs.position=(120,101,7)
     gs.creatures={}
@@ -221,7 +221,7 @@ def test_passive_encounters_keep_origin_and_distinguish_target_aoe_and_disappear
 
 
 def test_equally_near_branches_prefer_recent_hunted_encounter_and_keep_both():
-    from adaptive_recording import _covering_circuit, _replay_edges
+    from dbv.brain.cavebot.adaptive_recording import _covering_circuit, _replay_edges
     a, left, up = [100,100,7],[99,100,7],[100,99,7]
     trace = [{"t":i,"pos":pos} for i,pos in enumerate((a,left,a,up,a))]
     edges = _covering_circuit(trace,0,4,{sector(left):1,sector(up):3},set(),set())

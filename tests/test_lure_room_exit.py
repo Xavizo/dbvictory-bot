@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from cavebot_lure import pack_access_before_choke, room_before_corridor
+from dbv.brain.cavebot.cavebot_lure import pack_access_before_choke, room_before_corridor
 from test_adaptive_cavebot import cell
 from test_automation_safety import state
 from test_v2_combat import armed, monster

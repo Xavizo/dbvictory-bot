@@ -15,8 +15,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from constants import MONSTER_ID_MIN
-from protocol import build_attack_packet
+from dbv.client_bridge.constants import MONSTER_ID_MIN
+from dbv.client_bridge.protocol import build_attack_packet
 
 INTERVAL = 0.05  # 50ms loop
 MONSTER_MIN = MONSTER_ID_MIN

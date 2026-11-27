@@ -1,6 +1,6 @@
 """Temporal pursuit traces only; no client, network or bot action is started."""
 import pytest
-from cavebot_lure import PursuitTracker
+from dbv.brain.cavebot.cavebot_lure import PursuitTracker
 
 
 def mob(x, y=10, cid=1, name='Wolf', z=7):

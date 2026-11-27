@@ -2,11 +2,11 @@
 import asyncio
 from types import SimpleNamespace
 
-import hunter_knife_action as knife
-from command_delivery import CommandReceipt
-from game_state import GameState
-from hunter_knife import FRESH, SPENT, OwnedStack
-from potions import PotionScheduler, validate_config
+from dbv.brain.combat import hunter_knife_action as knife
+from dbv.client_bridge.command_delivery import CommandReceipt
+from dbv.brain.state.game_state import GameState
+from dbv.brain.combat.hunter_knife import FRESH, SPENT, OwnedStack
+from dbv.brain.combat.potions import PotionScheduler, validate_config
 from test_hunter_knife import tile
 from test_potions import rule
 
@@ -76,10 +76,10 @@ def test_locally_cancelled_use_at_same_position_keeps_claim_until_next_frame(mon
         clock = [100.]
         wall = lambda: clock[0] + 1000
         monkeypatch.setattr(knife, "time", SimpleNamespace(monotonic=lambda: clock[0], time=wall))
-        monkeypatch.setattr("passive_map_win32.ReadOnlyClient", lambda: SimpleNamespace(close=lambda: None))
-        monkeypatch.setattr("client_player_state.ClientPlayerReader", lambda *_: object())
+        monkeypatch.setattr("dbv.client_bridge.passive_map_win32.ReadOnlyClient", lambda: SimpleNamespace(close=lambda: None))
+        monkeypatch.setattr("dbv.client_bridge.client_player_state.ClientPlayerReader", lambda *_: object())
         reader = SimpleNamespace(snapshot=lambda: {"slots": {6: 5908}, "sources": []})
-        monkeypatch.setattr("client_equipment.EquipmentReader", lambda *_: reader)
+        monkeypatch.setattr("dbv.client_bridge.client_equipment.EquipmentReader", lambda *_: reader)
         game = GameState()
         game.position, game.hp = ORIGIN, 100
         monitor = SimpleNamespace()

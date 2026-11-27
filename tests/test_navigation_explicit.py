@@ -2,7 +2,7 @@
 import asyncio
 import time
 import pytest
-from map_atlas import MapAtlas,trace_links,remap_links,validate_links
+from dbv.brain.navigation.map_atlas import MapAtlas,trace_links,remap_links,validate_links
 from test_adaptive_cavebot import cell,setup,connect_fake_walk
 from test_automation_safety import state
 
@@ -145,7 +145,7 @@ def test_stair_prefers_recorded_side_only_on_equal_cost(tmp_path):
 
 
 def test_specific_use_from_recorded_approach_is_not_lost_when_latest_origin_changes(tmp_path):
-    from map_atlas import recording_points
+    from dbv.brain.navigation.map_atlas import recording_points
     a,b=[10,10,7],[10,11,6]
     row=dict(id='ladder',origin=[9,10,7],entry=a,exit=b,action='use',item_id=1948,evidence='observed')
     rec=dict(observed_path=[dict(pos=p) for p in [[11,10,7],a,b,[11,11,6]]])

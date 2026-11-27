@@ -155,7 +155,7 @@ def main():
             from pathlib import Path
             # The supervisor starts this interpreter with -I and no PYTHONPATH.
             sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-            from engine_recovery import RecoveryOwner
+            from dbv.brain.state.engine_recovery import RecoveryOwner
             owner = RecoveryOwner(args.recovery_dir)
         try:
             asyncio.run(serve(args.upstream_port, args.once, args.managed, owner))

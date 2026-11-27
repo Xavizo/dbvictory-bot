@@ -1,12 +1,12 @@
 """Recorded use-enters evidence is a traversal, not merely an appearance hint."""
 import asyncio
 import pytest
-from map_atlas import MapAtlas,navigation_edges,recording_points
-from transition_learning import gate_entry_record
+from dbv.brain.navigation.map_atlas import MapAtlas,navigation_edges,recording_points
+from dbv.brain.navigation.transition_learning import gate_entry_record
 from test_adaptive_cavebot import cell,setup,connect_fake_walk
 from test_automation_safety import state,proxy
 from test_live_object_learning import learner,open_door,door_tile
-from protocol import ClientOpcode
+from dbv.client_bridge.protocol import ClientOpcode
 
 
 def evidence(**extra):

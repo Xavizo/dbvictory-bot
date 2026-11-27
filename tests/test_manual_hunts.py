@@ -1,11 +1,11 @@
 from types import SimpleNamespace
 
-from farming_telemetry import experience_for_level
-from hunt_routes import propose
-from manual_hunts import DiscoveryWriter, ManualVisits, discoveries, store_visit
-from map_atlas import MapAtlas
-from passive_map import PassiveMapMonitor
-from pet_tracking import PetTracker
+from dbv.brain.hunts.farming_telemetry import experience_for_level
+from dbv.brain.hunts.hunt_routes import propose
+from dbv.brain.hunts.manual_hunts import DiscoveryWriter, ManualVisits, discoveries, store_visit
+from dbv.brain.navigation.map_atlas import MapAtlas
+from dbv.brain.navigation.passive_map import PassiveMapMonitor
+from dbv.brain.state.pet_tracking import PetTracker
 from test_atlas_and_pause import cell, sample
 
 
@@ -79,7 +79,7 @@ def test_travel_relogin_and_xp_baseline_do_not_create_fake_visits():
 def test_previous_seed_only_result_can_be_recalculated_without_a_new_visit(tmp_path):
     from contextlib import closing
     import sqlite3
-    from manual_hunts import CHECK_VERSION, remember_check, storage
+    from dbv.brain.hunts.manual_hunts import CHECK_VERSION, remember_check, storage
     atlas=MapAtlas(tmp_path,'d'*64)
     atlas.observe(sample([cell(x,32,7) for x in range(24,49)]+[cell(24,32,6),cell(25,32,6)]))
     visit=dict(id='first',seed=(24,32,6),anchors=[[24,32,6]],returned=True,xp=500,gains=5,at=10,

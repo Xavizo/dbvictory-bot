@@ -4,14 +4,14 @@ import time
 from types import SimpleNamespace
 
 import pytest
-import mcp_server as server
-from command_delivery import CommandReceipt
-from potions import run_potions
+from dbv.mcp_server import server
+from dbv.client_bridge.command_delivery import CommandReceipt
+from dbv.brain.combat.potions import run_potions
 from engine_timing_probe import measure_blockage
 from test_adaptive_cavebot import setup,connect_fake_walk
 from test_automation_safety import state
 from test_v2_combat import configure_rules,monster
-from protocol import ClientOpcode
+from dbv.client_bridge.protocol import ClientOpcode
 
 
 async def until(predicate,timeout=1.5):
@@ -203,7 +203,7 @@ def test_chase_and_return_share_one_movement_executor(state,tmp_path):
 
 @pytest.mark.parametrize('occupied',[False,True])
 def test_ready_map_wakes_combat_review_before_its_periodic_tick(state,tmp_path,monkeypatch,occupied):
-    import automation_domains as domains
+    from dbv.brain.state import automation_domains as domains
 
     c,cells,_=setup(state,tmp_path)
     configure_rules(c,[dict(pattern='*')],enabled=True,mode='stop')
@@ -238,7 +238,7 @@ def test_ready_map_wakes_combat_review_before_its_periodic_tick(state,tmp_path,m
 
 
 def test_request_during_same_review_uses_that_result_once(state,tmp_path,monkeypatch):
-    import automation_domains as domains
+    from dbv.brain.state import automation_domains as domains
 
     c,cells,_=setup(state,tmp_path)
     configure_rules(c,[dict(pattern='*')],enabled=True,mode='stop')

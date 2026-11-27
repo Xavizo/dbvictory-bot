@@ -10,7 +10,7 @@ OLDER = "ab" * 20
 
 
 def test_actual_engine_label_without_git_on_path(tmp_path, monkeypatch):
-    import mcp_server
+    from dbv.mcp_server import server as mcp_server
 
     git_dir = tmp_path / ".git"
     git_dir.mkdir()

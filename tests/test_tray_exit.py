@@ -60,7 +60,7 @@ sys.exit(launcher.main())
 import asyncio
 from contextlib import contextmanager
 from pathlib import Path
-import mcp_server as server
+from dbv.mcp_server import server
 original = server.tray_input
 @contextmanager
 def report_file(encoding):

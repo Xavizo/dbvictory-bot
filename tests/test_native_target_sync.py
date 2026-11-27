@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from protocol import build_attack_packet
+from dbv.client_bridge.protocol import build_attack_packet
 from test_automation_safety import proxy
 
 
@@ -57,7 +57,7 @@ def test_passive_observer_init_sends_no_hooks(monkeypatch):
 
 
 def test_passive_pipe_reads_even_when_snapshot_advertises_native_capability(monkeypatch):
-    import dll_bridge as mod
+    from dbv.client_bridge import dll_bridge as mod
     monkeypatch.setattr(mod, 'kernel32', Mock())
     bridge = mod.DllBridge(read_only=True)
     assert bridge.pipe_name == b'\\\\.\\pipe\\dbvbot_marker_20261117'
@@ -105,7 +105,7 @@ def test_manual_target_clears_visual_intent_without_altering_game_packet():
 
 
 def test_visual_lease_is_bounded_throttled_and_does_not_write_from_proxy_callback(monkeypatch):
-    import dll_bridge as mod
+    from dbv.client_bridge import dll_bridge as mod
     monkeypatch.setattr(mod, 'kernel32', Mock())
     import time
     b=mod.DllBridge(read_only=True);b._handle=123;b.marker_ready=True;b.marker_seen=time.monotonic();b.client_target=0

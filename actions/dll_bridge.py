@@ -15,8 +15,8 @@ import logging
 # Ensure project root is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dll_bridge import DllBridge
-import inject as dll_inject
+from dbv.client_bridge.dll_bridge import DllBridge
+from dbv.client_bridge import inject as dll_inject
 
 log = logging.getLogger("action.dll_bridge")
 
@@ -87,7 +87,7 @@ def _inject_fresh_dll(*, observer=False, profile=None):
     the refcount without calling DllMain.  A unique copy forces a fresh load.
     """
     if observer:
-        from client_profiles import UPDATED, select_profile
+        from dbv.client_bridge.client_profiles import UPDATED, select_profile
         profile = profile or UPDATED
         if select_profile(profile.sha256) != profile or not profile.observer_dll:
             raise ValueError("Unverified observer profile")
@@ -199,7 +199,7 @@ async def _connect_with_inject(bridge, bot):
 
 
 def _make_bridge():
-    from passive_map_win32 import ReadOnlyClient
+    from dbv.client_bridge.passive_map_win32 import ReadOnlyClient
     source = ReadOnlyClient()
     try:
         return DllBridge(read_only=source.profile.observer, profile=source.profile)
@@ -249,8 +249,8 @@ async def run(bot):
     player_reader = None
     player_source = None
     if bridge.read_only:
-        from passive_map_win32 import ReadOnlyClient
-        from client_player_state import ClientPlayerReader, bind_local_player
+        from dbv.client_bridge.passive_map_win32 import ReadOnlyClient
+        from dbv.client_bridge.client_player_state import ClientPlayerReader, bind_local_player
         player_source = ReadOnlyClient()
         player_reader = ClientPlayerReader(player_source, 0)
         try:
@@ -294,7 +294,7 @@ async def run(bot):
     vitals_task = None
     try:
         if player_reader is not None:
-            from client_player_state import poll_bound_vitals
+            from dbv.client_bridge.client_player_state import poll_bound_vitals
             vitals_task = asyncio.create_task(poll_bound_vitals(bot, state, gs, player_reader, POLL_INTERVAL))
         while bot.is_connected and state.game_state is gs:
             if player_reader is not None and gs.client_snapshot and not gs.client_state_error:

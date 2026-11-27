@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import engine_recovery
-from adaptive_cavebot import AdaptiveCavebot
-from engine_recovery import EngineJournal, RecoveryOwner, StaleController
+from dbv.brain.state import engine_recovery
+from dbv.brain.cavebot.adaptive_cavebot import AdaptiveCavebot
+from dbv.brain.state.engine_recovery import EngineJournal, RecoveryOwner, StaleController
 from test_adaptive_cavebot import setup
 from test_automation_safety import state
 

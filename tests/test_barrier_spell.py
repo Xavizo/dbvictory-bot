@@ -4,9 +4,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from barrier_spell import BarrierScheduler, DEFAULTS, run_barrier, validate_config
-from game_state import GameState, scan_packet
-from packet_observer import detach_state, apply_scan
+from dbv.brain.combat.barrier_spell import BarrierScheduler, DEFAULTS, run_barrier, validate_config
+from dbv.brain.state.game_state import GameState, scan_packet
+from dbv.client_bridge.packet_observer import detach_state, apply_scan
 
 
 def sample(t, active=True, **kwargs):

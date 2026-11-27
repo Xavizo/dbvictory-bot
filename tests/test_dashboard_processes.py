@@ -4,9 +4,9 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import mcp_server as server
+from dbv.mcp_server import server
 import pytest
-from dashboard_security import SESSION_TOKEN
+from dbv.mcp_server.dashboard_security import SESSION_TOKEN
 
 
 def test_only_matching_build_is_activated_on_next_start(tmp_path, monkeypatch):
