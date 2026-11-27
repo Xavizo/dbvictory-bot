@@ -421,7 +421,7 @@ cd dashboard; npm test; npm run typecheck; npm run build
 ## Credits
 
 This project is a fork of the original DBVictory proxy bot by
-**patrykjanik**, which provided the first proxy, packet parser, DLL and
+**patrykjanik** ([@pumanitro](https://github.com/pumanitro)), which provided the first proxy, packet parser, DLL and
 cavebot. It has since been almost completely rewritten: the launcher and
 updater, client profiles, native observer, atlas, combat, healing, Hunter Knife
 and most of the panel are new.
