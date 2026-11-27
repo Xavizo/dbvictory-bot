@@ -1,6 +1,7 @@
 "use client";
 import {useState} from "react";
 import {toggleAction, updateActionConfig, type BotState} from "@/lib/api";
+import {LocalSpellIcon} from "./SpellPicker";
 
 const fields = [
   {key: "duration", label: "Czas bariery (s)", fallback: 200},
@@ -38,7 +39,7 @@ export default function BarrierSpellPanel({state, onRefresh}: {state: BotState |
   }
   return <section className="speed-up-panel" aria-label="Automatyczny czar Barrier">
     <div className="speed-heading">
-      <img src="/local-spells/icons/11740.png" width="28" height="28" alt=""/>
+      <LocalSpellIcon src="/local-spells/icons/11740.png" size={28}/>
       <strong>Barrier</strong><span>{enabled ? state?.barrier_spell?.status ?? "Czekam na postać" : "Wyłączony"}</span>
       <button className={`action-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled}
         aria-label="Automatyczny czar Barrier" disabled={busy || dirty || !!state?.automation_paused} onClick={() => void change(false)}><span/></button>

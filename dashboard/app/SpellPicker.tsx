@@ -11,10 +11,15 @@ function useCatalogue(enabled:boolean){
   },[enabled,retry]);
   return {rows,error,retry:()=>setRetry(n=>n+1)};
 }
-function SpellIcon({spell}:{spell?:CatalogueSpell}) {
+// Icons are exported from the player's own client; without them a symbol stands in.
+export function LocalSpellIcon({src,size}:{src?:string|null;size?:number}) {
   const [failed,setFailed]=useState(false);
-  useEffect(()=>setFailed(false),[spell?.icon]);
-  return spell?.icon&&!failed?<img className="spell-icon" src={spell.icon} alt="" loading="lazy" decoding="async" onError={()=>setFailed(true)}/>:<span className="spell-icon spell-icon-fallback" aria-hidden="true">✦</span>;
+  useEffect(()=>setFailed(false),[src]);
+  const style=size?{width:size,height:size}:undefined;
+  return src&&!failed?<img className="spell-icon" src={src} style={style} alt="" loading="lazy" decoding="async" onError={()=>setFailed(true)}/>:<span className="spell-icon spell-icon-fallback" style={style} aria-hidden="true">✦</span>;
+}
+function SpellIcon({spell}:{spell?:CatalogueSpell}) {
+  return <LocalSpellIcon src={spell?.icon}/>;
 }
 export default function SpellPicker({value,onChange,label,disabled=false}:{value:CombatSpell;onChange:(spell:CombatSpell)=>void;label:string;disabled?:boolean}) {
   const [open,setOpen]=useState(false),[query,setQuery]=useState(''),[limit,setLimit]=useState(20);
