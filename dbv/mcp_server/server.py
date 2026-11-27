@@ -140,6 +140,8 @@ class BotState:
         self.speed_scheduler = SpeedScheduler()
         self.potion_scheduler = PotionScheduler()
         self.potion_diagnostics = PotionDiagnostics()
+        from dbv.brain.state.item_identification import ItemIdentification
+        self.item_identification = ItemIdentification(self.settings.get("item_identification", True) is not False)
         self._action_tasks: dict[str, asyncio.Task] = {}
         self._action_completed: set[str] = set()
         self._adaptive_prepare_token = None
@@ -703,6 +705,19 @@ async def _async_unlock_automation() -> str:
 async def _async_potion_diagnostics(enabled: bool) -> dict:
     state.potion_diagnostics.set_active(enabled)
     return state.potion_diagnostics.snapshot()
+
+
+async def _async_item_identification(enabled: bool) -> dict:
+    """Show or hide the ID of looked-at items; the choice persists."""
+    previous = state.settings.get("item_identification", True)
+    state.settings["item_identification"] = enabled
+    try:
+        save_settings(state.settings)
+    except OSError:
+        state.settings["item_identification"] = previous
+        raise
+    state.item_identification.enabled = enabled
+    return state.item_identification.snapshot()
 
 
 async def _async_adaptive_preview(config=None) -> dict:
@@ -1520,6 +1535,14 @@ async def start_bot() -> str:
         if monitor:
             monitor.record_client_packet(opcode, reader)
     state.game_proxy.register_client_packet_callback(observe_navigation_command)
+
+    def identify_looked_item(opcode, reader):
+        item_id = state.item_identification.record_client_packet(opcode, reader)
+        if item_id is not None and state.game_proxy:
+            from dbv.brain.state.item_identification import status_message
+            log.info("Item Id: %s", item_id)
+            asyncio.get_running_loop().create_task(state.game_proxy.inject_to_client(status_message(item_id)))
+    state.game_proxy.register_client_packet_callback(identify_looked_item)
 
     def journal_client_packet(opcode, reader):
         if getattr(state, "packet_journal", None) and state.packet_journal.enabled:
