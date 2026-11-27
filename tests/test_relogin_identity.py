@@ -124,10 +124,12 @@ def test_packet_identity_cannot_override_verified_local_player():
     assert gs.player_id==0x100003B9
 
 
-def callback(name, env):
+def callback(name, env, *helpers):
+    """The real function ``name`` from server.py (and ``helpers`` it calls), run against ``env``."""
     tree=ast.parse((Path(__file__).resolve().parents[1]/'dbv'/'mcp_server'/'server.py').read_text(encoding='utf-8'))
-    node=next(n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name==name)
-    exec(compile(ast.Module(body=[node],type_ignores=[]),'<actual session callback>','exec'),env)
+    for wanted in (*helpers, name):
+        node=next(n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name==wanted)
+        exec(compile(ast.Module(body=[node],type_ignores=[]),'<actual session callback>','exec'),env)
     return env[name]
 
 
@@ -179,9 +181,9 @@ def test_user_action_waits_for_verified_identity_before_capturing_player_id():
         calls=[]
         async def run(_): calls.append(gs.player_id)
         state=NS(game_state=gs,connected=True,_action_completed=set(),settings={},automation_paused=False)
-        fn=callback('_wrapper',dict(state=state,name='speed_up',INTERNAL_ACTIONS={'dll_bridge'},
-            ctx=object(),mod=NS(run=run),asyncio=asyncio,log=logging.getLogger('test')))
-        task=asyncio.create_task(fn());await asyncio.sleep(.06)
+        fn=callback('_run_action',dict(state=state,INTERNAL_ACTIONS={'dll_bridge'},asyncio=asyncio,
+            log=logging.getLogger('test')),'_wait_for_character')
+        task=asyncio.create_task(fn('speed_up',NS(run=run),object()));await asyncio.sleep(.06)
         gs.player_id=0x100002F6  # A packet ID alone is insufficient on observer profile.
         await asyncio.sleep(.06);assert calls==[]
         gs.player_id=gs.client_player_id=0x100003B9

@@ -247,6 +247,10 @@ def build_ping_packet() -> bytes:
     return _packet(ClientOpcode.PING)
 
 
+def build_logout_packet() -> bytes:
+    return _packet(ClientOpcode.LOGOUT)
+
+
 def build_attack_packet(creature_id: int) -> bytes:
     """Attack a creature; 0 stops attacking."""
     return _packet(ClientOpcode.ATTACK, "I", creature_id)
