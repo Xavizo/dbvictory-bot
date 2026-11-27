@@ -177,12 +177,6 @@ def review_recorded_actions(recording,transitions):
     return interactions
 
 
-def near_loop_start(points):
-    """Only a local same-floor closing leg may be planned automatically."""
-    a,b=points[0],points[-1]
-    return a[2]==b[2] and max(abs(a[0]-b[0]),abs(a[1]-b[1]))<=2
-
-
 def remap_links(links,before,after):
     """Keep authorizations only for the same consecutive anchors, in order."""
     result=[];cursor=0

@@ -358,16 +358,14 @@ def test_invalid_guard_does_not_break_proxy_injection_worker():
     asyncio.run(exercise())
 
 
-def test_legacy_actions_and_generic_v2_toggle_cannot_launch_navigation(state,monkeypatch):
-    for name in ('cavebot','cavebot2','adaptive_cavebot'):
-        assert asyncio.run(server._async_toggle_action(name,True)).startswith('Error:')
-        assert 'Cavebot' in asyncio.run(server._async_restart_action(name))
-    for name in ('cavebot','cavebot2'):assert 'wyłączony' in server._start_action(name)
-    state.settings['actions']={n:{'enabled':True} for n in ('cavebot','cavebot2','adaptive_cavebot','eat_food')}
+def test_generic_v2_toggle_cannot_launch_navigation(state,monkeypatch):
+    assert asyncio.run(server._async_toggle_action('adaptive_cavebot',True)).startswith('Error:')
+    assert 'Cavebot' in asyncio.run(server._async_restart_action('adaptive_cavebot'))
+    state.settings['actions']={n:{'enabled':True} for n in ('adaptive_cavebot','eat_food')}
     calls=[];monkeypatch.setattr(server,'_start_action',lambda name:calls.append(name))
     server._start_all_enabled_actions()
     assert set(calls)=={'dll_bridge','eat_food'}
-    assert all(not state.settings['actions'][n]['enabled'] for n in ('cavebot','cavebot2','adaptive_cavebot'))
+    assert not state.settings['actions']['adaptive_cavebot']['enabled']
 
 
 def test_emergency_invalidates_v2_while_manual_pause_can_resume(state,tmp_path):

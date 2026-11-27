@@ -437,8 +437,8 @@ class PassiveMapMonitor:
                 self.atlas = MapAtlas(Path(__file__).parent / "local_data",scope,web_definitions=webs)
             tasks = getattr(self.state,"_action_tasks",{})
             auto_task = getattr(self.state,"_auto_task",None)
-            automated = (getattr(self.state,"playback_active",False) or (auto_task is not None and not auto_task.done())
-                         or any(name in tasks and not tasks[name].done() for name in ("cavebot","cavebot2","adaptive_cavebot")))
+            automated = ((auto_task is not None and not auto_task.done())
+                         or ("adaptive_cavebot" in tasks and not tasks["adaptive_cavebot"].done()))
             gs = getattr(self.state,"game_state",None)
             dead = bool(getattr(gs,"stats_updated_at",0)) and getattr(gs,"hp",0)<=0
             result = {**result,"cells":self.annotations.annotate(result["cells"])}
@@ -559,7 +559,6 @@ class PassiveMapMonitor:
                     retrying_frame = True
                     if self._stop.wait(retry_delay):
                         break
-                    continue
                     continue
                 except Exception as exc:
                     # No addresses, process contents, credentials or raw packets in UI/logs.

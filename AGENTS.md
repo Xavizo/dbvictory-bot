@@ -25,5 +25,3 @@
 - Linux checks do not establish Windows compatibility. Report DLL compilation,
   attachment, login, dashboard launch, and gameplay as untested until exercised on
   the matching Windows client. Offsets in this repository are client-specific.
-- Existing `.claude/commands/` files are optional historical troubleshooting
-  recipes, not executable dependencies. Verify paths and assumptions before use.

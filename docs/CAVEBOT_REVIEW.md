@@ -1,6 +1,8 @@
 # Przegląd walki i kierunek rozwoju V2
 
 Stan: 2026-11-16. To propozycje dalszych zmian, poza regułami opisanymi jako wdrożone.
+Opisane niżej `actions/cavebot.py`, `actions/cavebot2.py` i `actions/auto_targeting2.py`
+zostały później usunięte; ich obowiązki przejął `adaptive_cavebot`.
 Weryfikacja obecnych zmian: testy syntetyczne; nowe zachowania walki nie były
 uruchamiane na postaci.
 

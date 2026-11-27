@@ -36,8 +36,7 @@ from launcher_lock import launcher_lock
 ROOT = Path(__file__).resolve().parent
 # These actions must always require an explicit choice in the panel after start.
 COMBAT_ACTIONS = frozenset({
-    'adaptive_cavebot', 'cavebot', 'cavebot2', 'aoe_spell', 'auto_combat',
-    'auto_rune_and_spell', 'auto_targeting', 'auto_targeting2',
+    'adaptive_cavebot', 'auto_combat', 'auto_targeting',
 })
 
 

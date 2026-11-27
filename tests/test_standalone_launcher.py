@@ -58,7 +58,7 @@ def test_failed_combat_disable_prevents_attachment(monkeypatch):
         if name=='toggle_action':raise RuntimeError('failed')
         return 'OK'
     monkeypatch.setattr(launcher,'call',fake_call)
-    with pytest.raises(RuntimeError):asyncio.run(launcher.start_checked(None,{'actions':{'cavebot':{'enabled':True}}}))
+    with pytest.raises(RuntimeError):asyncio.run(launcher.start_checked(None,{'actions':{'auto_combat':{'enabled':True}}}))
     assert 'start_bot' not in calls
 
 

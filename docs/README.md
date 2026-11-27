@@ -22,7 +22,6 @@ tour of the panel.
 
 - [Combat review and V2 direction](CAVEBOT_REVIEW.md) (Polish)
 - [OTClient source analysis](otclient_source_analysis.md)
-- [Creature tracking research](creature_tracking_research.md)
 - vBot comparison (Polish): [architecture](vbot/architecture.md),
   [modules](vbot/modules.md), [decisions](vbot/decisions.md). These are also
   available as MCP resources under `dbvictory://knowledge/vbot/…`.

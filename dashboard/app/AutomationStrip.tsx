@@ -3,16 +3,14 @@ import {useState} from "react";
 import {toggleAction, type BotState} from "@/lib/api";
 import {authenticatedFetch} from "@/lib/auth";
 export const actionTitles:Record<string,string> = {
-  auto_hunter_knife:"Hunter Knife",auto_barrier_band:"Barrier Band",barrier_spell:"Barrier",auto_potions:"Leczenie · HP / Ki",aoe_spell:"Atak obszarowy",auto_combat:"Automatyczna walka",auto_login_transform:"Transformacja po logowaniu",
-  auto_rune_and_spell:"Runy i zaklęcia",auto_senzu:"Leczenie Senzu",auto_targeting:"Wybór celu",auto_targeting2:"Wybór celu · v2",
-  cavebot:"Cavebot · wyłączony",cavebot2:"Cavebot 2 · wyłączony",adaptive_cavebot:"Cavebot",eat_food:"Jedzenie",full_light:"Pełne oświetlenie",
-  item_id_spy:"Identyfikacja przedmiotów",mana_recovery_20:"Odnawianie Ki · 20%",mana_recovery_70:"Odnawianie Ki · 70%",
-  packet_sniffer:"Diagnostyka pakietów",power_down:"Power down",power_up:"Power up",spawn_tracker:"Obserwacja odrodzeń",speed_up:"Przyspieszenie",
+  auto_hunter_knife:"Hunter Knife",auto_barrier_band:"Barrier Band",barrier_spell:"Barrier",auto_potions:"Leczenie · HP / Ki",auto_combat:"Automatyczna walka",
+  auto_targeting:"Wybór celu",adaptive_cavebot:"Cavebot",eat_food:"Jedzenie",full_light:"Pełne oświetlenie",
+  packet_sniffer:"Diagnostyka pakietów",speed_up:"Przyspieszenie",
 };
 export default function AutomationStrip({state,connected,onRefresh,onSettings,onPause,busy}:{state:BotState|null;connected:boolean;onRefresh:()=>void;onSettings:()=>void;onPause:()=>void;busy:boolean}) {
   const [retained,setRetained]=useState<string[]>([]),[pending,setPending]=useState<string|null>(null),[error,setError]=useState("");
   const paused=!!state?.automation_paused,manual=state?.automation_pause_kind==="manual";
-  const actions=(state?.actions ?? []).filter(a=>!["dll_bridge","cavebot","cavebot2"].includes(a.name) && (a.enabled || a.running || retained.includes(a.name) || (a.name==="adaptive_cavebot" && state?.adaptive_cavebot?.status==="paused")));
+  const actions=(state?.actions ?? []).filter(a=>a.name!=="dll_bridge" && (a.enabled || a.running || retained.includes(a.name) || (a.name==="adaptive_cavebot" && state?.adaptive_cavebot?.status==="paused")));
   async function toggle(name:string,enabled:boolean) {
     setPending(name);setError("");setRetained(old=>old.includes(name)?old:[...old,name]);
     try {if(name==="adaptive_cavebot") {

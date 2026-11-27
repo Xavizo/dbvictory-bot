@@ -32,7 +32,6 @@ log = logging.getLogger("mcp_server")
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from browse_fields import NEARBY_ITEM_TEST_ENABLED
 from dbv_revision import checkout_revision, revision_label, version_for
 from session_startup import LoginStartup
 from session_observations import session_observations, note_observation_gap, publish_semantic_result
@@ -77,10 +76,9 @@ from protocol import (
 )
 from constants import SERVER_HOST, LOGIN_PORT, GAME_PORT
 import cavebot
-from potions import PotionScheduler, PotionDiagnostics, ITEMS as HEALING_ITEMS, LEGACY_HEALING_ACTIONS, validate_config as validate_potion_config
+from potions import PotionScheduler, PotionDiagnostics, ITEMS as HEALING_ITEMS, validate_config as validate_potion_config
 from barrier_spell import validate_config as validate_barrier_config
 from barrier_band import BandScheduler, validate_config as validate_band_config
-from route_safety import route_entry
 from dashboard_security import SESSION_TOKEN
 
 # ── Constants ───────────────────────────────────────────────────────
@@ -127,7 +125,6 @@ class BotState:
         self.settings: dict = load_settings()
         self.automation_paused = bool(self.settings.get("automation_paused", False))
         self.automation_pause_kind = self.settings.get("automation_pause_kind", "emergency") if self.automation_paused else None
-        self._paused_playback = None
         self._stopping_tasks = []
         self._emergency_stopping = False
         self.band_scheduler = BandScheduler()
@@ -155,31 +152,6 @@ class BotState:
         self.recording_start_time: float = 0
         self._recording_callback = None
 
-        # Cavebot playback state
-        self.playback_active: bool = False
-        self.playback_recording_name: str = ""
-        self.playback_index: int = 0
-        self.playback_total: int = 0
-        self.playback_loop: bool = False
-        self.playback_actions_map: list[dict] = []
-        self.playback_minimap: dict | None = None
-        self.playback_failed_nodes: set[int] = set()
-
-        # Playback session statistics
-        self.playback_loop_count: int = 0
-        self.playback_kills: int = 0
-        self.playback_senzu_used: int = 0
-        self.playback_start_time: float = 0       # time.time() when playback started
-        self.playback_start_experience: int | None = None  # XP snapshot at playback start
-        self.playback_start_level: int = 0        # level snapshot at playback start
-
-        # Senzu/h time-series for charting
-        self.playback_senzu_series: list[list] = []     # [[elapsed_sec, senzu_per_hour], ...]
-        self._last_senzu_sample_time: float = 0
-
-        # Route telemetry — per-segment timing and kill stats
-        self.segment_enter_time: dict[int, float] = {}   # {segment_index: enter_timestamp}
-        self.segment_stats: dict[int, dict] = {}          # accumulated per-segment stats
 
     @property
     def connected(self) -> bool:
@@ -235,18 +207,6 @@ async def _async_profiles(body):
     save_settings(candidate);state.settings=candidate
     if kind=='bot':state.alert_center.configure(candidate['alerts'])
     return {'config':candidate['combat_profile'] if kind=='combat' else validate_bot(row['config'])}
-
-
-async def _async_nearby_items(body=None):
-    from nearby_items import NearbyItemTest
-    panel = getattr(state, 'nearby_item_test', None)
-    if panel is None or not panel.lease.valid() or panel.lease.player != state.game_state.player_id:
-        panel = state.nearby_item_test = NearbyItemTest(state)
-    if body is None:
-        return panel.snapshot()
-    if body == "containers":
-        return await panel.containers()
-    return await panel.move(body["token"], body["destination"], body.get("container"))
 
 
 async def _async_alerts(command, body):
@@ -431,21 +391,9 @@ def _load_action_module(name: str):
     return mod
 
 
-def _healing_conflict(name: str) -> str | None:
-    others = LEGACY_HEALING_ACTIONS if name == "auto_potions" else {"auto_potions"} if name in LEGACY_HEALING_ACTIONS else set()
-    conflicts = [other for other in sorted(others)
-                 if state.settings.get("actions", {}).get(other, {}).get("enabled")
-                 or (state._action_tasks.get(other) and not state._action_tasks[other].done())]
-    if conflicts:
-        return "Disable conflicting healing actions first: " + ", ".join(conflicts)
-    return None
-
-
 def _start_action(name: str) -> str | None:
     """Load an action script and launch its run(bot) as a background task.
     Returns an error string on failure, None on success."""
-    if name in {"cavebot","cavebot2"}:
-        return "Ten starszy silnik jest wyłączony. Użyj Cavebot."
     if name=="adaptive_cavebot":
         controller=getattr(state,"adaptive_cavebot",None)
         if controller is None or controller.status not in {"ready","paused"} or not controller.path:
@@ -456,9 +404,6 @@ def _start_action(name: str) -> str | None:
         except ValueError as exc:return str(exc)
     if state.automation_paused and name not in INTERNAL_ACTIONS:
         return "Emergency pause is active. Unlock it before enabling actions."
-    conflict = _healing_conflict(name)
-    if conflict:
-        return conflict
     if name == "speed_up":
         try:
             from speed_up import validate_config
@@ -523,13 +468,6 @@ def _stop_action(name: str) -> bool:
     task = state._action_tasks.pop(name, None)
     if task and not task.done():
         task.cancel()
-        # Always clear lure_active when cavebot is stopped — the try/finally
-        # in cavebot.run() also does this, but task.cancel() is async so the
-        # finally block may not have run yet when callers check lure_active.
-        if name == "cavebot":
-            was = state.game_state.lure_active
-            state.game_state.lure_active = False
-            log.info(f"_stop_action(cavebot): lure_active {was} -> False")
         return True
     return False
 
@@ -546,7 +484,7 @@ def _start_all_enabled_actions() -> int:
             count += 1
     # Start user-enabled actions
     for name, cfg in state.settings.get("actions", {}).items():
-        if name in {"cavebot","cavebot2","adaptive_cavebot"}:
+        if name=="adaptive_cavebot":
             cfg["enabled"]=False
             continue  # Navigation never resumes automatically after login.
         if name in INTERNAL_ACTIONS:
@@ -571,14 +509,12 @@ def _discover_actions() -> list[str]:
 
 async def _async_toggle_action(name: str, enabled: bool) -> str:
     """Enable or disable an action. Returns a status message."""
-    if enabled and name in {"cavebot","cavebot2","adaptive_cavebot"}:
-        return "Error: Starsze silniki są wyłączone; V2 uruchamiaj przez Start zapisanej trasy."
+    if enabled and name=="adaptive_cavebot":
+        return "Error: V2 uruchamiaj przez Start zapisanej trasy."
     if name in INTERNAL_ACTIONS:
         return f"Action '{name}' is an internal service and cannot be toggled."
     if enabled and state.automation_paused:
         return "Error: Emergency pause is active. Unlock it first."
-    if enabled and (conflict := _healing_conflict(name)):
-        return f"Error: {conflict}"
     if enabled and name == "speed_up":
         try:
             from speed_up import validate_config
@@ -612,13 +548,6 @@ async def _async_toggle_action(name: str, enabled: bool) -> str:
         return f"Action '{name}' enabled. It will auto-start when the bot connects."
     else:
         was_running = _stop_action(name)
-        if state._paused_playback and state._paused_playback["engine"]==name:
-            state._paused_playback=None
-        if name in {"cavebot","cavebot2"}:
-            state.playback_active=state.playback_loop=False
-            state.game_state.lure_active=False
-            if state.game_proxy and was_running:
-                await state.game_proxy.send_emergency_stop()
         return f"Action '{name}' disabled{' and stopped' if was_running else ''}."
 
 
@@ -648,7 +577,6 @@ async def _async_emergency_stop(*, preserve_enabled=False) -> str:
             state.automation_pause_kind="emergency"
             state.settings["automation_pause_kind"]="emergency"
             state.settings.pop("paused_actions",None)
-            state._paused_playback=None
             for name,cfg in state.settings.get("actions",{}).items():
                 if name not in INTERNAL_ACTIONS:cfg["enabled"]=False
             save_settings(state.settings)
@@ -661,12 +589,8 @@ async def _async_emergency_stop(*, preserve_enabled=False) -> str:
     state.settings["automation_pause_kind"] = state.automation_pause_kind
     if preserve_enabled:
         state.settings["paused_actions"] = sorted((set(n for n,c in state.settings.get("actions",{}).items() if c.get("enabled")) | set(state._action_tasks)) - INTERNAL_ACTIONS - state._action_completed)
-        state._paused_playback = ({"name":state.playback_recording_name,"loop":state.playback_loop,
-                                   "engine":"cavebot2" if "cavebot2" in state._action_tasks else "cavebot"}
-                                  if state.playback_active else None)
     else:
         state.settings.pop("paused_actions",None)
-        state._paused_playback = None
     if state.game_proxy:
         state.game_proxy.pause_injections()
     names = set(_discover_actions()) | set(state.settings.get("actions", {})) | set(state._action_tasks)
@@ -683,10 +607,7 @@ async def _async_emergency_stop(*, preserve_enabled=False) -> str:
         tasks.append(state._auto_task)
     state._auto_task = None
     state._stopping_tasks = tasks
-    state.playback_active = False
-    state.playback_loop = False
     state.game_state.lure_active = False
-    state.game_state.force_target = None
     if not preserve_enabled:
         if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Awaryjny STOP — wybierz trasę ponownie.")
         state.potion_diagnostics.set_active(False)
@@ -724,12 +645,6 @@ async def _async_resume_automation() -> str:
         raise ValueError("Wait for actions to finish stopping")
     names = [n for n in state.settings.get("paused_actions",[]) if n not in INTERNAL_ACTIONS
              and state.settings.get("actions",{}).get(n,{}).get("enabled")]
-    route = state._paused_playback if state.connected else None
-    if route:
-        rec = cavebot.load_recording(route["name"])
-        if rec is None: raise ValueError("Paused route no longer exists")
-        _,error = route_entry(cavebot.build_actions_map(rec),state.game_state.position)
-        if error: raise ValueError(error)
     previous=dict(state.settings)
     state.settings.update(automation_paused=False,automation_pause_kind=None)
     state.settings.pop("paused_actions",None)
@@ -742,11 +657,6 @@ async def _async_resume_automation() -> str:
     if state.game_proxy: state.game_proxy.injections_paused=False
     errors=[]
     if state.connected:
-        if route:
-            state.playback_active=True
-            state.playback_recording_name=route["name"]
-            state.playback_loop=route["loop"]
-            names=list(dict.fromkeys([*names,route["engine"]]))
         for name in names:
             if name=='adaptive_cavebot':
                 try:await _async_adaptive_control('resume')
@@ -757,7 +667,6 @@ async def _async_resume_automation() -> str:
     if errors:
         await _async_pause_automation()
         raise ValueError("Resume failed; paused again: " + "; ".join(errors))
-    state._paused_playback=None
     state.alert_center.set_automation_paused(state.automation_paused)
     return "Selected actions resumed." if state.connected else "Pause removed; selected actions will start after login."
 
@@ -884,7 +793,7 @@ async def _async_adaptive_control(command: str, config: dict | None=None) -> dic
 
 async def _async_restart_action(name: str) -> str:
     """Stop and re-start an action. Returns a status message."""
-    if name in {"cavebot","cavebot2","adaptive_cavebot"}:
+    if name=="adaptive_cavebot":
         return "Użyj Start/Wznów w Cavebot."
     if name == "auto_barrier_band":
         try: validate_band_config(state.settings.get("actions", {}).get(name, {}))
@@ -1277,7 +1186,6 @@ async def _reset_bot() -> str:
     state.automation_paused = bool(state.settings.get("automation_paused", False))
     state.alert_center.set_automation_paused(state.automation_paused)
     state.automation_pause_kind = state.settings.get("automation_pause_kind","emergency") if state.automation_paused else None
-    state._paused_playback = None
     state._stopping_tasks = []
 
     # Reset cavebot state
@@ -1287,20 +1195,6 @@ async def _reset_bot() -> str:
     state.recording_start_pos = (0, 0, 0)
     state.recording_start_time = 0
     state._recording_callback = None
-    state.playback_active = False
-    state.playback_recording_name = ""
-    state.playback_index = 0
-    state.playback_total = 0
-    state.playback_loop = False
-    state.playback_actions_map = []
-    state.playback_minimap = None
-    state.playback_failed_nodes = set()
-    state.playback_loop_count = 0
-    state.playback_kills = 0
-    state.playback_senzu_used = 0
-    state.playback_start_time = 0
-    state.playback_start_experience = None
-    state.playback_start_level = 0
 
     log.info("Bot reset complete.")
     return "Bot reset. Call start_bot to reconnect."
@@ -1482,8 +1376,7 @@ async def start_bot() -> str:
     state.game_proxy.injections_paused = state.automation_paused
 
     # Callbacks
-    # The bounded observer handles each server frame once; legacy per-opcode
-    # callbacks are used only by the older bot.py/start.py entry points.
+    # The bounded observer handles each server frame once.
 
     def on_client_packet(opcode, reader):
         try:
@@ -1491,29 +1384,6 @@ async def start_bot() -> str:
         except ValueError:
             name = "?"
         log.debug(f"[C->S] 0x{opcode:02X} ({name})")
-        if NEARBY_ITEM_TEST_ENABLED and opcode in (
-                ClientOpcode.USE_ITEM, ClientOpcode.CLOSE_CONTAINER, ClientOpcode.UP_CONTAINER,
-                ClientOpcode.BROWSE_FIELD, ClientOpcode.SEEK_IN_CONTAINER):
-            # Opening, closing or navigating a container invalidates a pending drop.
-            game = state.game_state
-            game.container_view_epoch = getattr(game, "container_view_epoch", 0) + 1
-            if opcode == ClientOpcode.BROWSE_FIELD and reader.remaining == 5:
-                game.browse_fields.requested(reader.read_position(), _time.perf_counter())
-            else:
-                # Opening a backpack in another window leaves the browsed tile available.
-                payload = reader.peek_remaining()
-                number = None
-                if opcode == ClientOpcode.USE_ITEM and len(payload) == 9:
-                    number = payload[-1]
-                elif opcode in (ClientOpcode.CLOSE_CONTAINER, ClientOpcode.UP_CONTAINER,
-                                ClientOpcode.SEEK_IN_CONTAINER) and payload:
-                    number = payload[0]
-                game.browse_fields.navigating(number)
-        if NEARBY_ITEM_TEST_ENABLED and opcode == ClientOpcode.MOVE_THING:
-            from protocol import manual_move_count_bytes
-            width = manual_move_count_bytes(reader)
-            if width is not None:
-                state.game_state.manual_move_count_bytes = width
         if opcode in (ClientOpcode.MOVE_THING, ClientOpcode.REQUEST_TRADE, ClientOpcode.ACCEPT_TRADE,
                       ClientOpcode.BUY_ITEM, ClientOpcode.SELL_ITEM):
             session_observations(state.game_state).publish("client_action", ("inventory",))
@@ -1598,12 +1468,6 @@ async def start_bot() -> str:
         for message in result.messages:
             state.alert_center.observe_chat(message, state, gs, result.received_at)
         publish_server_feedback(gs, result, state.potion_diagnostics)
-        for kill in kills:
-            if state.playback_active:
-                kill["segment"] = state.playback_index
-                kill["loop"] = state.playback_loop_count
-            if getattr(state,"telemetry",None):
-                state.telemetry.record_kill(kill["x"],kill["y"],kill["z"])
 
     def packet_observation_gap(reason):
         gs = state.game_state
@@ -1614,7 +1478,6 @@ async def start_bot() -> str:
         gs.client_walk_requests.clear()
         gs.packet_position_trusted = False
         gs.pets.invalidate_pending_look()
-        gs.browse_fields.clear()
         gs.message_history.invalidate_inventory()
         usage = getattr(gs, "senzu_usage", None)
         if usage is not None:
@@ -1643,11 +1506,8 @@ async def start_bot() -> str:
         if monitor:
             monitor.reset_learning_session()
         state.ready = False
-        state._paused_playback = None
-        state.playback_active = False
         state.game_state.stats_updated_at = 0
         state.game_state.lure_active = False
-        state.game_state.force_target = None
         for name in list(state._action_tasks):
             _stop_action(name)  # The passive reader also belongs to this login.
         if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Rozłączono — wymagany ponowny Start.")
@@ -2133,9 +1993,6 @@ async def _session_activity() -> dict:
         "action_log_tail": {name: _tail(state.action_logs.get(name, ()), 5) for name in running},
         "recording": {"active": state.recording_active, "name": state.recording_name,
                       "waypoints": len(state.recording_waypoints)},
-        "playback": {"active": state.playback_active, "recording": state.playback_recording_name,
-                     "index": state.playback_index, "total": state.playback_total, "loop": state.playback_loop,
-                     "loops_done": state.playback_loop_count, "kills": state.playback_kills},
         "adaptive_cavebot": adaptive.snapshot() if adaptive else None,
         "auto_walk": bool(state._auto_task and not state._auto_task.done()),
         "observer": observer.snapshot() if observer else None,
@@ -2353,208 +2210,6 @@ async def delete_recording(name: str) -> str:
     if cavebot.delete_recording(name):
         return f"Recording '{name}' deleted."
     return f"Recording '{name}' not found."
-
-
-async def _async_play_recording(name: str, loop: bool = False) -> str:
-    """Start playback (shared by MCP tool and dashboard API)."""
-    if state.automation_paused:
-        return "Error: Emergency pause is active. Unlock it first."
-    if not state.connected:
-        return "Bot is not connected. Call start_bot first."
-    if state.playback_active:
-        return f"Already playing '{state.playback_recording_name}'. Stop it first."
-
-    rec = cavebot.load_recording(name)
-    if rec is None:
-        return f"Recording '{name}' not found."
-
-    waypoints = rec.get("waypoints", [])
-    if not waypoints:
-        return f"Recording '{name}' has no waypoints."
-
-    _, error = route_entry(cavebot.build_actions_map(rec), state.game_state.position)
-    if error:
-        return f"Error: {error}"
-
-    state.playback_active = True
-    state.playback_recording_name = name
-    state.playback_index = 0
-    state.playback_total = len(waypoints)
-    state.playback_loop = loop
-
-    # Initialize session stats
-    state.playback_loop_count = 0
-    state.playback_kills = 0
-    state.playback_senzu_used = 0
-    state.playback_start_time = _time.time()
-    state.playback_start_experience = state.game_state.experience
-    state.playback_start_level = state.game_state.level
-    state.game_state.session_kills = 0
-
-    # Initialize route telemetry
-    state.game_state.kill_log.clear()
-    state.game_state._prev_experience = state.game_state.experience
-    state.segment_enter_time = {}
-    state.segment_stats = {}
-
-    # Start the cavebot action
-    err = _start_action("cavebot")
-    if err:
-        state.playback_active = False
-        return f"Failed to start playback: {err}"
-
-    loop_str = " (looping)" if loop else ""
-    return f"Playing recording '{name}' ({len(waypoints)} waypoints){loop_str}."
-
-
-async def _async_stop_playback() -> str:
-    """Stop playback (shared by MCP tool and dashboard API)."""
-    state._paused_playback = None
-    # Always clear lure_active, even if playback_active is already False
-    # (cavebot may have crashed/ended without clearing it)
-    was = state.game_state.lure_active
-    state.game_state.lure_active = False
-    log.info(f"_async_stop_playback: lure_active {was} -> False (playback_active={state.playback_active})")
-    if not state.playback_active:
-        return "No playback in progress."
-    _stop_action("cavebot")
-    name = state.playback_recording_name
-    state.playback_active = False
-    state.playback_recording_name = ""
-    state.playback_index = 0
-    state.playback_total = 0
-    state.playback_loop = False
-    state.playback_actions_map = []
-    state.playback_minimap = None
-    state.playback_failed_nodes = set()
-    state.playback_loop_count = 0
-    state.playback_kills = 0
-    state.playback_senzu_used = 0
-    state.playback_start_time = 0
-    state.playback_start_experience = None
-    state.playback_start_level = 0
-    state.playback_senzu_series = []
-    state._last_senzu_sample_time = 0
-    state.segment_enter_time = {}
-    state.segment_stats = {}
-    state.game_state.kill_log.clear()
-    state.game_state.lure_active = False
-    return f"Playback of '{name}' stopped."
-
-
-@mcp.tool()
-async def play_recording(name: str, loop: bool = False) -> str:
-    """Start playing back a saved cavebot recording.
-
-    Args:
-        name: Name of the recording to play.
-        loop: Whether to loop the recording (default False).
-    """
-    return await _async_play_recording(name, loop)
-
-
-@mcp.tool()
-async def stop_playback() -> str:
-    """Stop cavebot playback."""
-    return await _async_stop_playback()
-
-
-@mcp.tool()
-async def analyze_route() -> str:
-    """Analyze route efficiency from kill telemetry collected during cavebot playback.
-
-    Requires active playback with at least 1 completed loop. Returns per-segment
-    kill counts, XP rates, time spent, and efficiency ratings (hot/warm/cold/dead).
-    Includes recommendations for segments that could be skipped.
-    """
-    if not state.playback_active:
-        return "No playback in progress. Start a looping playback first."
-    if state.playback_loop_count < 1:
-        return (f"Need at least 1 completed loop for analysis. "
-                f"Currently on first pass (loop_count={state.playback_loop_count}).")
-
-    seg_stats = state.segment_stats
-    actions_map = state.playback_actions_map
-    gs = state.game_state
-
-    if not seg_stats:
-        return "No segment stats collected yet. Kills may not have been detected."
-
-    loops = state.playback_loop_count
-    elapsed = _time.time() - state.playback_start_time if state.playback_start_time else 0
-    elapsed_min = elapsed / 60
-    xp_gained = gs.experience - state.playback_start_experience if state.playback_start_experience is not None else 0
-    xp_per_hour = int(xp_gained / (elapsed / 3600)) if elapsed > 0 else 0
-    total_kills = sum(s["kills"] for s in seg_stats.values())
-    kills_per_loop = round(total_kills / max(loops, 1), 1)
-
-    lines = []
-    lines.append(f"Route Analysis ({loops} loops, {elapsed_min:.0f}min):")
-    lines.append(f"Overall: {xp_per_hour:,} XP/h, {kills_per_loop} kills/loop, {gs.session_kills} total kills")
-    lines.append("")
-
-    # Header
-    total_segs = len(actions_map)
-    lines.append(f"{'Seg':<8} {'Type':<12} {'Target':<18} {'Kills':<7} {'XP/s':<7} {'AvgT':<7} {'Rating'}")
-    lines.append("-" * 70)
-
-    # Compute average XP/s for rating thresholds
-    total_xp = sum(s["xp"] for s in seg_stats.values())
-    total_time = sum(s["time_total"] for s in seg_stats.values())
-    avg_xps = total_xp / total_time if total_time > 0 else 0
-
-    cold_segments = []
-    dead_segments = []
-
-    for seg_idx in sorted(seg_stats.keys()):
-        stats = seg_stats[seg_idx]
-        node = actions_map[seg_idx] if seg_idx < len(actions_map) else {}
-        entries = max(stats["entries"], 1)
-        avg_time = stats["time_total"] / entries
-        xps = stats["xp"] / stats["time_total"] if stats["time_total"] > 0 else 0
-        avg_kills = stats["kills"] / entries
-
-        ntype = node.get("type", "?")
-        target = node.get("target")
-        target_str = f"({target[0]},{target[1]},{target[2]})" if target else "--"
-
-        if stats["kills"] == 0:
-            rating = "--"
-            dead_segments.append((seg_idx, avg_time))
-        elif xps >= avg_xps * 1.2:
-            rating = "HOT"
-        elif xps >= avg_xps * 0.5:
-            rating = "WARM"
-        else:
-            rating = "COLD"
-            cold_segments.append((seg_idx, avg_kills, avg_time))
-
-        lines.append(
-            f"{seg_idx+1}/{total_segs:<5} {ntype:<12} {target_str:<18} "
-            f"{avg_kills:<7.1f} {xps:<7.1f} {avg_time:<7.1f} {rating}"
-        )
-
-    # Recommendations
-    if cold_segments or dead_segments:
-        lines.append("")
-        lines.append("Recommendations:")
-        wasted = 0
-        for seg_idx, avg_kills, avg_time in cold_segments:
-            lines.append(f"  - Segment {seg_idx+1} is COLD ({avg_kills:.1f} kills/loop, {avg_time:.0f}s)")
-            wasted += avg_time
-        for seg_idx, avg_time in dead_segments:
-            node = actions_map[seg_idx] if seg_idx < len(actions_map) else {}
-            ntype = node.get("type", "?")
-            # Don't flag stairs/use_item as dead — they're navigation, not hunting
-            if ntype in ("use_item", "use_item_ex", "walk_steps"):
-                continue
-            lines.append(f"  - Segment {seg_idx+1} is DEAD (0 kills, {avg_time:.0f}s)")
-            wasted += avg_time
-        if wasted > 0 and total_time > 0:
-            pct = wasted / (total_time / max(loops, 1)) * 100
-            lines.append(f"  - Estimated wasted time: {wasted:.0f}s/loop ({pct:.0f}% of loop)")
-
-    return "\n".join(lines)
 
 
 # ── Entry point ─────────────────────────────────────────────────────

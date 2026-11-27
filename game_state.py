@@ -7,14 +7,11 @@ Called from the proxy callbacks on every server packet.
 
 import logging
 import struct
-import sys
 import time
 from collections import deque
 from client_player_state import client_field
 from message_history import MessageHistory
 from pet_tracking import PetTracker
-import browse_fields
-from browse_fields import BrowseFields, field_window_header
 
 from constants import PACKET_FORMATS as PF
 from protocol import Direction, ServerOpcode
@@ -76,7 +73,6 @@ class GameState:
 
         self.player_name = ""
         self.pets = PetTracker()
-        self.browse_fields = BrowseFields()
 
         # Player stats
         self.hp: int = 0
@@ -171,12 +167,6 @@ class GameState:
         self._recent_kills: set[int] = set()
         self._recent_kills_cleanup: float = 0
 
-        # ── v2 Adaptive Farming fields (backwards-compatible) ──
-        # Force-target override for body-block handler (last resort kill)
-        self.force_target: int | None = None
-        # Fight start mana snapshot for fight summary (set by cavebot2)
-        self.fight_start_mana: int = 0
-        self.fight_start_mana_max: int = 0
 
 
 
@@ -458,18 +448,6 @@ def _search_for_icons(data: bytes, start: int, gs: GameState) -> None:
 def _record_kill(gs: GameState, cid: int) -> None:
     """Record a monster kill event with position and playback context."""
     creature = gs.creatures.get(cid, {})
-    # Playback context from BotState (if available)
-    segment = None
-    loop_count = 0
-    try:
-        main_state = None if getattr(gs,"_packet_snapshot_detached",False) else sys.modules.get("__main__")
-        if main_state:
-            bot_state = getattr(main_state, "state", None)
-            if bot_state and getattr(bot_state, "playback_active", False):
-                segment = getattr(bot_state, "playback_index", None)
-                loop_count = getattr(bot_state, "playback_loop_count", 0)
-    except Exception:
-        pass
     kill_x = creature.get("x", 0)
     kill_y = creature.get("y", 0)
     kill_z = creature.get("z", 0)
@@ -483,20 +461,10 @@ def _record_kill(gs: GameState, cid: int) -> None:
         "px": gs.position[0],
         "py": gs.position[1],
         "pz": gs.position[2],
-        "segment": segment,
-        "loop": loop_count,
+        "segment": None,
+        "loop": 0,
     })
     gs.session_kills += 1
-
-    # Feed v2 telemetry if loaded (optional integration)
-    try:
-        main_mod = None if getattr(gs,"_packet_snapshot_detached",False) else sys.modules.get("__main__")
-        if main_mod:
-            telem = getattr(getattr(main_mod, "state", None), "telemetry", None)
-            if telem is not None:
-                telem.record_kill(kill_x, kill_y, kill_z)
-    except Exception:
-        pass
 
 
 
@@ -813,16 +781,8 @@ def _parse_at(opcode: int, data: bytes, pos: int, gs: GameState, *, received_at=
         _trt_size = PF.get("tile_remove_thing", {}).get("size", 6)
         return pos + _trt_size if pos + _trt_size <= len(data) else -1
 
-    if opcode == ServerOpcode.OPEN_CONTAINER and browse_fields.NEARBY_ITEM_TEST_ENABLED:
-        if pos < len(data) and data[pos] <= 15:
-            gs.server_events.append((time.time(), "container_window", {
-                "number": data[pos], "is_field": field_window_header(data, pos)}))
-        return -1  # Variable item list. Its contents come from the client window.
-
     # CLOSE_CONTAINER — 1 byte: u8 container_id
     if opcode == ServerOpcode.CLOSE_CONTAINER:
-        if browse_fields.NEARBY_ITEM_TEST_ENABLED and pos < len(data) and data[pos] <= 15:
-            gs.server_events.append((time.time(), "container_window", {"number": data[pos], "is_field": False}))
         _cc_size = PF.get("close_container", {}).get("size", 1)
         return pos + _cc_size if pos + _cc_size <= len(data) else -1
 

@@ -1,6 +1,5 @@
 """Auto combat: 2+ monsters nearby → Energy Grenade, else Darkness Blaster (mana>=5%) or rune 3165 on target.
 
-Replaces auto_rune_and_spell + aoe_spell with a single unified action.
 
 Priority each tick (200ms):
   1. AOE   — 2+ alive monsters within 1 sq (Chebyshev) → cast 'Energy Grenade'

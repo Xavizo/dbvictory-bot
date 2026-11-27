@@ -11,10 +11,10 @@ const start=1800000000000;
 test('lap counters preserve confirmed zero and leave unknown XP unavailable',()=>{
   const s=sample(),run=new RouteReplay(start);
   s.player.level=2;s.player.experience=112;s.player.stats_age=0;
-  s.senzu_usage={total:0};s.cavebot={playback:{stats:{kills:3}}};
+  s.senzu_usage={total:0};s.session_kills=3;
   run.observe(s,true,start);
   assert.deepEqual([run.frames[0].xp,run.frames[0].senzu,run.frames[0].deaths],[112,0,3]);
-  s.player.experience=7;s.senzu_usage=undefined;s.cavebot=undefined;
+  s.player.experience=7;s.senzu_usage=undefined;s.session_kills=undefined;
   run.observe(s,true,start+50);
   assert.deepEqual([run.frames[1].xp,run.frames[1].senzu,run.frames[1].deaths],[null,null,null]);
 });

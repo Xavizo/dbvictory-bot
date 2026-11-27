@@ -14,8 +14,8 @@ function readConfig(config:ActionInfo["config"]):Config {
       item_id:kind==="health" ? 10161 : 10160,threshold:c[`${kind}_threshold`] ?? (kind==="health" ? 60 : 40),
       jitter:c[`${kind}_jitter`] ?? 5,cooldown:c[`${kind}_cooldown`] ?? 0,interval:c[`${kind}_interval`] ?? 1,mode:c[`${kind}_mode`] ?? "use"}))};
 }
-export default function PotionPanel({action,diagnostics,paused,onRefresh,legacyActions=[]}:{
-  action:ActionInfo;diagnostics?:PotionDiagnosticState;paused:boolean;onRefresh:()=>void;legacyActions?:ActionInfo[];
+export default function PotionPanel({action,diagnostics,paused,onRefresh}:{
+  action:ActionInfo;diagnostics?:PotionDiagnosticState;paused:boolean;onRefresh:()=>void;
 }) {
   const [rowLimit,setRowLimit]=useState(100);
   const [config,setConfig]=useState<Config>(()=>readConfig(action.config));
@@ -37,16 +37,14 @@ export default function PotionPanel({action,diagnostics,paused,onRefresh,legacyA
     finally {setBusy(false);}
   }
   const unknown=config.rules.some(r=>r.enabled && Number(r.cooldown ?? config.shared_cooldown)<=0);
-  const conflicts=legacyActions.filter(a=>a.enabled || a.running);
   return <section className="potion-panel healing-panel">
     <div className="potion-panel-header"><div><h2>Reguły leczenia</h2><p>{action.running ? "Działają według priorytetu" : action.enabled ? "Włączone · oczekiwanie na grę" : "Wyłączone"}{dirty && " · niezapisane zmiany"}</p></div>
       <button className={`potion-toggle ${action.enabled ? "is-enabled" : ""}`}
-        disabled={busy || (!action.enabled && (paused || unknown || !!conflicts.length || !config.rules.some(r=>r.enabled)))}
+        disabled={busy || (!action.enabled && (paused || unknown || !config.rules.some(r=>r.enabled)))}
         onClick={()=>perform(async()=>{if(!action.enabled) await updateActionConfig("auto_potions",config);await toggleAction("auto_potions",!action.enabled);},action.enabled ? "Reguły wyłączone." : "Reguły włączone.")}>
         {action.enabled ? "Wyłącz reguły" : "Włącz reguły"}</button>
     </div>
     <p className="rule-explanation">Od góry: pierwsza spełniona reguła z zakończonym cooldownem. Cooldown pomija regułę i pozwala sprawdzić następną. Bot nie sprawdza zapasu przedmiotów.</p>
-    {!!conflicts.length && <p className="potion-notice">Wyłącz najpierw starsze akcje leczenia w sekcji poniżej: {conflicts.map(a=>a.name).join(", ")}. Dwa mechanizmy nie mogą jednocześnie używać Senzu.</p>}
     <fieldset disabled={busy} className="rule-list">
       {config.rules.map((r,i)=><article key={r.id} className={`healing-rule ${r.enabled ? "" : "rule-disabled"}`}>
         <div className="rule-main">
