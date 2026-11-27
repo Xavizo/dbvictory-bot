@@ -269,7 +269,7 @@ else {
       try{folder=JSON.parse(await fs.readFile(settings,"utf8")).folder;}catch{}
       if (!folder) {
         const list=await host.clients().catch(()=>[]);
-        folder=list[0]?.Path ? path.dirname(list[0].Path) : "D:\\Gry\\DBVClient_v5";
+        folder=list[0]?.Path ? path.dirname(list[0].Path) : "C:\\DBVClient_v5";
       }
       view={...view,...await clientInfo(folder)};
       await action("retry");

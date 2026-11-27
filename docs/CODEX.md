@@ -68,7 +68,7 @@ Dla osoby przygotowującej wydanie kroki są następujące.
    pakietu w kolejce. Do kompilacji używa zależności z kopii roboczej.
 
    ```powershell
-   $instalacja = 'D:\Projekty\tibia-ots-mcp-bot'
+   $instalacja = 'C:\DBVictoryBot'
    $wersja = git rev-parse HEAD
    & "$instalacja\venv\Scripts\python.exe" dbv_release.py --installation $instalacja publish . $wersja
    ```
