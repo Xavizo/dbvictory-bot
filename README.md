@@ -1,4 +1,5 @@
-# DBVictory Bot
+DBVictory Bot
+=============
 
 A desktop bot for the DBVictory game client (Windows). It runs next to the
 official client, reads the game state from network traffic and client memory,
@@ -425,16 +426,18 @@ A second agent can also attach read-only to a session the launcher started
 Actions are Python files in `actions/` with an `async def run(bot)` entry point.
 They appear in the panel and can be turned on and off at runtime.
 
-```python
-"""Say a spell once a minute while the character is logged in."""
-WORDS, EVERY = "utevo lux", 60
+```py
+"""Cast a light spell every minute while a character is in game."""
+import itertools
+
+SPELL, PAUSE_SECONDS = "utevo lux", 60
 
 async def run(bot):
-    while True:
-        if bot.is_connected:
-            await bot.say(WORDS)
-            bot.log(f"said {WORDS!r}")
-        await bot.sleep(EVERY)
+    for cast in itertools.count(1):        # runs until the action is turned off
+        if bot.is_connected:           # a character is in game right now
+            await bot.say(SPELL)
+            bot.log(f"cast #{cast}: {SPELL}")
+        await bot.sleep(PAUSE_SECONDS)     # also stops the action during a pause
 ```
 
 Old flat imports such as `from protocol import ...` still work for one release, then only the `dbv.*` names do.

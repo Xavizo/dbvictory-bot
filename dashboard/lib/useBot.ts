@@ -1,11 +1,12 @@
-"use client";
+'use client';
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchState, type BotState } from "./api";
+import { type BotState, fetchState } from "./api";
 import { getDashboardToken } from "./auth";
 import { PanelSession } from "./panelSession";
 
-const WS_URL = "ws://127.0.0.1:8090";
+const WS_PORT = 8090;
+const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
 const POLL_MS = 500;
 const STALE_MS = 3000;
 const RETRY_MS = 2000;
@@ -18,9 +19,17 @@ function isSnapshot(data: unknown): data is BotState {
     && (!snapshot.connected || (typeof snapshot.player?.hp === "number" && typeof snapshot.player.max_hp === "number"));
 }
 
-export function useBot() {
-  const [state, setState] = useState<BotState | null>(null);
-  const [mcpConnected, setMcpConnected] = useState(false);
+/** What the panel gets from the bot: its last state and whether it still arrives. */
+export interface BotConnection {
+  state: BotState | null;
+  mcpConnected: boolean;
+  refresh: () => Promise<void>;
+  dashboardError: string | null;
+}
+
+export function useBot(): BotConnection {
+  const [state, setState] = useState<BotState | null>(null); // the last accepted snapshot
+  const [mcpConnected, setMcpConnected] = useState<boolean>(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const session = useRef<PanelSession | null>(null);
   const received = useRef(-Infinity);
@@ -48,11 +57,10 @@ export function useBot() {
       if (request.current?.controller === controller) request.current = null;
     }, REQUEST_TIMEOUT_MS);
     request.current = {controller, timeout};
-    try {
+    try { // the timeout above aborts a request that hangs
       const data = await fetchState(controller.signal);
       if (active.current && !controller.signal.aborted && isSnapshot(data)) accept(data);
-    } catch {
-      // The watchdog marks the last good state stale regardless of transport.
+    } catch { // The watchdog marks the last good state stale regardless of transport.
     } finally {
       clearTimeout(timeout);
       if (request.current?.controller === controller) request.current = null;
@@ -61,7 +69,7 @@ export function useBot() {
 
   const refresh = useCallback(() => readStatus(true), [readStatus]);
 
-  useEffect(() => {
+  useEffect(function connectToBot() {
     if (!window.dbvAuth) {
       setDashboardError("Otwórz panel Electron ze skrótu DBVictory.");
       return;
@@ -86,7 +94,7 @@ export function useBot() {
     function connect() {
       openedAt = performance.now();
       lastFrame = -Infinity;
-      const ws = new WebSocket(WS_URL);
+      const ws: WebSocket = new WebSocket(WS_URL);
       socket = ws;
 
       ws.onopen = async () => {
@@ -97,7 +105,7 @@ export function useBot() {
       };
       ws.onmessage = event => {
         if (disposed || socket !== ws) return;
-        try {
+        try { // anything that is not a snapshot is ignored
           const data: unknown = JSON.parse(event.data);
           if (!isSnapshot(data)) return;
           abortRead();
@@ -106,7 +114,7 @@ export function useBot() {
           fallback = false;
         } catch { /* Keep the clock of the last valid snapshot. */ }
       };
-      ws.onclose = () => {
+      ws.onclose = (): void => {
         if (disposed || socket !== ws) return;
         socket = null;
         nextConnect = performance.now() + RETRY_MS;
@@ -120,7 +128,7 @@ export function useBot() {
     const timer = setInterval(() => {
       const now = performance.now();
       if (now - received.current >= STALE_MS) {
-        setMcpConnected(false);
+        setMcpConnected(false); // no snapshot for STALE_MS
         setState(previous => {
           if (!previous || (!previous.connected && previous.session_statistics?.status !== "active")) return previous;
           const stats = previous.session_statistics;
@@ -142,7 +150,7 @@ export function useBot() {
       if (fallback) void readStatus(false);
     }, POLL_MS);
 
-    return () => {
+    return function disconnect() {
       disposed = true;
       active.current = false;
       clearInterval(timer);
