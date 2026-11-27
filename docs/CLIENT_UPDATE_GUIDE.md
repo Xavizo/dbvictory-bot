@@ -118,13 +118,13 @@ older files will not adapt the current connection path.
 | Files | Responsibility / what to review |
 | --- | --- |
 | [Uruchom bota.cmd](../Uruchom%20bota.cmd), [launcher/Desktop.cs](../launcher/Desktop.cs), [launcher/build_desktop.ps1](../launcher/build_desktop.ps1) | Entry point and generated `DBVictory Launcher.exe`. Rebuild the EXE only when its compiled behavior/resources require it. |
-| [launcher/desktop/host.js](../launcher/desktop/host.js), [effects.js](../launcher/desktop/effects.js), [main.js](../launcher/desktop/main.js), [bridge.js](../launcher/desktop/bridge.js), [render.js](../launcher/desktop/render.js) | Updater/Python invocation, client-process checks, manual Connect flow and launcher UI. `index.html` and `style.css` provide its view. |
+| [launcher/desktop_host.py](../launcher/desktop_host.py), [launcher/desktop_app.py](../launcher/desktop_app.py), [effects.js](../launcher/desktop/effects.js), [bridge.js](../launcher/desktop/bridge.js), [render.js](../launcher/desktop/render.js) | Updater/Python invocation, client-process checks, manual Connect flow and launcher UI. `index.html` and `style.css` provide its view. |
 | [launcher/desktop_session.py](../launcher/desktop_session.py), [run_bot.py](../run_bot.py), [run_mcp.py](../run_mcp.py) | Desktop session, engine launch and MCP entry. The desktop game port is currently 7475; direct MCP defaults can differ. |
 | [launcher_files.py](../launcher_files.py), [launcher/UpdateWindow.cs](../launcher/UpdateWindow.cs) | File-only preflight and updater window. `preflight --check` does not install anything. |
 | [dbv_release.py](../dbv_release.py), [launcher_lock.py](../launcher_lock.py), [dbv_revision.py](../dbv_revision.py), [launcher_panel_build.py](../launcher_panel_build.py) | Exact-commit packaging, locks, version calculation and renderer builds. Native/dependency changes intentionally require separate maintenance. |
 | [launcher/desktop/release-notes.json](../launcher/desktop/release-notes.json) | User-facing release notes. Each commit advances the displayed version, including documentation commits. |
-| [dbv/mcp_server/dashboard_api.py](../dashboard_api.py), [dbv/mcp_server/dashboard_security.py](../dashboard_security.py), `dashboard/app/`, `dashboard/electron/` | Observations/status UI, authenticated local APIs and Electron shell. Usually no changes for an offset-only update. |
-| [dashboard/electron/tray.js](../dashboard/electron/tray.js), [dbv/mcp_server/tray_exit.py](../tray_exit.py) | **Zakończ bota** requests engine exit. Window X only hides the panel. |
+| [dbv/mcp_server/dashboard_api.py](../dashboard_api.py), [dbv/mcp_server/dashboard_security.py](../dashboard_security.py), `dashboard/app/`, `dashboard/electron/` | Observations/status UI, authenticated local APIs and the pywebview window (`dbv/mcp_server/panel_window.py`). Usually no changes for an offset-only update. |
+| [dbv/mcp_server/panel_window.py](../dbv/mcp_server/panel_window.py), [dbv/mcp_server/tray_exit.py](../tray_exit.py) | **Zakończ bota** requests engine exit. Window X only hides the panel. |
 
 ### Tests and evidence
 
@@ -165,7 +165,7 @@ bot tray menu **Zakończ bota**. Preserve a private local backup of:
 - `bot_settings.json`, `recordings/`, `local_data/`, and any private local
   configuration, including untracked files.
 - Local client assets such as `dashboard/public/local-spells/`, plus the runtime
-  configuration needed to recover `venv` and the local Node/Electron installation.
+  configuration needed to recover `venv` and the local Node.js installation (it builds the panel).
 - The old client/DAT files if already retained locally. An old bot with a new
   client is not necessarily a usable rollback.
 
@@ -398,7 +398,7 @@ of success and an agent-observed measurement are different evidence; label them.
 | Session active, HP/Ki still blank or stale | Inspect LocalPlayer identification, stats offsets/types and freshness. HP/Ki native sampling is separate from merely forwarding/decrypting packets. |
 | Session active, DLL/bridge inactive | Compare selected DLL filename, bitness, pipe and C++ build definition; check injection status and process permissions. An old resident DLL requires client exit. |
 | Map/equipment wrong while HP works | Check their own vtables/structures and DAT scope; do not shift all offsets together. |
-| Update says `busy` after closing the window | X hides the dashboard. Use tray → **Zakończ bota**, close the launcher and recheck. Do not force-kill an unidentified Python/Electron process. |
+| Update says `busy` after closing the window | X hides the dashboard. Use tray → **Zakończ bota**, close the launcher and recheck. Do not force-kill an unidentified Python process. |
 | “Osobna aktualizacja zależności lub DLL” during publish | Use maintenance path B; the native/dependency guard is working as intended. |
 
 Local `.codex/standalone-stderr.log` and `dll_bridge_debug.txt` can help with

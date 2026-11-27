@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 
@@ -6,60 +5,37 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import release_trim  # noqa: E402
 
-LOCK = {
-    "lockfileVersion": 3,
-    "packages": {
-        "": {"dependencies": {"next": "15", "react": "19"},
-             "devDependencies": {"electron": "45", "wait-on": "9", "typescript": "5", "concurrently": "10"}},
-        "node_modules/next": {"dependencies": {"@next/env": "1", "styled-jsx": "5", "postcss": "8"},
-                              "optionalDependencies": {"@next/swc-win32-x64-msvc": "1", "sharp": "0"},
-                              "peerDependencies": {"react": "19"}},
-        "node_modules/@next/env": {},
-        "node_modules/@next/swc-win32-x64-msvc": {"optional": True},
-        "node_modules/sharp": {"optional": True, "dependencies": {"@img/sharp-win32-x64": "0"}},
-        "node_modules/@img/sharp-win32-x64": {"optional": True},
-        "node_modules/styled-jsx": {"dependencies": {"client-only": "0"}},
-        "node_modules/client-only": {},
-        "node_modules/postcss": {"dependencies": {"nanoid": "3"}},
-        "node_modules/nanoid": {},
-        "node_modules/react": {},
-        "node_modules/electron": {"dev": True, "dependencies": {"@electron/get": "5"}},
-        "node_modules/@electron/get": {"dev": True},
-        "node_modules/wait-on": {"dev": True, "dependencies": {"rxjs": "7", "minimist": "1"}},
-        "node_modules/wait-on/node_modules/minimist": {"dev": True},
-        "node_modules/minimist": {"dev": True},
-        "node_modules/rxjs": {"dev": True},
-        "node_modules/typescript": {"dev": True},
-        "node_modules/concurrently": {"dev": True, "dependencies": {"rxjs": "7"}},
-    },
-}
+SITE = "venv/Scripts/Lib/site-packages"
 
 
 def stage(tmp_path):
     root = tmp_path / "DBVictory-Bot"
-    files = ["venv/Scripts/python.exe", "venv/Scripts/Lib/site-packages/mcp/__init__.py",
-             "venv/Scripts/Lib/site-packages/pip/__init__.py", "venv/Scripts/Lib/site-packages/pip-26.3.dist-info/RECORD",
-             "venv/Scripts/Lib/site-packages/PyWin32.chm", "venv/Scripts/Lib/site-packages/win32/win32api.pyd",
+    files = ["venv/Scripts/python.exe", "venv/Scripts/pythonw.exe", f"{SITE}/mcp/__init__.py",
+             f"{SITE}/pip/__init__.py", f"{SITE}/pip-26.3.dist-info/RECORD",
+             f"{SITE}/PyWin32.chm", f"{SITE}/win32/win32api.pyd", f"{SITE}/win32/win32clipboard.pyd",
+             f"{SITE}/webview/__init__.py", f"{SITE}/webview/lib/Microsoft.Web.WebView2.Core.dll",
+             f"{SITE}/webview/lib/runtimes/win-x64/native/WebView2Loader.dll",
+             f"{SITE}/webview/lib/runtimes/win-x86/native/WebView2Loader.dll",
+             f"{SITE}/webview/lib/runtimes/win-arm64/native/WebView2Loader.dll",
+             f"{SITE}/webview/lib/pywebview-android.jar", f"{SITE}/webview/lib/WebBrowserInterop.x64.dll",
+             f"{SITE}/webview/lib/WebBrowserInterop.x86.dll", f"{SITE}/pythonnet/runtime/Python.Runtime.dll",
              "venv/Scripts/Lib/tkinter/__init__.py", "venv/Scripts/Lib/ensurepip/__init__.py",
              "venv/Scripts/Lib/asyncio/__init__.py", "venv/Scripts/DLLs/tcl86t.dll", "venv/Scripts/DLLs/_ssl.pyd",
              "venv/Scripts/tcl/tcl8.6/init.tcl", "venv/Scripts/Scripts/pip.exe",
-             "runtime/node/node.exe", "runtime/node/npm.cmd", "runtime/node/node_modules/npm/index.js",
-             "runtime/node/node_modules/npm/docs/output/npm.html",
-             "dashboard/.next/BUILD_ID", "dashboard/.next/static/x.js.map",
-             "tests/test_x.py", "dashboard/electron/main.js", "dashboard/electron/tray.test.js",
-             "dashboard/package.json", "dbv/mcp_server/panel_server.py", "docs/screenshots/a.png", "docs/vbot/architecture.md", "requirements-dev.txt"]
-    files += [f"dashboard/{key}/package.json" for key in LOCK["packages"] if key]
-    files += ["dashboard/node_modules/next/dist/server/next.js", "dashboard/node_modules/next/dist/server/next.js.map",
-              "dashboard/node_modules/next/dist/server/next.d.ts", "dashboard/node_modules/next/README.md",
-              "dashboard/node_modules/next/license.md", "dashboard/node_modules/next/LICENSE",
-              "dashboard/node_modules/electron/dist/electron.exe", "dashboard/node_modules/electron/dist/locales/pl.pak",
-              "dashboard/node_modules/electron/index.js", "dashboard/node_modules/electron/cli.js",
-              "dashboard/node_modules/electron/path.txt", "dashboard/node_modules/electron/install.js",
-              "dashboard/node_modules/electron/node_modules/x/index.js", "dashboard/node_modules/.bin/next"]
+             "runtime/node/node.exe", "runtime/node/node_modules/npm/index.js",
+             "dashboard/.next/BUILD_ID", "dashboard/.next/static/chunks/x.js",
+             "dashboard/.next/server/app/index.html", "dashboard/.next/cache/webpack/x.pack",
+             "dashboard/.next/trace", "dashboard/.next/types/app/page.ts",
+             "dashboard/public/desktop-bridge.js", "dashboard/package.json", "dashboard/package-lock.json",
+             "dashboard/node_modules/next/dist/server/next.js", "dashboard/node_modules/react/index.js",
+             "dashboard/node_modules/.bin/next",
+             "dashboard/electron/windows_alert.py", "dashboard/electron/tray.png", "dashboard/electron/sounds/player.wav",
+             "dashboard/electron/atlas.test.js", "dashboard/electron/layout-regression.cjs",
+             "tests/test_x.py", "launcher/desktop_app.py", "dbv/mcp_server/panel_server.py",
+             "docs/screenshots/a.png", "docs/vbot/architecture.md", "requirements-dev.txt"]
     for rel in files:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text("x")
-    (root / "dashboard" / "package-lock.json").write_text(json.dumps(LOCK))
     return root
 
 
@@ -67,50 +43,45 @@ def present(root):
     return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
 
 
-def test_only_electron_ships_because_the_engine_serves_the_built_panel():
-    assert release_trim.runtime_packages(LOCK) == {"node_modules/electron"}
-
-
-def test_runtime_packages_follow_node_resolution(monkeypatch):
-    monkeypatch.setattr(release_trim, "RUNTIME_PACKAGES", ("next", "react", "electron", "wait-on"))
-    keep = release_trim.runtime_packages(LOCK)
-    assert keep == {"node_modules/next", "node_modules/@next/env", "node_modules/styled-jsx",
-                    "node_modules/client-only", "node_modules/postcss", "node_modules/nanoid",
-                    "node_modules/react", "node_modules/electron", "node_modules/wait-on",
-                    "node_modules/wait-on/node_modules/minimist", "node_modules/rxjs"}
-
-
 def test_trim_keeps_what_players_run(tmp_path):
     root = stage(tmp_path)
     release_trim.trim(root)
     files = present(root)
-    for kept in ("venv/Scripts/python.exe", "venv/Scripts/Lib/site-packages/mcp/__init__.py",
-                 "venv/Scripts/Lib/site-packages/win32/win32api.pyd", "venv/Scripts/Lib/asyncio/__init__.py",
-                 "venv/Scripts/DLLs/_ssl.pyd", "dashboard/.next/BUILD_ID", "dashboard/.next/static/x.js.map",
-                 "dashboard/electron/main.js", "dashboard/package.json", "dbv/mcp_server/panel_server.py",
-                 "dashboard/node_modules/electron/dist/electron.exe",
-                 "dashboard/node_modules/electron/dist/locales/pl.pak", "dashboard/node_modules/electron/index.js",
-                 "dashboard/node_modules/electron/cli.js", "dashboard/node_modules/electron/path.txt",
-                 "dashboard/node_modules/.bin/next", "dashboard/package-lock.json", "docs/vbot/architecture.md"):
+    for kept in ("venv/Scripts/python.exe", "venv/Scripts/pythonw.exe", f"{SITE}/mcp/__init__.py",
+                 f"{SITE}/win32/win32api.pyd", f"{SITE}/win32/win32clipboard.pyd", f"{SITE}/webview/__init__.py",
+                 f"{SITE}/webview/lib/Microsoft.Web.WebView2.Core.dll",
+                 f"{SITE}/webview/lib/runtimes/win-x64/native/WebView2Loader.dll",
+                 f"{SITE}/webview/lib/WebBrowserInterop.x64.dll", f"{SITE}/pythonnet/runtime/Python.Runtime.dll",
+                 "venv/Scripts/Lib/asyncio/__init__.py", "venv/Scripts/DLLs/_ssl.pyd",
+                 "dashboard/.next/BUILD_ID", "dashboard/.next/static/chunks/x.js",
+                 "dashboard/.next/server/app/index.html", "dashboard/public/desktop-bridge.js",
+                 "dashboard/package.json", "dashboard/package-lock.json",
+                 "dashboard/electron/windows_alert.py", "dashboard/electron/tray.png",
+                 "dashboard/electron/sounds/player.wav", "launcher/desktop_app.py",
+                 "dbv/mcp_server/panel_server.py", "docs/vbot/architecture.md"):
         assert kept in files, kept
     for dropped in ("tests/test_x.py", "docs/screenshots/a.png", "requirements-dev.txt",
-                    "venv/Scripts/Lib/site-packages/pip/__init__.py",
-                    "venv/Scripts/Lib/site-packages/pip-26.3.dist-info/RECORD",
-                    "venv/Scripts/Lib/site-packages/PyWin32.chm", "venv/Scripts/Lib/tkinter/__init__.py",
-                    "venv/Scripts/Lib/ensurepip/__init__.py", "venv/Scripts/DLLs/tcl86t.dll",
-                    "venv/Scripts/tcl/tcl8.6/init.tcl", "venv/Scripts/Scripts/pip.exe",
-                    "runtime/node/node.exe", "runtime/node/node_modules/npm/index.js",
-                    "dashboard/electron/tray.test.js", "dashboard/node_modules/next/dist/server/next.js",
-                    "dashboard/node_modules/react/package.json", "dashboard/node_modules/wait-on/package.json",
-                    "dashboard/node_modules/typescript/package.json", "dashboard/node_modules/concurrently/package.json",
-                    "dashboard/node_modules/minimist/package.json", "dashboard/node_modules/sharp/package.json",
-                    "dashboard/node_modules/@img/sharp-win32-x64/package.json",
-                    "dashboard/node_modules/@next/swc-win32-x64-msvc/package.json",
-                    "dashboard/node_modules/@electron/get/package.json", "dashboard/node_modules/electron/install.js",
-                    "dashboard/node_modules/electron/node_modules/x/index.js",
-                    "dashboard/node_modules/next/dist/server/next.js.map",
-                    "dashboard/node_modules/next/dist/server/next.d.ts", "dashboard/node_modules/next/README.md"):
+                    f"{SITE}/pip/__init__.py", f"{SITE}/pip-26.3.dist-info/RECORD", f"{SITE}/PyWin32.chm",
+                    f"{SITE}/webview/lib/pywebview-android.jar", f"{SITE}/webview/lib/WebBrowserInterop.x86.dll",
+                    f"{SITE}/webview/lib/runtimes/win-x86/native/WebView2Loader.dll",
+                    f"{SITE}/webview/lib/runtimes/win-arm64/native/WebView2Loader.dll",
+                    "venv/Scripts/Lib/tkinter/__init__.py", "venv/Scripts/Lib/ensurepip/__init__.py",
+                    "venv/Scripts/DLLs/tcl86t.dll", "venv/Scripts/tcl/tcl8.6/init.tcl", "venv/Scripts/Scripts/pip.exe",
+                    "runtime/node/node.exe", "dashboard/.next/cache/webpack/x.pack", "dashboard/.next/trace",
+                    "dashboard/.next/types/app/page.ts", "dashboard/node_modules/next/dist/server/next.js",
+                    "dashboard/node_modules/react/index.js", "dashboard/node_modules/.bin/next",
+                    "dashboard/electron/atlas.test.js", "dashboard/electron/layout-regression.cjs"):
         assert dropped not in files, dropped
-    assert not (root / "dashboard/node_modules/@img").exists()
-    assert not (root / "venv/Scripts/tcl").exists()
-    assert not (root / "runtime").exists()
+    for folder in ("dashboard/node_modules", "venv/Scripts/tcl", "runtime"):
+        assert not (root / folder).exists(), folder
+
+
+def test_trim_refuses_a_stage_without_the_panel_build(tmp_path):
+    root = stage(tmp_path)
+    (root / "dashboard/.next/BUILD_ID").unlink()
+    try:
+        release_trim.trim(root)
+    except SystemExit as error:
+        assert "BUILD_ID" in str(error)
+    else:
+        raise AssertionError("trim accepted a stage without the panel build")

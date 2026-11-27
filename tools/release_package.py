@@ -103,9 +103,10 @@ def main():
     if not re.fullmatch(r"v\d+\.\d+\.\d+", args.version) or not re.fullmatch(r"[0-9a-f]{40}", args.revision):
         raise SystemExit("Bad version or revision")
     if os.name == "nt":
-        stage = Path("\\\\?\\" + str(stage))  # node_modules paths can pass 260 characters
-    for required in ("DBVictory Launcher.exe", "venv/Scripts/python.exe", "dbv/mcp_server/panel_server.py",
-                     "dashboard/.next/BUILD_ID", "dashboard/node_modules/electron/dist/electron.exe"):
+        stage = Path("\\\\?\\" + str(stage))  # long paths can pass 260 characters
+    for required in ("DBVictory Launcher.exe", "venv/Scripts/python.exe", "venv/Scripts/pythonw.exe",
+                     "launcher/desktop_app.py", "dbv/mcp_server/panel_server.py", "dbv/mcp_server/panel_window.py",
+                     "dashboard/.next/BUILD_ID", "venv/Scripts/Lib/site-packages/webview/__init__.py"):
         if not (stage / required).is_file():
             raise SystemExit(f"Stage is missing {required}")
     (stage / "release.json").write_text(json.dumps({

@@ -858,8 +858,13 @@ def _stop_panel_server() -> None:
         server.server_close()
 
 
-def _electron_exe(dashboard_dir: Path) -> Path:
-    return dashboard_dir / "node_modules" / "electron" / "dist" / "electron.exe"
+def _panel_window_command() -> list[str] | None:
+    """The panel window process (pywebview), or None when pywebview is not installed."""
+    if importlib.util.find_spec("webview") is None:
+        return None
+    python = Path(sys.executable)
+    windowed = python.with_name("pythonw.exe")
+    return [str(windowed if windowed.is_file() else python), "-B", "-m", "dbv.mcp_server.panel_window"]
 
 
 atexit.register(_stop_dashboard)
@@ -951,13 +956,13 @@ def _build_status_report() -> str:
     else:
         lines.append("[--] DLL Pipe: not detected (dll_bridge action will inject)")
 
-    # Dashboard / Electron
+    # Dashboard / panel window
     dashboard_listening = _check_port_listening(DASHBOARD_PORT)
-    electron_running = _dashboard_running("electron")
-    if electron_running and dashboard_listening:
-        lines.append(f"[OK] Dashboard: Electron running on port {DASHBOARD_PORT}")
+    window_running = _dashboard_running("window")
+    if window_running and dashboard_listening:
+        lines.append(f"[OK] Dashboard: panel window open, served on port {DASHBOARD_PORT}")
     elif dashboard_listening:
-        lines.append(f"[OK] Dashboard: server on port {DASHBOARD_PORT} (Electron starting...)")
+        lines.append(f"[OK] Dashboard: server on port {DASHBOARD_PORT} (window starting...)")
     elif _dashboard_launched:
         lines.append("[..] Dashboard: launch requested, waiting for startup...")
     else:
@@ -991,7 +996,7 @@ def _activate_staged_dashboard(directory):
 
 
 def _launch_dashboard() -> None:
-    """Serve the prebuilt, loopback-only panel and open its authenticated Electron window."""
+    """Serve the prebuilt, loopback-only panel and open its authenticated desktop window."""
     global _dashboard_launched, _panel_server
     from dbv.mcp_server import panel_server
     dashboard_dir = paths.DASHBOARD_DIR
@@ -1001,9 +1006,9 @@ def _launch_dashboard() -> None:
     if not (dashboard_dir / ".next" / "BUILD_ID").exists():
         log.warning("Build the dashboard first: cd dashboard && npm ci && npm run build")
         return
-    electron = _electron_exe(dashboard_dir)
-    if not electron.is_file():
-        log.warning("Electron is missing — run: cd dashboard && npm ci")
+    window = _panel_window_command()
+    if window is None:
+        log.warning("The panel window needs pywebview — run: pip install -r requirements.txt")
         return
     if _panel_server is None and _check_port_listening(DASHBOARD_PORT):
         log.error("Dashboard port %s is occupied by another process; refusing to reuse it.", DASHBOARD_PORT)
@@ -1012,7 +1017,7 @@ def _launch_dashboard() -> None:
         if _panel_server is None:
             _activate_staged_dashboard(dashboard_dir)
             _panel_server = panel_server.start(dashboard_dir, DASHBOARD_PORT)
-        if not _dashboard_running("electron"):
+        if not _dashboard_running("window"):
             env = os.environ.copy()
             for name in ("DBV_DASHBOARD_TOKEN", EXIT_FILE_ENV, "ELECTRON_RUN_AS_NODE", "NODE_OPTIONS"):
                 env.pop(name, None)
@@ -1020,8 +1025,8 @@ def _launch_dashboard() -> None:
                 env[EXIT_FILE_ENV] = str(state.tray_exit_file)
             env["DBV_DASHBOARD_TOKEN"] = SESSION_TOKEN
             env["DBV_ENGINE_LABEL"] = ENGINE_LABEL
-            _dashboard_processes["electron"] = subprocess.Popen(
-                [str(electron), str(dashboard_dir)], cwd=str(dashboard_dir),
+            _dashboard_processes["window"] = subprocess.Popen(
+                window, cwd=str(paths.INSTALL_ROOT),
                 env=env, creationflags=subprocess.CREATE_NO_WINDOW,
             )
         _dashboard_launched = True
@@ -1553,7 +1558,7 @@ async def start_bot() -> str:
 
     log.info("Proxies started — waiting for player to log in via the game client...")
 
-    # Launch dashboard API and Electron immediately (don't wait for login)
+    # Launch dashboard API and panel window immediately (don't wait for login)
     from dbv.mcp_server import dashboard_api
     dashboard_api.start_api(asyncio.get_running_loop(), state)
     _launch_dashboard()
@@ -2121,9 +2126,9 @@ async def open_dashboard(standalone: bool = False) -> str:
         if not dashboard_api.start_api(asyncio.get_running_loop(), state, panel_only=True):
             return "ERROR: Could not open the local dashboard API."
     _launch_dashboard()
-    if _dashboard_running('electron'):
+    if _dashboard_running('window'):
         return "Panel opened. Game connection and actions unchanged."
-    return "ERROR: Could not open panel. Check the installed dashboard and Electron."
+    return "ERROR: Could not open panel. Check the installed dashboard and pywebview."
 
 
 @mcp.tool()

@@ -39,9 +39,8 @@ committed `HEAD`:
 | Path | Content |
 |---|---|
 | program files | `git archive HEAD` (without `.github`, `.claude`, `.mcp.json`) |
-| `venv\Scripts\` | relocatable CPython 3.12 with `requirements.txt` installed (laid out where a venv's interpreter would be, so every existing path works) |
+| `venv\Scripts\` | relocatable CPython 3.12 with `requirements.txt` installed (laid out where a venv's interpreter would be, so every existing path works). It also runs the launcher's and the panel's windows: pywebview on Windows' own WebView2 |
 | `dashboard\.next` | the panel, prebuilt; the engine serves it on `127.0.0.1:4747` with [`dbv/mcp_server/panel_server.py`](../dbv/mcp_server/panel_server.py) |
-| `dashboard\node_modules\electron` | Electron, the launcher's and the panel's window (the only panel package shipped) |
 | `dll\*.dll` | observer DLLs for every reviewed client build (32-bit MinGW) |
 | `DBVictory Launcher.exe` | the launcher |
 | `release.json` | version, commit, repository |
@@ -57,11 +56,10 @@ The build needs Node.js on `PATH` to run `npm ci` and `next build`; the package
 does not ship it. Every panel page is prerendered, so players need neither
 Node.js nor the Next.js server. Before sealing,
 [`tools/release_trim.py`](../tools/release_trim.py) removes what only the build
-needs: every panel package except Electron (Next.js, React, the compilers…),
-pip, Tk/IDLE and the C headers from Python, and `tests\`. The build then
-imports the bot's modules with the trimmed Python and serves the panel with
-`panel_server` before it zips anything. Electron's own files stay whole: the
-running launcher holds them open while it installs an update.
+needs: `dashboard\node_modules` (Next.js, React, the compilers…) and the
+panel's build cache, pip, Tk/IDLE and the C headers from Python, and `tests\`.
+The build then imports the bot's and the windows' modules with the trimmed
+Python and serves the panel with `panel_server` before it zips anything.
 
 Optional `-PythonDir` reuses an existing relocatable Python instead of
 `uv python install`.
@@ -84,7 +82,7 @@ Git installations keep the local release queue described in
    installation (a program file is missing, the download is bad) it falls
    back to the full zip. Releases up to v2.0.17 ignore patches.
 3. It swaps only files whose hash changed and removes program files the new
-   release no longer has. Running files (the launcher's Electron and Python)
+   release no longer has. Running files (the launcher's Python, or Electron in older releases)
    are renamed aside, which Windows allows, and deleted at the next start.
    Folders emptied under `dashboard\node_modules`, `runtime\node` and
    `venv\Scripts` are removed once per installed version.

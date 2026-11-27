@@ -19,9 +19,10 @@
   `requirements-dev.txt`. The MCP smoke test must work without a game or DLL.
 - Validate dashboard changes with `npm test`, `npm run typecheck` and `npm run build` in
   `dashboard/`. Use the lockfile with `npm ci`; check `npm audit` after updates.
-- The Electron dashboard receives a session token from the parent process. Keep
-  HTTP and WebSocket authentication, exact Origin checks, loopback binding, and
-  IPC sender validation intact. Do not expose the panel to the LAN or Internet.
+- The panel window (`dbv/mcp_server/panel_window.py`, pywebview) receives a
+  session token from the parent process. Keep HTTP and WebSocket
+  authentication, exact Origin checks, loopback binding, and the page-origin
+  checks of its `PanelApi` (and the launcher's `LauncherApi`) intact. Do not expose the panel to the LAN or Internet.
 - Linux checks do not establish Windows compatibility. Report DLL compilation,
   attachment, login, dashboard launch, and gameplay as untested until exercised on
   the matching Windows client. Offsets in this repository are client-specific.

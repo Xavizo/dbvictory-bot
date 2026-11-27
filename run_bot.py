@@ -55,9 +55,10 @@ def prepare_environment(game_port):
     env = {**os.environ, 'PYTHONUTF8':'1', 'PYTHONUNBUFFERED':'1',
            'DBV_GAME_PORT':str(game_port), 'DBV_ALLOW_PACKET_CAPTURE':'0'}
     env.pop('DBV_DASHBOARD_TOKEN', None)
-    # The engine serves the built panel itself; only Electron's window is needed.
-    if not (ROOT/'dashboard/node_modules/electron/dist/electron.exe').is_file():
-        raise RuntimeError('Brak Electrona panelu (dashboard/node_modules/electron). Zainstaluj zależności panelu.')
+    # The engine serves the built panel itself and shows it in a pywebview window.
+    import importlib.util
+    if importlib.util.find_spec('webview') is None:
+        raise RuntimeError('Brak pywebview (okno panelu). Zainstaluj zależności: pip install -r requirements.txt.')
     if not (ROOT/'dashboard/.next/BUILD_ID').is_file():
         raise RuntimeError('Brak skompilowanego panelu. Wymagana kompilacja dashboard.')
     return env

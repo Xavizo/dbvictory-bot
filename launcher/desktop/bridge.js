@@ -1,8 +1,17 @@
 "use strict";
-const { contextBridge, ipcRenderer } = require("electron");
-contextBridge.exposeInMainWorld("desktop", {
-  state: () => ipcRenderer.invoke("launcher:state"),
-  act: (action) => ipcRenderer.invoke("launcher:act", action),
-  mcp: (operation, target) => ipcRenderer.invoke("launcher:mcp", operation, target),
-  onState: (fn) => ipcRenderer.on("launcher:changed", (_event, snapshot) => fn(snapshot)),
-});
+// launcher/desktop_app.py exposes state, act and mcp as window.pywebview.api and
+// pushes every state change through window.__dbvDesktopChanged.
+(() => {
+  const ready = new Promise(resolve => {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.act) resolve(window.pywebview.api);
+    else window.addEventListener("pywebviewready", () => resolve(window.pywebview.api), {once:true});
+  });
+  const listeners = [];
+  window.__dbvDesktopChanged = snapshot => { for (const fn of listeners) fn(snapshot); };
+  window.desktop = Object.freeze({
+    state: () => ready.then(api => api.state()),
+    act: action => ready.then(api => api.act(action)),
+    mcp: (operation, target) => ready.then(api => api.mcp(operation, target ?? null)),
+    onState: fn => { listeners.push(fn); },
+  });
+})();

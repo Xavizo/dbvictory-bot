@@ -5,13 +5,10 @@
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 4747",
     "build": "next build",
-    "electron:dev": "concurrently \"npm run dev\" \"npm run electron:only\"",
-    "electron:only": "wait-on http-get://127.0.0.1:4747 && electron .",
     "start": "next start --hostname 127.0.0.1 --port 4747",
     "typecheck": "tsc --noEmit",
     "test": "node --test electron/*.test.js"
   },
-  "main": "electron/main.js",
   "dependencies": {
     "next": "15.5.29",
     "react": "^19.0.0",
@@ -23,12 +20,9 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "concurrently": "10.0.7",
-    "electron": "45.3.2",
     "postcss": "8.5.33",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.7.0",
-    "wait-on": "9.5.1"
+    "typescript": "^5.7.0"
   },
   "engines": {
     "node": ">=22.12.0"
