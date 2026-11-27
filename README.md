@@ -185,6 +185,20 @@ other actions keep running. To pause all automation at once, use **Pauza
 wszystkich** (pause all) on the Automation tab or press **Pause/Break**. **Historia decyzji i raporty okrążeń** (decision history and loop reports)
 explains why the bot did what it did and sums up each loop.
 
+### Sharing a route
+
+On the **Cavebot** tab, **Eksportuj trasę** (export route) saves the chosen route
+to a `.dbvroute` file together with the part of your map it needs: the learned
+tiles along the route and the doors, ladders, stairs and ropes it passes. Your
+waypoint notes and recording names are left out. Send the file to another
+player; they press **Importuj trasę** (import route), pick the file, and the
+route appears as a new, selected route they can start right away, even on a
+fresh installation.
+
+An import never changes anything already there: your own map tiles, stairs and
+routes win, and a route with a name you already use is added as "Name (2)".
+Routes from another game server are refused, because their map does not match.
+
 ### Hunter Knife
 
 The Hunter Knife skins only corpses of monsters you killed and confirms the

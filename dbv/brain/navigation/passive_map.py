@@ -271,6 +271,7 @@ class PassiveMapMonitor:
         self.learner = None
         self.annotations = None
         self.atlas = None
+        self.server = None  # "host:port" of the game server the atlas scope belongs to
         self._learning_error = None
         self._manual_play = False
         self._visit = self._visit_writer = None
@@ -427,6 +428,7 @@ class PassiveMapMonitor:
             proxy = getattr(self.state,"game_proxy",None)
             server = f"{getattr(proxy,'server_host','')}:{getattr(proxy,'server_port',0)}"
             scope = hashlib.sha256(f"{asset.get('client_sha256',CLIENT_SHA256)}|{asset.get('sha256')}|{server}".encode()).hexdigest()
+            self.server = server
             if getattr(self, "_inherited_scope", None) != scope:
                 # A client update changes the scope; start it from the same server's previous data.
                 from dbv.brain.navigation.atlas_scope import inherit

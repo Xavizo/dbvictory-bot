@@ -2,6 +2,7 @@ declare global {
   interface Window {
     dbvAlerts?: {testSound:()=>Promise<boolean>;panelPause?:(value?:boolean)=>Promise<{paused:boolean;session:string|null;through:number}>};
     dbvEditor?: {open:(draftId:string)=>Promise<boolean>};
+    dbvRoutes?: {save:(fileName:string,text:string)=>Promise<string|false>;open:()=>Promise<string|null>};
     dbvAuth?: { getToken: () => Promise<string> };
     dbvMap?: { copyCell: (text: string) => Promise<boolean>; copyPlan: (text: string) => Promise<boolean> };
   }

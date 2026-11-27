@@ -164,6 +164,8 @@ class TransitionLearner:
         self._stamp = None
         self._queue = deque(maxlen=64)
         self._lock = threading.Lock()
+        # Live observations (map thread) and shared imports (panel thread) both write the store.
+        self._store_lock = threading.RLock()
         self._epoch = 0
         self._seen_epoch = 0
         self._last = None
@@ -292,7 +294,41 @@ class TransitionLearner:
             data["origin"] = row["origin"]
         return hashlib.sha256(json.dumps(data,sort_keys=True).encode()).hexdigest()[:20]
 
+    def validate(self, row):
+        """Raise ValueError (or KeyError/TypeError) unless `row` is a well-formed observation."""
+        self._validate(row)
+
+    def add_shared(self, rows):
+        """Add observations from a shared route pack. Known IDs keep the player's own record."""
+        with self._store_lock:
+            return self._add_shared(rows)
+
+    def _add_shared(self, rows):
+        if self.storage_error:
+            raise ValueError(self.storage_error)
+        fresh = []
+        for row in rows:
+            self._validate(row)
+            if row["id"] not in self.records:
+                fresh.append(dict(row))
+        if not fresh:
+            return 0
+        initial = self._revision == 0
+        for row in fresh:
+            self.records[row["id"]] = row
+        self._write(list(self.records.values()) if initial else fresh)
+        if self.storage_error:
+            for row in fresh:
+                self.records.pop(row["id"], None)
+            raise ValueError(self.storage_error)
+        self._publish(self._view.get("status", "waiting"))
+        return len(fresh)
+
     def _save(self, row):
+        with self._store_lock:
+            self._write((row,))
+
+    def _write(self, changed):
         if self.storage_error:
             return
         try:
@@ -317,7 +353,7 @@ class TransitionLearner:
                     if updated.rowcount != 1:
                         self.storage_error = "Baza obserwacji została zmieniona poza sesją; zapis wstrzymany."
                         return
-                    rows = (row,)
+                    rows = changed
                 db.executemany("INSERT OR REPLACE INTO observations VALUES (?,?)",
                                ((r["id"], json.dumps(r, ensure_ascii=False, separators=(",", ":"))) for r in rows))
             self._revision += 1
@@ -373,6 +409,10 @@ class TransitionLearner:
                       "passive":True}
 
     def _record(self, record, wall):
+        with self._store_lock:
+            self._record_locked(record, wall)
+
+    def _record_locked(self, record, wall):
         record = {"item_id":None,"tool_id":None,"entry_items":[],**record}
         record["id"] = self._key(record)
         old = self.records.get(record["id"])
