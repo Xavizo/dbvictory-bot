@@ -1,142 +1,193 @@
-"""
-Cavebot route recording and action-map building.
+"""Record a walked route and turn it into an actions map the cavebot can replay.
 
-Records player navigation (walking, doors, stairs, ladders) by hooking
-client packets.  Saves/loads recordings as JSON in the recordings/ folder.
-"""
+While recording, the player's own movement and item uses are read from the
+client packets passing through the proxy, and floor changes, cancelled steps
+and door changes from the server events the game state collects. The result
+is saved as JSON under ``recordings/``.
 
+``build_actions_map`` reduces those raw waypoints to a few navigation nodes:
+``walk_to`` (let the server path-find to a tile), ``use_item`` (stairs, doors,
+ladders) and ``use_item_ex`` (rope, shovel).
+"""
 import json
 import logging
 import struct
 import threading
 import time
-from dbv.brain.hunts.farming_telemetry import experience_for_level
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dbv.client_bridge.protocol import ClientOpcode, PacketReader
 from dbv import paths
+from dbv.brain.hunts.farming_telemetry import experience_for_level
+from dbv.client_bridge.protocol import WALK_OPCODES as _WALK_BY_DIRECTION, ClientOpcode, PacketReader
 
 log = logging.getLogger("cavebot")
 
 RECORDINGS_DIR = paths.RECORDINGS_DIR
 
-# Walk opcode → direction name
-WALK_OPCODE_TO_DIR = {
-    ClientOpcode.WALK_NORTH: "north",
-    ClientOpcode.WALK_EAST: "east",
-    ClientOpcode.WALK_SOUTH: "south",
-    ClientOpcode.WALK_WEST: "west",
-    ClientOpcode.WALK_NORTHEAST: "northeast",
-    ClientOpcode.WALK_SOUTHEAST: "southeast",
-    ClientOpcode.WALK_SOUTHWEST: "southwest",
-    ClientOpcode.WALK_NORTHWEST: "northwest",
-}
+STEP = {"north": (0, -1), "east": (1, 0), "south": (0, 1), "west": (-1, 0),
+        "northeast": (1, -1), "southeast": (1, 1), "southwest": (-1, 1), "northwest": (-1, -1)}
+DIR_OFFSET = STEP
+WALK_OPCODE_TO_DIR = {opcode: direction.name.lower() for direction, opcode in _WALK_BY_DIRECTION.items()}
+WALK_OPCODES = frozenset(WALK_OPCODE_TO_DIR)
+# Path bytes of auto-walk packets count 1..8 anticlockwise from east, unlike Direction.
+AUTOWALK_DIR_OFFSET = dict(enumerate(
+    [STEP[name] for name in ("east", "northeast", "north", "northwest",
+                             "west", "southwest", "south", "southeast")], start=1))
+_NAME_OF_STEP = {offset: name for name, offset in STEP.items()}
 
-WALK_OPCODES = set(WALK_OPCODE_TO_DIR.keys())
-
-# Direction → (dx, dy) offset for position calculation
-DIR_OFFSET = {
-    "north": (0, -1), "south": (0, 1),
-    "east": (1, 0), "west": (-1, 0),
-    "northeast": (1, -1), "southeast": (1, 1),
-    "southwest": (-1, 1), "northwest": (-1, -1),
-}
-
-# Autowalk path direction bytes use 1-8 encoding (different from Direction enum 0-7)
-AUTOWALK_DIR_OFFSET = {
-    1: (1, 0),    # East
-    2: (1, -1),   # Northeast
-    3: (0, -1),   # North
-    4: (-1, -1),  # Northwest
-    5: (-1, 0),   # West
-    6: (-1, 1),   # Southwest
-    7: (0, 1),    # South
-    8: (1, 1),    # Southeast
-}
-
-# Item ID → label (common navigation items)
-ITEM_LABELS = {
-    # Confirmed in DBVClient_v5; these IDs are not universal Tibia IDs.
-    4560: "Stairs",
-    4561: "Ground",
-}
+# Item ids seen in DBVClient_v5; other servers number items differently.
+ITEM_LABELS = {4560: "Stairs", 4561: "Ground"}
 GROUND_ITEM_IDS = frozenset({4561})
+DEFAULT_GROUND_ID = 4449
+NOT_ON_MAP = 0xFFFF       # x of a use from a container or hotkey
+MAX_AUTOWALK_STEPS = 50
+MAX_NEW_WALK_STEPS = 4096
 
 
 def _auto_label(item_id: int) -> str:
-    """Generate a human-readable label for a use_item waypoint."""
     return ITEM_LABELS.get(item_id, f"Use item {item_id}")
 
 
-# ── Recording ────────────────────────────────────────────────────────
+def _on_map(x, y, z=0):
+    return 0 < x < 65535 and 0 < y < 65535 and z < 16
+
+
+# ── reading client packets ──────────────────────────────────────────
 
 def _read_new_walk(reader: PacketReader, elapsed: float) -> list[dict]:
-    """Decode OTCv8 sendNewWalk: ids, origin, flags, U16 count, directions.
+    """Steps of an OTCv8 new-walk packet, or [] unless the whole path is valid.
 
-    The packet origin accounts for prediction; server position can still lag
-    behind keyboard commands. Validate the entire path before recording it.
+    Layout: u32 walk id, u32 prediction id, origin, u8 flags, u16 count, then
+    one path byte per step. The origin already includes client prediction, so
+    it is used instead of the (possibly lagging) server position.
     """
     try:
-        reader.read_u32()  # walk id
-        reader.read_u32()  # prediction id
+        reader.read_u32(), reader.read_u32()
         x, y, z = reader.read_position()
-        reader.read_u8()  # walk flags
+        reader.read_u8()
         count = reader.read_u16()
-        if not (0 < x < 65535 and 0 < y < 65535 and z < 16):
+        if not _on_map(x, y, z) or not 1 <= count <= min(MAX_NEW_WALK_STEPS, reader.remaining):
             return []
-        if not 1 <= count <= 4096 or count > reader.remaining:
-            return []
-        offsets = [AUTOWALK_DIR_OFFSET.get(reader.read_u8()) for _ in range(count)]
-        if any(offset is None for offset in offsets):
-            return []
+        steps = [AUTOWALK_DIR_OFFSET.get(reader.read_u8()) for _ in range(count)]
     except (IndexError, ValueError, struct.error):
         return []
-    names = {offset: name for name, offset in DIR_OFFSET.items()}
-    waypoints = []
-    for dx, dy in offsets:
-        origin = [x, y, z]
-        x, y = x + dx, y + dy
-        if not (0 < x < 65535 and 0 < y < 65535):
+    if None in steps:
+        return []
+    out = []
+    for dx, dy in steps:
+        start, x, y = [x, y, z], x + dx, y + dy
+        if not _on_map(x, y):
             return []
-        waypoints.append({
-            "type": "walk", "direction": names[(dx, dy)],
-            "pos": [x, y, z], "player_pos": origin,
-            "t": elapsed, "source": "new_walk",
-        })
-    return waypoints
+        out.append({"type": "walk", "direction": _NAME_OF_STEP[(dx, dy)], "pos": [x, y, z],
+                    "player_pos": start, "t": elapsed, "source": "new_walk"})
+    return out
+
+
+def _read_autowalk(reader, here):
+    """Destination of a click-to-walk path; None for an empty, long or broken one."""
+    try:
+        count = reader.read_u8()
+        if not 0 < count <= MAX_AUTOWALK_STEPS:
+            return None, 0
+        x, y, z = here
+        for _ in range(count):
+            dx, dy = AUTOWALK_DIR_OFFSET.get(reader.read_u8(), (0, 0))  # unknown bytes do not move
+            x, y = x + dx, y + dy
+    except Exception:
+        return None, 0
+    return [x, y, z], count
+
+
+def _read_use(reader):
+    """USE_ITEM: tile, item id, stack position, optional container index."""
+    try:
+        tile, item_id, stack = reader.read_position(), reader.read_u16(), reader.read_u8()
+        index = reader.read_u8() if reader.remaining else 0
+    except Exception:
+        return None
+    return {"type": "use_item", "x": tile[0], "y": tile[1], "z": tile[2], "item_id": item_id,
+            "stack_pos": stack, "index": index, "label": _auto_label(item_id)}
+
+
+def _read_use_with(reader):
+    """USE_ITEM_EX: source tile, item, stack, target tile, then (new clients) target item and stack."""
+    try:
+        source, item_id, stack = reader.read_position(), reader.read_u16(), reader.read_u8()
+        target = reader.read_position()
+        target_item = reader.read_u16() if reader.remaining >= 3 else None
+        target_stack = reader.read_u8() if reader.remaining else 0
+    except Exception:
+        return None
+    return {"type": "use_item_ex", "from_x": source[0], "from_y": source[1], "from_z": source[2],
+            "item_id": item_id, "stack_pos": stack, "to_x": target[0], "to_y": target[1],
+            "to_z": target[2], "to_stack_pos": target_stack, "target_item_id": target_item,
+            "label": _auto_label(item_id)}
+
+
+def client_waypoints(opcode, reader: PacketReader, here: list, elapsed: float) -> list[dict]:
+    """Waypoints for one client packet sent while the player stands at ``here``."""
+    if opcode == ClientOpcode.NEW_WALK:
+        steps = _read_new_walk(reader, elapsed)
+        if steps:
+            log.info("[REC] new_walk %d steps %s -> %s", len(steps), steps[0]["player_pos"], steps[-1]["pos"])
+        else:
+            log.debug("[REC] ignored invalid or empty new_walk")
+        return steps
+    if opcode in WALK_OPCODE_TO_DIR:
+        name = WALK_OPCODE_TO_DIR[opcode]
+        dx, dy = STEP[name]
+        goal = [here[0] + dx, here[1] + dy, here[2]]
+        log.info("[REC] walk %s %s -> %s", name, here[:2], goal[:2])
+        return [{"type": "walk", "direction": name, "pos": goal, "player_pos": here, "t": elapsed}]
+    if opcode == ClientOpcode.AUTO_WALK:
+        goal, count = _read_autowalk(reader, here)
+        if goal is None:
+            return []
+        log.info("[REC] autowalk %d steps %s -> %s", count, here[:2], goal[:2])
+        return [{"type": "walk", "direction": "autowalk", "pos": goal, "player_pos": here, "t": elapsed}]
+    readers = {ClientOpcode.USE_ITEM: _read_use, ClientOpcode.USE_ITEM_EX: _read_use_with}
+    if opcode not in readers:
+        return []
+    use = readers[opcode](reader)
+    if use is None:
+        return []
+    use.update(pos=here, player_pos=here, t=elapsed)
+    log.info("[REC] %s %s", use["type"], use["item_id"])
+    return [use]
+
+
+def _server_waypoint(event, data, here, elapsed):
+    if event in ("floor_change_up", "floor_change_down"):
+        where = list(data.get("pos", here))
+        return {"type": "floor_change", "direction": event.rsplit("_", 1)[1], "pos": where,
+                "z": data.get("z", where[2]), "t": elapsed}
+    if event == "cancel_walk":
+        return {"type": "cancel_walk", "direction": data.get("direction", 0),
+                "pos": list(data.get("pos", here)), "t": elapsed}
+    if event == "tile_transform_item":
+        return {"type": "tile_transform_item", "x": data["x"], "y": data["y"], "z": data["z"], "t": elapsed}
+    return None
 
 
 def _record_server_events(gs, waypoints: list, started_at: float) -> None:
-    """Append only events from this recording session, never stale history."""
-    while gs.server_events:
+    """Move queued server events into the recording, dropping any from before it began."""
+    while True:
         try:
-            ts, event_type, data = gs.server_events.popleft()
+            at, event, data = gs.server_events.popleft()
         except IndexError:
-            break
-        if ts < started_at:
+            return
+        if at < started_at:
             continue
-        elapsed = round(ts - started_at, 1)
-        if event_type in ("floor_change_up", "floor_change_down"):
-            direction = "up" if event_type == "floor_change_up" else "down"
-            pos = list(data.get("pos", gs.position))
-            waypoints.append({
-                "type": "floor_change", "direction": direction, "pos": pos,
-                "z": data.get("z", pos[2]), "t": elapsed,
-            })
-            log.info("[REC] floor_change %s pos=%s", direction, pos)
-        elif event_type == "cancel_walk":
-            pos = list(data.get("pos", gs.position))
-            waypoints.append({
-                "type": "cancel_walk", "direction": data.get("direction", 0),
-                "pos": pos, "t": elapsed,
-            })
-            log.info("[REC] cancel_walk dir=%s pos=%s", data.get("direction"), pos)
-        elif event_type == "tile_transform_item":
-            waypoints.append({
-                "type": "tile_transform_item", "x": data["x"],
-                "y": data["y"], "z": data["z"], "t": elapsed,
-            })
+        waypoint = _server_waypoint(event, data, gs.position, round(at - started_at, 1))
+        if waypoint is not None:
+            waypoints.append(waypoint)
+            if waypoint["type"] != "tile_transform_item":
+                log.info("[REC] %s %s pos=%s", waypoint["type"], waypoint["direction"], waypoint["pos"])
+
+
+# ── recording ───────────────────────────────────────────────────────
+
 
 
 def _sample_recording_position(state):
@@ -191,195 +242,87 @@ def _sample_recording_position(state):
     trace.append(point)
 
 
-def start_recording(state, name: str, *, mode: str = "manual") -> str | None:
-    """Begin recording waypoints.  Returns error string or None on success."""
-    task=getattr(state,"_action_tasks",{}).get("adaptive_cavebot")
-    if task and not task.done():return "Zatrzymaj V2 przed nagrywaniem własnej drogi."
+def _refuse_start(state, name, mode, atlas):
+    task = getattr(state, "_action_tasks", {}).get("adaptive_cavebot")
+    if task and not task.done():
+        return "Zatrzymaj V2 przed nagrywaniem własnej drogi."
     if state.recording_active:
         return f"Already recording '{state.recording_name}'. Stop it first."
-    if not name or not all(c.isalnum() or c in "-_" for c in name):
+    if not name or any(not (c.isalnum() or c in "-_") for c in name):
         return "Invalid name. Use alphanumeric, hyphens, underscores only."
     if mode not in ("manual", "adaptive"):
         return "Nieznany tryb nagrywania."
     if mode == "adaptive" and not getattr(state, "connected", False):
         return "Nagrywanie adaptacyjne wymaga zalogowanej postaci."
-    atlas = getattr(getattr(state, "passive_map_monitor", None), "atlas", None)
     if mode == "adaptive" and not getattr(atlas, "scope", None):
         return "Poczekaj na pierwszy odczyt atlasu."
+    return None
 
-    gs = state.game_state
-    pos = gs.position
-    state.recording_active = True
-    state.recording_name = name
-    state.recording_mode = mode
-    state.recording_hunt_progress = {"stage": 0} if mode == "adaptive" else None
+
+def start_recording(state, name: str, *, mode: str = "manual") -> str | None:
+    """Start recording a route. Returns an error message, or None once recording."""
+    atlas = getattr(getattr(state, "passive_map_monitor", None), "atlas", None)
+    refusal = _refuse_start(state, name, mode, atlas)
+    if refusal:
+        return refusal
+    adaptive = mode == "adaptive"
+    start = state.game_state.position
+    waypoints = []
+    state.recording_active, state.recording_name, state.recording_mode = True, name, mode
+    state.recording_hunt_progress = {"stage": 0} if adaptive else None
     state._recording_xp_sample = None
     state._recording_encounters = None
-    if mode == "adaptive":
+    if adaptive:
         from dbv.brain.hunts.hunt_encounters import HuntEncounters
         state._recording_encounters = HuntEncounters()
-    state.recording_waypoints = []
-    state.recording_observed_path = []
+    state.recording_waypoints, state.recording_observed_path = waypoints, []
     state.recording_trace_limited = False
     state._recording_sample_time = time.monotonic()
-    state.recording_start_pos = pos
-    state.recording_start_time = time.time()
+    state.recording_start_pos = start
+    state.recording_start_time = started_at = time.time()
     state._recording_atlas_scope = getattr(atlas, "scope", None)
-    started_at = state.recording_start_time
-    waypoints = state.recording_waypoints
     _sample_recording_position(state)
 
-    # Register client packet callback on the game proxy
     proxy = state.game_proxy
     if proxy is None:
         state.recording_active = False
         return "Game proxy not available."
 
-    def _on_client_packet(opcode, reader: PacketReader):
-        if not state.recording_active or state.recording_start_time != started_at:
-            return
-        t_elapsed = round(time.time() - state.recording_start_time, 3)
-        current_pos = list(state.game_state.position)
+    def current():
+        return state.recording_active and state.recording_start_time == started_at
 
-        if opcode == ClientOpcode.NEW_WALK:
-            steps = _read_new_walk(reader, t_elapsed)
-            waypoints.extend(steps)
-            if steps:
-                log.info("[REC] new_walk %d steps %s -> %s", len(steps),
-                         steps[0]["player_pos"], steps[-1]["pos"])
-            else:
-                log.debug("[REC] ignored invalid or empty new_walk")
+    def on_client_packet(opcode, reader: PacketReader):
+        if current():  # a relay may still hold the callback of an older recording
+            elapsed = round(time.time() - started_at, 3)
+            waypoints.extend(client_waypoints(opcode, reader, list(state.game_state.position), elapsed))
 
-        elif opcode in WALK_OPCODES:
-            direction = WALK_OPCODE_TO_DIR[opcode]
-            # Calculate expected position AFTER the walk completes
-            dx, dy = DIR_OFFSET[direction]
-            expected_pos = [current_pos[0] + dx, current_pos[1] + dy, current_pos[2]]
-            wp = {
-                "type": "walk",
-                "direction": direction,
-                "pos": expected_pos,
-                "player_pos": current_pos,
-                "t": t_elapsed,
-            }
-            state.recording_waypoints.append(wp)
-            log.info(f"[REC] walk {direction} ({current_pos[0]},{current_pos[1]}) -> ({expected_pos[0]},{expected_pos[1]})")
-
-        elif opcode == ClientOpcode.AUTO_WALK:
-            # Left-click map movement — parse direction list, compute final pos
-            try:
-                count = reader.read_u8()
-                if count == 0 or count > 50:
-                    return
-                x, y, z = current_pos
-                for _ in range(count):
-                    d = reader.read_u8()
-                    offset = AUTOWALK_DIR_OFFSET.get(d)
-                    if offset is None:
-                        continue
-                    x += offset[0]
-                    y += offset[1]
-                final_pos = [x, y, z]
-            except Exception:
-                return
-            wp = {
-                "type": "walk",
-                "direction": "autowalk",
-                "pos": final_pos,
-                "player_pos": current_pos,
-                "t": t_elapsed,
-            }
-            state.recording_waypoints.append(wp)
-            log.info(f"[REC] autowalk {count} steps ({current_pos[0]},{current_pos[1]}) -> ({final_pos[0]},{final_pos[1]})")
-
-        elif opcode == ClientOpcode.USE_ITEM:
-            try:
-                pos_tuple = reader.read_position()
-                item_id = reader.read_u16()
-                stack_pos = reader.read_u8()
-                index = reader.read_u8() if reader.remaining >= 1 else 0
-            except Exception:
-                return
-            wp = {
-                "type": "use_item",
-                "x": pos_tuple[0],
-                "y": pos_tuple[1],
-                "z": pos_tuple[2],
-                "item_id": item_id,
-                "stack_pos": stack_pos,
-                "index": index,
-                "label": _auto_label(item_id),
-                "pos": current_pos,
-                "player_pos": current_pos,
-                "t": t_elapsed,
-            }
-            state.recording_waypoints.append(wp)
-            log.info(f"[REC] use_item {item_id} at ({pos_tuple[0]},{pos_tuple[1]},{pos_tuple[2]})")
-
-        elif opcode == ClientOpcode.USE_ITEM_EX:
-            try:
-                from_pos = reader.read_position()
-                item_id = reader.read_u16()
-                stack_pos = reader.read_u8()
-                to_pos = reader.read_position()
-                # New client includes target item U16 before stack; retain
-                # support for the older stack-only format.
-                target_id = reader.read_u16() if reader.remaining >= 3 else None
-                to_stack_pos = reader.read_u8() if reader.remaining >= 1 else 0
-            except Exception:
-                return
-            wp = {
-                "type": "use_item_ex",
-                "from_x": from_pos[0],
-                "from_y": from_pos[1],
-                "from_z": from_pos[2],
-                "item_id": item_id,
-                "stack_pos": stack_pos,
-                "to_x": to_pos[0],
-                "to_y": to_pos[1],
-                "to_z": to_pos[2],
-                "to_stack_pos": to_stack_pos,
-                "target_item_id": target_id,
-                "label": _auto_label(item_id),
-                "pos": current_pos,
-                "player_pos": current_pos,
-                "t": t_elapsed,
-            }
-            state.recording_waypoints.append(wp)
-            log.info(f"[REC] use_item_ex {item_id} from {from_pos} to {to_pos}")
-
-    # Store the callback reference so we can unregister later
-    state._recording_callback = _on_client_packet
-    proxy.register_client_packet_callback(_on_client_packet)
-
-    # Server event draining thread — polls game_state.server_events every 50ms
-    # and records floor_change / cancel_walk / tile_transform as waypoints.
     stop_event = threading.Event()
 
-    def _drain_events():
-        while not stop_event.wait(0.05):
-            if not state.recording_active or state.recording_start_time != started_at:
-                break
+    def follow_server():
+        """Every 50 ms: copy server events into the recording and sample the position."""
+        while not stop_event.wait(0.05) and current():
             _record_server_events(state.game_state, waypoints, started_at)
             _sample_recording_position(state)
 
+    state._recording_callback = on_client_packet
+    proxy.register_client_packet_callback(on_client_packet)
     state._recording_event_stop = stop_event
-    state._recording_event_thread = threading.Thread(target=_drain_events, daemon=True)
+    state._recording_event_thread = threading.Thread(target=follow_server, daemon=True)
     state._recording_event_thread.start()
-    if mode == "adaptive":
+    if adaptive:
         from dbv.brain.cavebot.adaptive_recording import watch_hunt_evidence
         # Each worker owns its recording and progress. A late check from an
         # older run cannot publish into the next run, even with the same name.
         threading.Thread(target=watch_hunt_evidence, name="hunt-readiness", daemon=True,
                          args=(_recording_data(state), state.passive_map_monitor,
                                stop_event, state.recording_hunt_progress)).start()
-
-    log.info(f"Recording started: '{name}' at {pos}")
+    log.info("Recording started: '%s' at %s", name, start)
     return None
 
 
 def _recording_data(state):
-    return {
+    gs = state.game_state
+    data = {
         "name": state.recording_name,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "version": 2,
@@ -389,509 +332,376 @@ def _recording_data(state):
         "start_position": list(state.recording_start_pos),
         "waypoints": state.recording_waypoints,
         "observed_path": state.recording_observed_path,
-        **({"encounters": state._recording_encounters.events} if getattr(state, "_recording_encounters", None) else {}),
-        "trace_limited": state.recording_trace_limited,
-        "position_source": "client" if getattr(state.game_state,"client_state_required",False) else "server",
     }
+    encounters = getattr(state, "_recording_encounters", None)
+    if encounters:
+        data["encounters"] = encounters.events
+    data["trace_limited"] = state.recording_trace_limited
+    data["position_source"] = "client" if getattr(gs, "client_state_required", False) else "server"
+    return data
+
+
+def _reset_recording(state):
+    state.recording_active = False
+    state.recording_mode = "manual"
+    state._recording_encounters = state.recording_hunt_progress = state._recording_xp_sample = None
+    state.recording_name = ""
+    state.recording_waypoints, state.recording_observed_path = [], []
+    state.recording_start_pos, state.recording_start_time = (0, 0, 0), 0
 
 
 def stop_recording(state, *, discard: bool = False) -> dict | None:
-    """Stop recording and optionally save.  Returns the recording dict or None."""
+    """Stop recording; save the result unless ``discard``. Returns the recording, or None."""
     if not state.recording_active:
         return None
-
     state.recording_active = False
-    # Stop event draining thread
-    stop_event = getattr(state, "_recording_event_stop", None)
+    stop_event, state._recording_event_stop = getattr(state, "_recording_event_stop", None), None
     if stop_event:
         stop_event.set()
-    state._recording_event_stop = None
-    event_thread = getattr(state, "_recording_event_thread", None)
-    if event_thread:
-        event_thread.join(timeout=1)
-    state._recording_event_thread = None
+    follower, state._recording_event_thread = getattr(state, "_recording_event_thread", None), None
+    if follower:
+        follower.join(timeout=1)
+    # Events and a position that arrived after the last poll still belong to this route.
     _record_server_events(state.game_state, state.recording_waypoints, state.recording_start_time)
     _sample_recording_position(state)
-
-    # Unregister callback
-    cb = getattr(state, "_recording_callback", None)
-    if cb and state.game_proxy:
-        state.game_proxy.unregister_client_packet_callback(cb)
-    state._recording_callback = None
+    callback, state._recording_callback = getattr(state, "_recording_callback", None), None
+    if callback and state.game_proxy:
+        state.game_proxy.unregister_client_packet_callback(callback)
 
     recording = _recording_data(state)
-
     if getattr(state, "recording_mode", "manual") == "adaptive":
         recording["recording_mode"] = "adaptive"
-    state.recording_mode = "manual"
-    state._recording_encounters = None
-    state.recording_hunt_progress = None
-    state._recording_xp_sample = None
-    state.recording_active = False
-    name = state.recording_name
-    count = len(state.recording_waypoints)
-    state.recording_name = ""
-    state.recording_waypoints = []
-    state.recording_observed_path = []
-    state.recording_start_pos = (0, 0, 0)
-    state.recording_start_time = 0
-
+    name, count = state.recording_name, len(state.recording_waypoints)
+    _reset_recording(state)
     if discard:
-        log.info(f"Recording '{name}' discarded ({count} waypoints)")
+        log.info("Recording '%s' discarded (%d waypoints)", name, count)
         return None
-
     save_recording(recording)
-    log.info(f"Recording '{name}' saved ({count} waypoints)")
+    log.info("Recording '%s' saved (%d waypoints)", name, count)
     return recording
 
 
-# ── File I/O ─────────────────────────────────────────────────────────
+# ── files ───────────────────────────────────────────────────────────
 
 def _safe_recording_path(name: str) -> Path | None:
-    """Resolve recording path and validate it stays within RECORDINGS_DIR."""
-    path = (RECORDINGS_DIR / f"{name}.json").resolve()
-    if not path.is_relative_to(RECORDINGS_DIR.resolve()):
-        log.warning(f"Path traversal attempt blocked: '{name}'")
-        return None
-    return path
+    """recordings/<name>.json, or None when the name would leave that folder."""
+    root = RECORDINGS_DIR.resolve()
+    candidate = (RECORDINGS_DIR / f"{name}.json").resolve()
+    if candidate.is_relative_to(root):
+        return candidate
+    log.warning("Path traversal attempt blocked: '%s'", name)
+    return None
 
 
 def save_recording(recording: dict) -> None:
-    """Write recording dict to recordings/<name>.json."""
     RECORDINGS_DIR.mkdir(exist_ok=True)
-    path = _safe_recording_path(recording['name'])
-    if path is None:
-        return
-    path.write_text(json.dumps(recording, indent=2), encoding="utf-8")
+    target = _safe_recording_path(recording["name"])
+    if target is not None:
+        target.write_text(json.dumps(recording, indent=2), encoding="utf-8")
+
+
+def _read_json(target: Path):
+    return json.loads(target.read_text(encoding="utf-8"))
 
 
 def load_recording(name: str) -> dict | None:
-    """Load a recording by name.  Returns None if not found."""
-    path = _safe_recording_path(name)
-    if path is None or not path.exists():
+    target = _safe_recording_path(name)
+    if target is None or not target.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        log.warning(f"Failed to load recording '{name}': {e}")
+        return _read_json(target)
+    except (json.JSONDecodeError, OSError) as exc:
+        log.warning("Failed to load recording '%s': %s", name, exc)
         return None
+
+
+def _summary(target: Path, data: dict) -> dict:
+    return {"name": data.get("name", target.stem), "count": len(data.get("waypoints", [])),
+            "mode": data.get("recording_mode", "manual"), "created_at": data.get("created_at", ""),
+            "last_stats": data.get("last_stats")}
 
 
 def list_recordings() -> list[dict]:
-    """List all saved recordings with summary info."""
+    """Name, size, mode, date and last run stats of every readable recording, by file name."""
     RECORDINGS_DIR.mkdir(exist_ok=True)
-    results = []
-    for path in sorted(RECORDINGS_DIR.glob("*.json")):
+    summaries = []
+    for target in sorted(RECORDINGS_DIR.glob("*.json")):
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            results.append({
-                "name": data.get("name", path.stem),
-                "count": len(data.get("waypoints", [])),
-                "mode": data.get("recording_mode", "manual"),
-                "created_at": data.get("created_at", ""),
-                "last_stats": data.get("last_stats"),
-            })
+            summaries.append(_summary(target, _read_json(target)))
         except (json.JSONDecodeError, OSError):
-            continue
-    return results
+            pass  # unreadable files are not listed
+    return summaries
 
 
 def delete_recording(name: str) -> bool:
-    """Delete a recording file.  Returns True if deleted."""
-    path = _safe_recording_path(name)
-    if path is not None and path.exists():
-        path.unlink()
-        log.info(f"Deleted recording '{name}'")
-        return True
-    return False
+    target = _safe_recording_path(name)
+    if target is None or not target.exists():
+        return False
+    target.unlink()
+    log.info("Deleted recording '%s'", name)
+    return True
 
 
 def remove_waypoints(name: str, indices: list[int]) -> dict | None:
-    """Remove waypoints at given indices from a saved recording.
-
-    Returns the updated recording dict, or None if not found.
-    """
-    rec = load_recording(name)
-    if rec is None:
+    """Drop the waypoints at ``indices`` from a saved recording and save it again."""
+    recording = load_recording(name)
+    if recording is None:
         return None
-    waypoints = rec.get("waypoints", [])
-    # Remove in reverse order so earlier indices stay valid
-    for idx in sorted(set(indices), reverse=True):
-        if 0 <= idx < len(waypoints):
-            waypoints.pop(idx)
-    rec["waypoints"] = waypoints
-    save_recording(rec)
-    log.info(f"Removed {len(indices)} waypoint(s) from '{name}', {len(waypoints)} remaining")
-    return rec
+    drop = set(indices)
+    kept = [wp for i, wp in enumerate(recording.get("waypoints", [])) if i not in drop]
+    recording["waypoints"] = kept
+    save_recording(recording)
+    log.info("Removed %d waypoint(s) from '%s', %d remaining", len(indices), name, len(kept))
+    return recording
 
 
-# ── Actions Map ──────────────────────────────────────────────────────
+# ── actions map ─────────────────────────────────────────────────────
+
+_EFFECT_LOOKAHEAD = 15    # waypoints searched for the effect of a use
+_COMMANDS = ("walk", "use_item", "use_item_ex")
+
 
 def _manhattan(a, b) -> int:
-    """Manhattan distance between two (x,y,z) or [x,y,z] points (ignoring z)."""
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    """Distance in steps along x and y; z is ignored."""
+    return sum(abs(a[k] - b[k]) for k in (0, 1))
 
 
-# How many waypoints to look ahead for effect detection after a far use_item.
-_EFFECT_LOOKAHEAD = 15
+def _xyz(point):
+    return tuple(point[:3])
 
 
 def _has_effect_after(waypoints: list[dict], start: int, player_z: int,
                       target_x: int, target_y: int, target_z: int) -> bool:
-    """Check if a use_item had an observable effect (floor change or tile update at target).
+    """Whether the use at ``start`` changed something: a floor (stairs, ladder) or the used tile (door).
 
-    Detects:
-    - Stairs/ladders: floor_change waypoints from server events
-    - Doors: tile_transform_item at the target position (server replaced closed→open item)
-
-    A new movement/use command ends attribution to the earlier click. Position
-    observations alone do not: server pathfinding can move toward a used item.
+    The next movement or use command ends the search: what follows belongs to
+    it. Position samples do not, since the server may walk toward a used item.
     """
-    for j in range(start + 1, min(start + _EFFECT_LOOKAHEAD, len(waypoints))):
-        nwp = waypoints[j]
-        nt = nwp.get("type", "")
-        if nt in ("walk", "use_item", "use_item_ex"):
+    started = waypoints[start].get("t", 0)
+    for later in waypoints[start + 1:start + _EFFECT_LOOKAHEAD]:
+        kind = later.get("type", "")
+        if kind in _COMMANDS:
             return False
-        if nwp.get("t", 0) < waypoints[start].get("t", 0):
-            continue  # old server events retained before recording began
-        if nt == "floor_change":
-            return nwp.get("z", nwp.get("pos", [0, 0, player_z])[2]) != player_z
-        if nt == "tile_transform_item":
-            if nwp["x"] == target_x and nwp["y"] == target_y and nwp["z"] == target_z:
-                return True
+        if later.get("t", 0) < started:
+            continue  # history from before the recording
+        if kind == "floor_change":
+            return later.get("z", later.get("pos", [0, 0, player_z])[2]) != player_z
+        if kind == "tile_transform_item" and (later["x"], later["y"], later["z"]) == (target_x, target_y, target_z):
+            return True
     return False
 
 
 def _is_map_click_walk(wp: dict) -> bool:
-    """True if this use_item is a map-click walk (far tile, any floor).
+    """Whether a use_item is a click on the map to walk there.
 
-    When right-clicking to walk, the client sends use_item targeting the
-    visible tile — which may be on a different floor than the player
-    (e.g. clicking on the floor above/below).  Distance > 1 means the
-    player can't be interacting with stairs/doors, so it's always a walk.
-
-    Rejects:
-    - Hotkey/container uses: x=0xFFFF (65535)
-    - Door/item interactions: index > 0 (map-click walks always have index=0)
+    A click on a far tile (or on a known ground item) walks, whatever floor the
+    tile shows. Hotkey and container uses (x 0 or 0xFFFF) and uses with a
+    container index (doors) are interactions instead.
     """
-    if wp.get("type") != "use_item":
+    if wp.get("type") != "use_item" or wp["x"] in (0, NOT_ON_MAP) or wp.get("index", 0) > 0:
         return False
-    # x=0xFFFF means hotkey/container use (not a map tile click)
-    if wp["x"] == 0xFFFF or wp["x"] == 0:
-        return False
-    # index > 0 means a real item interaction (door open/close), not a walk
-    if wp.get("index", 0) > 0:
-        return False
-    item_pos = (wp["x"], wp["y"], wp["z"])
-    player_pos = wp["pos"]
-    return wp.get("item_id") in GROUND_ITEM_IDS or _manhattan(item_pos, player_pos) > 1
+    return wp.get("item_id") in GROUND_ITEM_IDS or _manhattan((wp["x"], wp["y"], wp["z"]), wp["pos"]) > 1
 
 
 def _simplify_path(points: list[tuple], max_gap: int = 3) -> list[tuple]:
-    """Keep enough points so no two consecutive are more than max_gap apart.
+    """Thin a path of (x, y, z, item_id, stack_pos) so kept points are about ``max_gap`` apart.
 
-    Each point is (x, y, z, item_id, stack_pos).
-
-    Floor boundaries are always preserved: the last point before a Z change
-    and the first point after are force-kept so stair/ramp tiles are never
-    dropped by the gap filter.
+    The last point is always kept, and so are both points around every floor
+    change, so stairs and ramps are never cut out.
     """
-    if len(points) <= 1:
+    if len(points) < 2:
         return points
-
-    # Pre-compute which indices sit at a floor boundary and must be kept.
-    floor_boundary = set()
+    kept = [points[0]]
+    last = len(points) - 1
     for i in range(1, len(points)):
-        if points[i][2] != points[i - 1][2]:
-            floor_boundary.add(i - 1)  # last point before Z change
-            floor_boundary.add(i)      # first point after Z change
+        at_floor_change = points[i][2] != points[i - 1][2] or (i < last and points[i + 1][2] != points[i][2])
+        if i == last or at_floor_change or _manhattan(points[i], kept[-1]) >= max_gap:
+            kept.append(points[i])
+    return kept
 
-    result = [points[0]]
-    for i in range(1, len(points)):
-        p = points[i]
-        is_last = i == len(points) - 1
-        dist = _manhattan(p, result[-1])
-        if is_last or dist >= max_gap or i in floor_boundary:
-            result.append(p)
-    return result
+
+def _add_point(path, point):
+    if not path or _xyz(path[-1]) != _xyz(point):
+        path.append(point)
+
+
+def _walk_nodes(path, first, last):
+    return [{"type": "walk_to", "target": list(_xyz(p)), "item_id": p[3], "stack_pos": p[4],
+             "wp_range": [first, last]} for p in _simplify_path(path)]
+
+
+def _use_node(wp, index):
+    return {"type": "use_item", "target": [wp["x"], wp["y"], wp["z"]], "x": wp["x"], "y": wp["y"],
+            "z": wp["z"], "item_id": wp["item_id"], "stack_pos": wp.get("stack_pos", 0),
+            "index": wp.get("index", 0), "label": wp.get("label", f"Use item {wp['item_id']}"),
+            "player_pos": wp["pos"], "wp_range": [index, index]}
+
+
+def _use_with_node(wp, index):
+    return {"type": "use_item_ex", "target": [wp["to_x"], wp["to_y"], wp["to_z"]],
+            "from_x": wp["from_x"], "from_y": wp["from_y"], "from_z": wp["from_z"],
+            "item_id": wp["item_id"], "stack_pos": wp.get("stack_pos", 0),
+            "to_x": wp["to_x"], "to_y": wp["to_y"], "to_z": wp["to_z"],
+            "to_stack_pos": wp.get("to_stack_pos", 0),
+            "label": wp.get("label", f"Use item {wp['item_id']}"),
+            "player_pos": wp["pos"], "wp_range": [index, index]}
+
+
+class _MapBuilder:
+    def __init__(self, waypoints):
+        self.waypoints = waypoints
+        self.nodes = []
+        self.ground_id = None   # item id of the first clicked tile, reused for keyboard walks
+
+    def build(self):
+        steps, i = self.waypoints, 0
+        while i < len(steps):
+            wp = steps[i]
+            kind = wp.get("type", "")
+            if kind == "walk":
+                i = self.keyboard_walks(i)
+                continue
+            if kind == "use_item" and _is_map_click_walk(wp):
+                i = self.map_clicks(i)
+                continue
+            if kind == "floor_change":
+                self.floor_change(wp)
+            elif kind == "use_item" and wp.get("x") != NOT_ON_MAP:
+                self.nodes.append(_use_node(wp, i))
+            elif kind == "use_item_ex":
+                self.nodes.append(_use_with_node(wp, i))
+            i += 1  # positions, cancelled steps and door changes add no node
+        return self.nodes
+
+    def floor_change(self, wp):
+        # Stairs are reached exactly, even when the recording ends right after them.
+        floor = wp.get("z", wp.get("pos", [0, 0, -1])[2])
+        if self.nodes and self.nodes[-1]["type"] == "walk_to" and self.nodes[-1]["target"][2] != floor:
+            self.nodes[-1]["exact"] = True
+
+    def _run(self, start, kinds_wanted):
+        """Indices of consecutive waypoints from ``start`` that pass ``kinds_wanted``, skipping positions."""
+        found, i = [], start
+        while i < len(self.waypoints):
+            wp = self.waypoints[i]
+            if wp.get("type", "") == "position":
+                i += 1
+            elif kinds_wanted(wp):
+                found.append(i)
+                i += 1
+            else:
+                break
+        return found, i
+
+    def keyboard_walks(self, start):
+        found, end = self._run(start, lambda wp: wp.get("type", "") == "walk")
+        ground = self.nearby_click_ground(start, end)
+        path = []
+        for i in found:  # a walk's pos is where the step ends
+            _add_point(path, (*_xyz(self.waypoints[i]["pos"]), ground, 1))
+        self.nodes += _walk_nodes(path, start, end - 1)
+        return end
+
+    def nearby_click_ground(self, start, end):
+        for wp in self.waypoints[max(0, start - 3):end + 3]:
+            if wp.get("type") == "use_item" and _is_map_click_walk(wp):
+                return wp["item_id"]
+        return self.ground_id or DEFAULT_GROUND_ID
+
+    def map_clicks(self, start):
+        """A run of map clicks: walks, except clicks followed by a floor or tile change."""
+        found, end = self._run(start, _is_map_click_walk)
+        pending = []
+        for i in found:
+            wp = self.waypoints[i]
+            if wp["item_id"] not in GROUND_ITEM_IDS and _has_effect_after(
+                    self.waypoints, i, wp["pos"][2], wp["x"], wp["y"], wp["z"]):
+                self.click_walk(pending)
+                pending = []
+                self.nodes.append(_use_node(wp, i))
+            else:
+                pending.append(i)
+        self.click_walk(pending)
+        return end
+
+    def click_walk(self, clicks):
+        if not clicks:
+            return
+        path = []
+        for i in clicks:
+            wp = self.waypoints[i]
+            _add_point(path, (*_xyz(wp["pos"]), wp["item_id"], wp.get("stack_pos", 1)))
+            if self.ground_id is None:
+                self.ground_id = wp["item_id"]
+        last = self.waypoints[clicks[-1]]
+        item = (last["item_id"], last.get("stack_pos", 1))
+        goal = (last["x"], last["y"], last["pos"][2])
+        # A keyboard step can interrupt click-to-walk before the clicked tile;
+        # then end where that step started instead of at the unvisited tile.
+        for wp in self.waypoints[clicks[-1] + 1:]:
+            if wp.get("type") == "position":
+                continue
+            origin = wp.get("player_pos")
+            if (wp.get("type") == "walk" and isinstance(origin, (list, tuple))
+                    and len(origin) == 3 and origin[2] == goal[2]):
+                goal = tuple(origin)
+            break
+        _add_point(path, (*goal, *item))
+        self.nodes += _walk_nodes(path, clicks[0], clicks[-1])
+
+
+def _merge_repeats(nodes):
+    """Fold consecutive nodes with the same type and target into the first."""
+    merged = []
+    for node in nodes:
+        previous = merged[-1] if merged else None
+        if previous and (node["type"], node["target"]) == (previous["type"], previous["target"]):
+            if "wp_range" in previous and "wp_range" in node:
+                previous["wp_range"][1] = max(previous["wp_range"][1], node["wp_range"][1])
+        else:
+            merged.append(node)
+    return merged
+
+
+def _needs_exact_arrival(node, following):
+    """A walk right before a use, a floor change or a step list must end on its tile."""
+    return node["type"] == "walk_to" and (
+        following["type"] in ("use_item", "use_item_ex", "walk_steps")
+        or (following["type"] == "walk_to" and following["target"][2] != node["target"][2]))
 
 
 def build_actions_map(recording: dict) -> list[dict]:
-    """Convert a raw recording into a simplified actions map.
-
-    Reduces 80+ raw waypoints into ~15-20 high-level navigation nodes:
-    - walk_to: server-pathfinded walk (right-click on ground tile)
-    - use_item: exact interaction (stairs/doors/ladders)
-    - use_item_ex: extended use (rope/shovel)
-    """
-    waypoints = recording.get("waypoints", [])
-    if not waypoints:
-        return []
-
-    nodes = []
-    i = 0
-    # Track a fallback ground tile item_id from the recording
-    first_ground_item_id = None
-
-    while i < len(waypoints):
-        wp = waypoints[i]
-        wp_type = wp.get("type", "")
-
-        if wp_type == "floor_change":
-            # Even if recording ends immediately after stairs, the approach
-            # must reach the stair tile instead of stopping two tiles short.
-            floor = wp.get("z", wp.get("pos", [0, 0, -1])[2])
-            if nodes and nodes[-1]["type"] == "walk_to" and floor != nodes[-1]["target"][2]:
-                nodes[-1]["exact"] = True
-            i += 1
-            continue
-
-        if wp_type in ("position", "cancel_walk", "tile_transform_item"):
-            # Informational-only waypoints; skip them.
-            i += 1
-            continue
-
-        if wp_type == "use_item" and wp.get("x") == 0xFFFF:
-            # Hotkey/container-style use (x=0xFFFF); not a map interaction, skip.
-            i += 1
-            continue
-
-        if wp_type == "use_item" and _is_map_click_walk(wp):
-            # Collect map clicks, including confirmed adjacent ground tiles.
-            group_start = i
-            group = []  # list of (original_index, waypoint)
-            while i < len(waypoints):
-                wpi = waypoints[i]
-                wpi_type = wpi.get("type", "")
-                if wpi_type == "position":
-                    i += 1
-                    continue
-                if _is_map_click_walk(wpi):
-                    group.append((i, wpi))
-                    i += 1
-                else:
-                    break
-            group_end = i - 1  # last index consumed
-
-            # Detect real interactions:
-            # 1. Floor change before another command → stairs/ladder
-            # 2. Tile transformation at the clicked position → door
-            # Everything else → ground-click walk.
-            walk_run = []  # list of (orig_idx, waypoint)
-
-            def _flush_walk_run():
-                if not walk_run:
-                    return
-                nonlocal first_ground_item_id
-                run_start = walk_run[0][0]
-                run_end = walk_run[-1][0]
-                path = []
-                for wr_idx, wg in walk_run:
-                    px, py, pz = wg["pos"][0], wg["pos"][1], wg["pos"][2]
-                    pt = (px, py, pz, wg["item_id"], wg.get("stack_pos", 1))
-                    if not path or (pt[0], pt[1], pt[2]) != (path[-1][0], path[-1][1], path[-1][2]):
-                        path.append(pt)
-                    if first_ground_item_id is None:
-                        first_ground_item_id = wg["item_id"]
-                last_wg = walk_run[-1][1]
-                final_z = last_wg["pos"][2]
-                final = (last_wg["x"], last_wg["y"], final_z,
-                         last_wg["item_id"], last_wg.get("stack_pos", 1))
-                # A keyboard command can interrupt click-to-walk before the
-                # clicked tile is reached. End at its recorded starting position
-                # instead of replaying an unvisited detour to the old click.
-                for next_idx in range(run_end + 1, len(waypoints)):
-                    next_wp = waypoints[next_idx]
-                    if next_wp.get("type") == "position":
-                        continue
-                    observed = next_wp.get("player_pos")
-                    if (next_wp.get("type") == "walk" and isinstance(observed, (list, tuple))
-                            and len(observed) == 3 and observed[2] == final_z):
-                        final = (*observed, last_wg["item_id"], last_wg.get("stack_pos", 1))
-                    break
-                if not path or (final[0], final[1], final[2]) != (path[-1][0], path[-1][1], path[-1][2]):
-                    path.append(final)
-                simplified = _simplify_path(path)
-                for pt in simplified:
-                    nodes.append({
-                        "type": "walk_to",
-                        "target": [pt[0], pt[1], pt[2]],
-                        "item_id": pt[3],
-                        "stack_pos": pt[4],
-                        "wp_range": [run_start, run_end],
-                    })
-                walk_run.clear()
-
-            for orig_idx, g in group:
-                is_interactive = g["item_id"] not in GROUND_ITEM_IDS and _has_effect_after(
-                    waypoints, orig_idx, g["pos"][2],
-                    g["x"], g["y"], g["z"],
-                )
-                if is_interactive:
-                    # Real interaction — flush pending walks, emit use_item
-                    _flush_walk_run()
-                    nodes.append({
-                        "type": "use_item",
-                        "target": [g["x"], g["y"], g["z"]],
-                        "x": g["x"], "y": g["y"], "z": g["z"],
-                        "item_id": g["item_id"],
-                        "stack_pos": g.get("stack_pos", 0),
-                        "index": g.get("index", 0),
-                        "label": g.get("label", f"Use item {g['item_id']}"),
-                        "player_pos": g["pos"],
-                        "wp_range": [orig_idx, orig_idx],
-                    })
-                else:
-                    walk_run.append((orig_idx, g))
-
-            _flush_walk_run()
-
-        elif wp_type == "use_item":
-            # Non-map-click use_item: stairs/doors/close interaction
-            nodes.append({
-                "type": "use_item",
-                "target": [wp["x"], wp["y"], wp["z"]],
-                "x": wp["x"],
-                "y": wp["y"],
-                "z": wp["z"],
-                "item_id": wp["item_id"],
-                "stack_pos": wp.get("stack_pos", 0),
-                "index": wp.get("index", 0),
-                "label": wp.get("label", f"Use item {wp['item_id']}"),
-                "player_pos": wp["pos"],
-                "wp_range": [i, i],
-            })
-            i += 1
-
-        elif wp_type == "walk":
-            # Collect consecutive walks, skipping position waypoints
-            walk_start = i
-            walks = [wp]
-            j = i + 1
-            while j < len(waypoints):
-                jtype = waypoints[j].get("type", "")
-                if jtype == "walk":
-                    walks.append(waypoints[j])
-                    j += 1
-                elif jtype == "position":
-                    j += 1  # skip but keep collecting walks
-                else:
-                    break
-
-            # Helper: find a ground tile item_id from nearby use_item waypoints
-            def _find_ground_id():
-                gid = first_ground_item_id or 4449
-                for search_idx in range(max(0, i - 3), min(len(waypoints), j + 3)):
-                    swp = waypoints[search_idx]
-                    if swp.get("type") == "use_item" and _is_map_click_walk(swp):
-                        return swp["item_id"]
-                return gid
-
-            # Convert walk positions to walk_to nodes (server pathfinding).
-            # For both keyboard walks and autowalks, pos is the destination
-            # (post-walk position).  Use it directly — no offset needed.
-            ground_id = _find_ground_id()
-            path = []  # (x, y, z, item_id, stack_pos)
-            for w in walks:
-                pt = (w["pos"][0], w["pos"][1], w["pos"][2], ground_id, 1)
-                if not path or (pt[0], pt[1], pt[2]) != (path[-1][0], path[-1][1], path[-1][2]):
-                    path.append(pt)
-
-            simplified = _simplify_path(path)
-            walk_end = j - 1
-            for pt in simplified:
-                nodes.append({
-                    "type": "walk_to",
-                    "target": [pt[0], pt[1], pt[2]],
-                    "item_id": pt[3],
-                    "stack_pos": pt[4],
-                    "wp_range": [walk_start, walk_end],
-                })
-
-            i = j
-
-        elif wp_type == "use_item_ex":
-            nodes.append({
-                "type": "use_item_ex",
-                "target": [wp["to_x"], wp["to_y"], wp["to_z"]],
-                "from_x": wp["from_x"],
-                "from_y": wp["from_y"],
-                "from_z": wp["from_z"],
-                "item_id": wp["item_id"],
-                "stack_pos": wp.get("stack_pos", 0),
-                "to_x": wp["to_x"],
-                "to_y": wp["to_y"],
-                "to_z": wp["to_z"],
-                "to_stack_pos": wp.get("to_stack_pos", 0),
-                "label": wp.get("label", f"Use item {wp['item_id']}"),
-                "player_pos": wp["pos"],
-                "wp_range": [i, i],
-            })
-            i += 1
-
-        else:
-            i += 1
-
-    # Post-process: deduplicate consecutive nodes with same type + target
-    if len(nodes) > 1:
-        deduped = [nodes[0]]
-        for n in nodes[1:]:
-            prev = deduped[-1]
-            if (n["type"] == prev["type"]
-                    and n["target"] == prev["target"]):
-                # Merge wp_range: extend the previous node's range
-                if "wp_range" in prev and "wp_range" in n:
-                    prev["wp_range"][1] = max(prev["wp_range"][1], n["wp_range"][1])
-                continue  # skip duplicate
-            deduped.append(n)
-        nodes = deduped
-
-    # Mark walk_to nodes as exact when followed by a floor change
-    for idx in range(len(nodes) - 1):
-        if nodes[idx]["type"] != "walk_to":
-            continue
-        nxt = nodes[idx + 1]
-        # Next node is use_item (stairs/door)
-        if nxt["type"] in ("use_item", "use_item_ex"):
-            nodes[idx]["exact"] = True
-        # Next node is walk_to on a different floor
-        elif nxt["type"] == "walk_to" and nxt["target"][2] != nodes[idx]["target"][2]:
-            nodes[idx]["exact"] = True
-        # Next node is walk_steps (floor transition)
-        elif nxt["type"] == "walk_steps":
-            nodes[idx]["exact"] = True
-
+    """The navigation nodes for a recording's raw waypoints."""
+    nodes = _merge_repeats(_MapBuilder(recording.get("waypoints", [])).build())
+    for node, following in zip(nodes, nodes[1:]):
+        if _needs_exact_arrival(node, following):
+            node["exact"] = True
     return nodes
 
 
+def _describe(node):
+    where = "({},{},{})".format(*node["target"])
+    kind = node["type"]
+    if kind == "walk_to":
+        return f"walk_to {where}" + (" [exact]" if node.get("exact") else "")
+    label = node["label"] if "label" in node else f"item {node['item_id']}"
+    if kind == "use_item":
+        floor = " *floor change*" if node["target"][2] != node.get("player_pos", node["target"])[2] else ""
+        return f"use_item {label} {where}{floor}"
+    if kind == "use_item_ex":
+        return f"use_item_ex {label} {where}"
+    if kind == "walk_steps":
+        directions = ", ".join(step["direction"] for step in node.get("steps", []))
+        return f"walk_steps {where} *{node.get('label', 'floor change')}* [{directions}]"
+    return None
+
+
 def actions_map_to_text(actions_map: list[dict]) -> str:
-    """Render an actions map as a numbered text list for log preview."""
+    """One numbered line per node, with the waypoints it came from, for the log preview."""
     lines = []
-    for i, node in enumerate(actions_map):
-        t = node["target"]
-        pos_str = f"({t[0]},{t[1]},{t[2]})"
-        ntype = node["type"]
-        # Waypoint range suffix — e.g. " [wp 35-55]"
-        wp_range = node.get("wp_range")
-        wp_str = f" [wp {wp_range[0]+1}-{wp_range[1]+1}]" if wp_range else ""
-
-        if ntype == "walk_to":
-            exact = " [exact]" if node.get("exact") else ""
-            lines.append(f"{i+1}. walk_to {pos_str}{exact}{wp_str}")
-        elif ntype == "use_item":
-            label = node.get("label", f"item {node['item_id']}")
-            # Detect floor change: if target z != player z
-            ppos = node.get("player_pos", t)
-            if t[2] != ppos[2]:
-                lines.append(f"{i+1}. use_item {label} {pos_str} *floor change*{wp_str}")
-            else:
-                lines.append(f"{i+1}. use_item {label} {pos_str}{wp_str}")
-        elif ntype == "use_item_ex":
-            label = node.get("label", f"item {node['item_id']}")
-            lines.append(f"{i+1}. use_item_ex {label} {pos_str}{wp_str}")
-        elif ntype == "walk_steps":
-            label = node.get("label", "floor change")
-            dirs = ", ".join(s["direction"] for s in node.get("steps", []))
-            lines.append(f"{i+1}. walk_steps {pos_str} *{label}* [{dirs}]{wp_str}")
-
+    for number, node in enumerate(actions_map, start=1):
+        text = _describe(node)
+        if text is not None:
+            span = node.get("wp_range")
+            lines.append(f"{number}. {text}" + (f" [wp {span[0] + 1}-{span[1] + 1}]" if span else ""))
     return "\n".join(lines)
