@@ -17,15 +17,14 @@ def _port(variable: str, default: int) -> int:
     return port
 
 
-SERVER_HOST = os.environ.get("DBV_SERVER_HOST", "87.98.220.215")
+SERVER_HOST = os.getenv("DBV_SERVER_HOST", "87.98.220.215")
 LOGIN_PORT = _port("DBV_LOGIN_PORT", 7171)
 GAME_PORT = _port("DBV_GAME_PORT", 7172)
 # The server address as the login reply carries it: 4 raw bytes and as text.
 SERVER_IP_BYTES = bytes(map(int, SERVER_HOST.split(".")))
 SERVER_IP_STR = SERVER_HOST.encode("ascii")
 
-ITEM_RED_HAM = 3583
-ITEM_RUNE_3165 = 3165
+ITEM_RED_HAM, ITEM_RUNE_3165 = 3583, 3165
 MONSTER_ID_MIN = 0x40000000  # creature ids from here up are monsters
 
 try:

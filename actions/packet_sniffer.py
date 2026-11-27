@@ -5,6 +5,7 @@ chat and other private data, so they are written only when the bot was
 started with DBV_ALLOW_PACKET_CAPTURE=1. The log goes to sniff_log.txt in
 the bot folder and is started fresh each time the action is enabled.
 """
+import itertools
 import os
 import struct
 
@@ -48,8 +49,8 @@ async def run(bot):
         proxy.register_client_packet_callback(on_client_packet)
         bot.log("[SNIFF] Diagnostyka pakietów włączona; naciśnij teraz swój skrót")
         try:
-            while True:
-                await bot.sleep(60)
+            for _ in itertools.count():   # until the action is stopped
+                await bot.sleep(60.0)
         finally:
             proxy.unregister_client_packet_callback(on_client_packet)
             bot.log("[SNIFF] Diagnostyka pakietów wyłączona")
