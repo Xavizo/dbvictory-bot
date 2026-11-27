@@ -35,5 +35,9 @@
       <div class="launchzone"><p class="hint" id="detail"></p><div class="actions"><button class="edit" id="secondary" hidden></button><button class="primary" id="primary" hidden></button></div></div>
     </section>
   </div></main>
+  <button type="button" class="edit ai-open" id="aiOpen" aria-haspopup="dialog">Integracja AI: <span id="aiSummary">…</span></button>
+  <dialog id="ai" aria-labelledby="aiTitle"><div class="history-head"><h2 id="aiTitle">Integracja AI (MCP)</h2><button type="button" id="closeAi" aria-label="Zamknij ustawienia integracji">×</button></div>
+    <p class="ai-note">Opcjonalne. Bot działa bez tego. Połącz program tylko, jeśli chcesz sterować botem przez Codex lub Claude. Połączenie dopisuje wpis „dbvictory-bot” do konfiguracji tego programu, a odłączenie go usuwa.</p>
+    <ul id="aiTargets"></ul><p class="hint" id="aiMessage" aria-live="polite"></p></dialog>
   <dialog id="history" aria-labelledby="historyTitle"><div class="history-head"><h2 id="historyTitle">Historia zmian</h2><button type="button" id="closeHistory" aria-label="Zamknij historię zmian" autofocus>×</button></div><div id="releases"></div></dialog>
   </body></html>

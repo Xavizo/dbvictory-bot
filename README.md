@@ -233,10 +233,11 @@ a sound, and choose whether it fires always or only while the cavebot is running
 6. The **panel** (Electron) opens. It only listens on `127.0.0.1` and requires a
    per-session token. You enter the game and turn on the features you want.
 
-The launcher works entirely on your computer. It does not download anything
-from the internet: it starts the bot from the folder you cloned, and the
-**Ostatnie zmiany** (recent changes) list comes from the release notes in that
-folder. All learned data (atlas, profiles, reports) stays on your computer in
+The launcher works on your computer. A downloaded package asks GitHub at start
+whether a newer release exists and installs it only when you click
+**Zainstaluj aktualizację**; a Git checkout never downloads anything. The
+**Ostatnie zmiany** (recent changes) list comes from the release notes in the
+installed folder. All learned data (atlas, profiles, reports) stays on your computer in
 `local_data/`, and nothing is uploaded anywhere.
 
 ```
@@ -251,8 +252,28 @@ Launcher ──► run_bot.py ──► MCP engine (mcp_server.py)
 
 ## Installation
 
-There is no ready-made download yet, so for now installation means building
-from source on Windows.
+### Download (players)
+
+1. Open [Releases](../../releases/latest) and download
+   `DBVictory-Bot-vX.Y.Z.zip`. It contains everything: the launcher, the panel,
+   Python, Node.js and the observer DLLs. No Git, Python or Node install needed.
+2. Extract it to a short path you can write to, for example `C:\DBVictory-Bot`
+   (not `Program Files`; very long paths can break the extraction).
+3. Run **`DBVictory Launcher.exe`**. Windows SmartScreen may warn about an
+   unknown publisher: choose **Więcej informacji → Uruchom mimo to**
+   (More info → Run anyway). Some antivirus programs flag the observer DLL,
+   because it attaches to the game client.
+4. The launcher looks for your game client folder; if it does not find it, use
+   **Wybierz folder klienta** / **Zmień** to pick the folder with `dbvStart.exe`.
+
+At every start the launcher checks GitHub for a newer release and offers
+**Zainstaluj aktualizację** or **Odłóż wydanie** (skip this release until a
+newer one appears). Updates replace only program files; your settings, routes,
+map data and logs stay. Without internet the bot simply starts the installed
+version. See [Releases for maintainers](docs/RELEASES.md) for how a release is
+published.
+
+### Build from source (developers)
 
 ### Requirements
 
@@ -267,8 +288,9 @@ from source on Windows.
 ### Steps
 
 Clone the repository with Git into any folder (for example
-`git clone <repository URL> C:\DBVictoryBot`). A ZIP download does not work:
-the launcher reads the installed version from Git. Then run these in
+`git clone <repository URL> C:\DBVictoryBot`). GitHub's "Download ZIP" of the
+source does not work: a source install reads its version from Git (the release
+package above carries its own). Then run these in
 **Windows PowerShell** in that folder:
 
 ```powershell
@@ -317,8 +339,9 @@ your own client without starting the bot:
 .\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe'
 ```
 
-If the server updates the client, the bot reports an unknown build and does not
-attach. Adding a new build is a developer task described in the
+If the server updates the client, the launcher says so in plain words before
+touching the game and the bot does not attach. You can keep playing without the
+bot; once a release for the new client is out, the launcher offers it. Adding a new build is a developer task described in the
 [client update guide](docs/CLIENT_UPDATE_GUIDE.md) and the
 [offsets guide](docs/CLIENT_UPDATE_OFFSETS_GUIDE.md).
 
@@ -330,10 +353,21 @@ read the game state and control the bot with tools such as `get_status`,
 `session_activity`. Connecting to the game is always an explicit `start_bot`
 call.
 
-- Codex: run `.\scripts\setup-codex.ps1`, then `.\scripts\start-codex.ps1`.
-  See [Codex on Windows](docs/CODEX.md).
-- Claude Code: open Claude Code in the bot folder. The included `.mcp.json`
-  starts `run_mcp.py` with the folder's own `venv`.
+The bot works without any of this. To connect an agent, open **Integracja AI**
+in the launcher (bottom left) and click **Połącz** next to Codex, Claude Desktop
+or Claude Code; **Odłącz** removes the entry again. This only adds a
+`dbvictory-bot` server to that program's own MCP settings (the same can be done
+from a terminal with `venv\Scripts\python.exe mcp_clients.py connect codex`).
+Restart the agent afterwards.
+
+- Codex: `~/.codex/config.toml`. Developers can also use
+  `.\scripts\setup-codex.ps1` and `.\scripts\start-codex.ps1`; see
+  [Codex on Windows](docs/CODEX.md).
+- Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` (and the
+  Microsoft Store app's own copy when it has one).
+- Claude Code: added with `claude mcp add --scope user`, so Claude Code must be
+  installed. In a source checkout, opening Claude Code in the bot folder also
+  works through the included `.mcp.json`.
 
 A second agent can also attach read-only to a session the launcher started
 (`attach_status`, `session_activity`, `packet_journal`).

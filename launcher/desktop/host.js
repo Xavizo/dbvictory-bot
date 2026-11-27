@@ -99,6 +99,52 @@ async function openClient(folder) {
   return child.pid;
 }
 
+async function runJson(root, script, args, timeout=90000) {
+  const python = path.join(root, "venv", "Scripts", "python.exe");
+  let output;
+  try {
+    output = (await exec(python, ["-B","-X","utf8",script,...args], {...options,cwd:root,timeout})).stdout;
+  } catch (error) {
+    output = error.stdout;
+    if (!output) throw new Error("Nie udało się uruchomić lokalnego Pythona.");
+  }
+  const result = JSON.parse(output);
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+
+const mcpTargets = ["codex","claude-desktop","claude-code"];
+async function mcpClients(root, operation, target) {
+  if (operation === "status") return runJson(root, "mcp_clients.py", ["status"], 30000);
+  if (!["connect","disconnect"].includes(operation) || !mcpTargets.includes(target)) throw new Error("Nieznana integracja.");
+  return runJson(root, "mcp_clients.py", [operation, target]);
+}
+
+async function clientSupport(root, folder) {
+  const exe = await clientExe(folder);
+  if (!exe) return {supported:false, missing:true, message:"Wybierz katalog klienta DBVictory (z plikiem dbvStart.exe lub dbvStart_gl.exe) przyciskiem „Zmień”."};
+  return runJson(root, "launcher_files.py", ["client-check", exe], 30000);
+}
+
+// No fixed default: look for a client folder in a few usual places.
+async function findClientFolder(env = process.env) {
+  const home = env.USERPROFILE || "";
+  const roots = ["C:\\", "D:\\", "E:\\", "C:\\Gry", "D:\\Gry", "E:\\Gry", "C:\\Games", "D:\\Games",
+    env["ProgramFiles(x86)"], env.ProgramFiles,
+    home && path.join(home, "Desktop"), home && path.join(home, "Downloads"),
+    home && path.join(home, "Documents"), home && path.join(home, "Games")].filter(Boolean);
+  for (const base of roots) {
+    let entries;
+    try { entries = await fs.readdir(base, {withFileTypes:true}); } catch { continue; }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/dbv|victory/i.test(entry.name)) continue;
+      const folder = path.join(base, entry.name);
+      if (await clientExe(folder)) return folder;
+    }
+  }
+  return "";
+}
+
 function interactive(root, id, revision, onLine) {
   const proc = spawn(path.join(root,"venv","Scripts","python.exe"),["-B","-u","-X","utf8","-m","launcher.desktop_session"],
     {cwd:root,windowsHide:true,stdio:["pipe","pipe","pipe"],env:{...process.env,PYTHONIOENCODING:"utf-8",DBV_LAUNCHER_ID:id,DBV_LAUNCHER_REVISION:revision}});
@@ -110,4 +156,5 @@ function interactive(root, id, revision, onLine) {
   return proc;
 }
 
-module.exports = {checkRelease,history,validSha,clientExe,clients,windowPid,openWindowPid,openClient,interactive};
+module.exports = {checkRelease,history,validSha,clientExe,clients,windowPid,openWindowPid,openClient,interactive,
+  mcpClients,clientSupport,findClientFolder};

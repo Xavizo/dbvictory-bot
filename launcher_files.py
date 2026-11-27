@@ -45,6 +45,11 @@ def window_executable(root):
 
 
 def preflight(root, check_only=False):
+    import github_release
+    if github_release.is_release_install(root):
+        # Downloaded packages update from GitHub releases, and only on request.
+        return github_release.status(root, check_only)
+
     from dbv_release import apply_pending, status
 
     report = status(root) if check_only else apply_pending(root)
@@ -79,7 +84,8 @@ def desktop_files(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("preflight", "window", "build-window", "defer"))
+    parser.add_argument("operation", choices=("preflight", "window", "build-window", "defer", "install",
+                                              "client-check"))
     parser.add_argument("revision", nargs="?")
     parser.add_argument("--check", action="store_true", help="Pokaż wersje bez instalowania.")
     args = parser.parse_args()
@@ -89,14 +95,29 @@ def main():
         elif args.operation == "window":
             return show_window(ROOT, args.check)
         elif args.operation == "defer":
-            from dbv_release import defer_pending
-            print(json.dumps(defer_pending(ROOT, args.revision), ensure_ascii=False))
+            import github_release
+            if github_release.is_release_install(ROOT):
+                print(json.dumps(github_release.defer(ROOT, args.revision), ensure_ascii=False))
+            else:
+                from dbv_release import defer_pending
+                print(json.dumps(defer_pending(ROOT, args.revision), ensure_ascii=False))
+        elif args.operation == "client-check":
+            from client_profiles import client_support
+            print(json.dumps(client_support(Path(args.revision)), ensure_ascii=False))
+        elif args.operation == "install":
+            import github_release
+            print(json.dumps(github_release.install(ROOT, args.revision), ensure_ascii=False))
         else:
             print(json.dumps(preflight(ROOT, args.check), ensure_ascii=False))
     except (OSError, RuntimeError, ValueError) as error:
-        if args.operation in ("preflight", "defer"):
+        if args.operation in ("preflight", "defer", "install"):
             info = {}
             may_defer = False
+            import github_release
+            if github_release.is_release_install(ROOT):
+                print(json.dumps({"state": "error", "source": "github", "installed": None, "pending": None,
+                                  "message": str(error)}, ensure_ascii=False))
+                return 1
             if args.operation == "preflight" and not args.check:
                 try:
                     from dbv_release import can_defer

@@ -1,5 +1,6 @@
 """Identify a DBVictory build from its commit and its immutable release history."""
 
+import json
 import os
 from pathlib import Path
 import re
@@ -72,8 +73,39 @@ def read_head_revision(root: Path) -> str | None:
     return value if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", value) else None
 
 
+RELEASE_FILE = "release.json"
+
+
+def read_release(root):
+    """Version metadata of a downloaded release package (no Git checkout), else None."""
+    path = Path(root) / RELEASE_FILE
+    try:
+        if (Path(root) / ".git").exists() or path.stat().st_size > 4096:
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if (not isinstance(data, dict) or not isinstance(data.get("version"), str)
+            or not re.fullmatch(VERSION_PATTERN, data["version"])
+            or not isinstance(data.get("revision"), str)
+            or not re.fullmatch(r"[0-9a-f]{40}", data["revision"])):
+        return None
+    return data
+
+
+def installed_revision(root):
+    """HEAD of a Git installation or the commit a release package was built from."""
+    revision = read_head_revision(root)
+    if revision:
+        return revision
+    release = read_release(root)
+    return release["revision"] if release else None
+
+
 def checkout_revision(root):
     revision = read_head_revision(root)
+    if not revision and (release := read_release(root)):
+        return release["revision"]
     if revision or not (root / ".git").exists():
         return revision
     try:
@@ -86,6 +118,9 @@ def checkout_revision(root):
 def version_for(root, revision):
     if not revision:
         return None
+    release = read_release(root)
+    if release:
+        return release["version"] if release["revision"] == revision else None
     versions = {V1_COMMIT: (1, 0, 0)}
     if revision != V1_COMMIT:
         try:

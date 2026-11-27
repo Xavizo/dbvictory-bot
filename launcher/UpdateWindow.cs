@@ -214,7 +214,10 @@ internal sealed class UpdateWindow : Form
                     break;
                 default: throw new InvalidDataException("Nieznany wynik sprawdzania wersji.");
             }
-            if (!checkOnly && (state == "current" || state == "updated"))
+            object source;
+            bool github = result.TryGetValue("source", out source) && Object.Equals(source, "github");
+            // Downloaded packages install releases from the desktop launcher; the console keeps running this one.
+            if (!checkOnly && (state == "current" || state == "updated" || github && state == "available"))
                 exitCode = 0;
         }
         catch (Exception ex)

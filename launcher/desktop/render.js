@@ -88,8 +88,14 @@ function update(s) {
   detail.hidden=s.failedStep!=null || ["starting","panel","detecting"].includes(stage);
   detail.classList.toggle("problem",["busy","problem","recovery"].includes(stage));
   button("#primary",null);button("#secondary",null);
-  if (idle&&!s.readOnly) {
+  if (idle&&!s.readOnly&&!s.installed) {
+    button("#primary","Wybierz folder klienta","folder");
+  } else if (idle&&!s.readOnly) {
     button("#primary","Start","start");
+    if(s.clientOutdated)button("#secondary","Sprawdź aktualizacje","recheck");
+  } else if(stage==="available"&&s.canInstall) {
+    button("#primary","Zainstaluj aktualizację","install");
+    if(s.canDefer)button("#secondary","Odłóż wydanie","defer");
   } else if(stage==="prepared") button("#primary","Połącz z grą","connect",!!s.readOnly);
   else if (["detecting","starting","panel"].includes(stage)) button("#primary","Start",null,true);
   else if (["closed","busy","problem","available","recovery"].includes(stage)||s.readOnly&&idle) button("#primary","Sprawdź ponownie","retry");
@@ -106,5 +112,41 @@ historyDialog.addEventListener("click",event=>{
   if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom) historyDialog.close();
 });
 $("#folderEdit").onclick=()=>window.desktop.act("folder");
+
+const aiDialog=$("#ai");
+let aiBusy=false, aiReadOnly=false;
+function drawAi(result) {
+  const status=result.status||{}, list=$("#aiTargets");
+  list.replaceChildren();
+  const on=Object.values(status).filter(t=>t.connected).map(t=>t.label);
+  $("#aiSummary").textContent=on.length?on.join(", "):"wyłączona";
+  for (const [key,target] of Object.entries(status)) {
+    const li=document.createElement("li"), name=document.createElement("span"), state=document.createElement("span"), act=document.createElement("button");
+    name.textContent=target.label;
+    state.className="ai-state"+(target.connected?" on":"");
+    state.textContent=target.connected?"połączony":target.available?"niepołączony":"nie znaleziono programu";
+    act.className="edit";act.type="button";
+    act.textContent=target.connected?"Odłącz":"Połącz";
+    act.disabled=aiBusy||aiReadOnly||!target.available&&!target.connected;
+    act.onclick=()=>changeAi(target.connected?"disconnect":"connect",key);
+    const left=document.createElement("span");left.append(name,document.createElement("br"),state);
+    li.append(left,act);list.append(li);
+  }
+  if (result.message!=null) $("#aiMessage").textContent=result.message;
+}
+async function refreshAi() {
+  try { drawAi(await window.desktop.mcp("status")); }
+  catch (error) { $("#aiSummary").textContent="—"; $("#aiMessage").textContent=error.message; }
+}
+async function changeAi(operation,target) {
+  if (aiBusy) return;
+  aiBusy=true;$("#aiMessage").textContent="Zapisywanie…";
+  try { drawAi(await window.desktop.mcp(operation,target)); }
+  catch (error) { $("#aiMessage").textContent=error.message; }
+  finally { aiBusy=false; refreshAi(); }
+}
+$("#aiOpen").onclick=()=>{$("#aiMessage").textContent="";aiDialog.showModal();refreshAi();};
+$("#closeAi").onclick=()=>aiDialog.close();
+window.desktop.state().then(s=>{aiReadOnly=!!s.readOnly;refreshAi();});
 window.desktop.onState(update);
 window.desktop.state().then(update);
