@@ -292,7 +292,36 @@ class TransitionLearner:
             data["origin"] = row["origin"]
         return hashlib.sha256(json.dumps(data,sort_keys=True).encode()).hexdigest()[:20]
 
+    def validate(self, row):
+        """Raise ValueError (or KeyError/TypeError) unless `row` is a well-formed observation."""
+        self._validate(row)
+
+    def add_shared(self, rows):
+        """Add observations from a shared route pack. Known IDs keep the player's own record."""
+        if self.storage_error:
+            raise ValueError(self.storage_error)
+        fresh = []
+        for row in rows:
+            self._validate(row)
+            if row["id"] not in self.records:
+                fresh.append(dict(row))
+        if not fresh:
+            return 0
+        initial = self._revision == 0
+        for row in fresh:
+            self.records[row["id"]] = row
+        self._write(list(self.records.values()) if initial else fresh)
+        if self.storage_error:
+            for row in fresh:
+                self.records.pop(row["id"], None)
+            raise ValueError(self.storage_error)
+        self._publish(self._view.get("status", "waiting"))
+        return len(fresh)
+
     def _save(self, row):
+        self._write((row,))
+
+    def _write(self, changed):
         if self.storage_error:
             return
         try:
@@ -317,7 +346,7 @@ class TransitionLearner:
                     if updated.rowcount != 1:
                         self.storage_error = "Baza obserwacji została zmieniona poza sesją; zapis wstrzymany."
                         return
-                    rows = (row,)
+                    rows = changed
                 db.executemany("INSERT OR REPLACE INTO observations VALUES (?,?)",
                                ((r["id"], json.dumps(r, ensure_ascii=False, separators=(",", ":"))) for r in rows))
             self._revision += 1

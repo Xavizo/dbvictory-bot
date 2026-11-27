@@ -6,10 +6,13 @@ exit file in the environment. Replaces the Electron main process:
 
 - one main window and at most one route editor, both on http://127.0.0.1:4747 only;
 - the page reaches the engine token and a few fixed operations through PanelApi
-  (see dashboard/public/desktop-bridge.js), and only from that origin;
+  (see dashboard/public/desktop-bridge.js), and only from that origin; the only
+  file access is saving or opening a route pack in a file the player picks;
 - closing hides to the tray; the tray restores, closes the panel or ends the bot;
 - alert sounds keep polling while hidden (panel_alerts).
 """
+import gzip
+import io
 import json
 import os
 import re
@@ -31,6 +34,10 @@ justify-content:center;height:100vh;font-family:system-ui"><div style="text-alig
 </script></body></html>"""
 CELL_TEXT = re.compile(r"^Pole \(\d{1,5}, \d{1,5}, \d{1,2}\) — ")
 DRAFT_ID = re.compile(r"^(?:[a-f0-9]{32})?$")
+ROUTE_FILE = re.compile(r"^[\w .()-]{1,60}\.dbvroute$")
+ROUTE_FILE_TYPES = ("Trasa DBVictory (*.dbvroute)",)
+MAX_ROUTE_FILE = 8 * 1024 * 1024         # gzip on disk
+MAX_ROUTE_JSON = 32 * 1024 * 1024        # the pack itself
 
 
 def is_panel_url(url):
@@ -55,6 +62,40 @@ def valid_plan(text):
     return (isinstance(plan, dict) and plan.get("preview_only") is True and isinstance(plan.get("scope"), str)
             and isinstance(plan.get("path"), list) and len(plan["path"]) <= 40000
             and isinstance(plan.get("points"), list) and len(plan["points"]) <= 128)
+
+
+def valid_route_pack(text):
+    """A route pack as dbv.brain.navigation.route_pack writes it; nothing else is saved or read."""
+    if not isinstance(text, str) or len(text) > MAX_ROUTE_JSON or "\0" in text:
+        return False
+    try:
+        pack = json.loads(text)
+    except ValueError:
+        return False
+    return (isinstance(pack, dict) and pack.get("format") == "dbvictory-route" and pack.get("version") == 1
+            and isinstance(pack.get("drafts"), list) and isinstance(pack.get("tiles"), list))
+
+
+def read_route_file(path):
+    """The pack text in a .dbvroute file (gzip-compressed JSON, or plain JSON)."""
+    with open(path, "rb") as stream:
+        raw = stream.read(MAX_ROUTE_FILE + 1)
+    if len(raw) > MAX_ROUTE_FILE:
+        raise ValueError("Plik trasy jest zbyt duży.")
+    if raw[:2] == b"\x1f\x8b":
+        with gzip.GzipFile(fileobj=io.BytesIO(raw)) as packed:
+            raw = packed.read(MAX_ROUTE_JSON + 1)
+    text = raw.decode("utf-8-sig") if len(raw) <= MAX_ROUTE_JSON else None
+    if not valid_route_pack(text):
+        raise ValueError("To nie jest prawidłowy plik trasy DBVictory.")
+    return text
+
+
+def _chosen(result):
+    """pywebview returns a path, a tuple of paths or None."""
+    if isinstance(result, (list, tuple)):
+        result = result[0] if result else None
+    return result if isinstance(result, str) and result else None
 
 
 def write_clipboard(text):
@@ -106,6 +147,28 @@ class PanelApi:
             raise ValueError("Invalid route ID.")
         return self._app.open_editor(draft_id)
 
+    def save_route(self, file_name, text):
+        """Ask where to save an exported route pack and write it there. False when cancelled."""
+        self._trusted()
+        if not isinstance(file_name, str) or not ROUTE_FILE.match(file_name) or not valid_route_pack(text):
+            raise ValueError("Invalid route pack.")
+        path = _chosen(self._app.file_dialog(self._kind, "save", file_name))
+        if path is None:
+            return False
+        if not path.lower().endswith(".dbvroute"):
+            path += ".dbvroute"
+        temp = path + ".partial"
+        with gzip.open(temp, "wb", compresslevel=6) as stream:
+            stream.write(text.encode("utf-8"))
+        os.replace(temp, path)
+        return os.path.basename(path)
+
+    def open_route(self):
+        """Ask for a .dbvroute file and return its route pack text. None when cancelled."""
+        self._trusted()
+        path = _chosen(self._app.file_dialog(self._kind, "open"))
+        return None if path is None else read_route_file(path)
+
     def test_sound(self):
         self._trusted()
         return self._app.sounds.test_sound() if self._app.sounds else False
@@ -133,6 +196,18 @@ class PanelApp:
         self.audio = audio
         self.sounds = None
         self._ready_written = False
+
+    def file_dialog(self, kind, mode, file_name=""):
+        """A native open/save dialog over the window that asked, limited to route files."""
+        window = self.windows.get(kind)
+        if window is None:
+            raise PermissionError("Panel window closed.")
+        dialogs = getattr(self.webview, "FileDialog", None)
+        if mode == "save":
+            kind_value = dialogs.SAVE if dialogs else self.webview.SAVE_DIALOG
+            return window.create_file_dialog(kind_value, save_filename=file_name, file_types=ROUTE_FILE_TYPES)
+        kind_value = dialogs.OPEN if dialogs else self.webview.OPEN_DIALOG
+        return window.create_file_dialog(kind_value, allow_multiple=False, file_types=ROUTE_FILE_TYPES)
 
     # ── windows ───────────────────────────────────────────────────────
     def create_main(self):

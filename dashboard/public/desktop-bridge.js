@@ -1,6 +1,7 @@
 // The panel window (dbv/mcp_server/panel_window.py) exposes narrow operations as
 // window.pywebview.api. Map them onto the names the panel uses. Never exposes a
-// general IPC, clipboard reads or file access. In a plain browser nothing
+// general IPC or clipboard reads; files only as route packs the player saves
+// or opens through a native dialog. In a plain browser nothing
 // answers, so every call fails after a short wait, as browser access must.
 (() => {
   "use strict";
@@ -21,6 +22,7 @@
     dbvAuth: { value: fixed({ getToken: () => call("get_token") }) },
     dbvMap: { value: fixed({ copyCell: text => call("copy_cell", text), copyPlan: text => call("copy_plan", text) }) },
     dbvEditor: { value: fixed({ open: draftId => call("open_editor", draftId) }) },
+    dbvRoutes: { value: fixed({ save: (fileName, text) => call("save_route", fileName, text), open: () => call("open_route") }) },
     dbvAlerts: { value: fixed({ testSound: () => call("test_sound"), panelPause: value => call("panel_pause", value) }) },
   });
 })();
