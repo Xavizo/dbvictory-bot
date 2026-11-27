@@ -350,13 +350,25 @@ def _storage():
     return os.path.join(base, "DBVictory Bot", "panel-webview")
 
 
+def use_app_icon(app_id="DBVictory.Panel"):
+    """The bot's icon for the windows and taskbar button, instead of pythonw's."""
+    if os.name == "nt":
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        except (AttributeError, OSError):
+            pass
+    icon = paths.INSTALL_ROOT / "launcher" / "desktop.ico"
+    return str(icon) if icon.is_file() else None
+
+
 def main():
     import webview
     app = PanelApp(os.environ, webview, tray_factory=Tray if os.name == "nt" else None)
     app.create_main()
     # Not private: the panel keeps small preferences (alert bell) in local storage, as under Electron.
     webview.start(app.started, gui="edgechromium" if os.name == "nt" else None, private_mode=False,
-                  storage_path=_storage())
+                  storage_path=_storage(), icon=use_app_icon())
     app.quit()
     return 0
 
