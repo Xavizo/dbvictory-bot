@@ -37,8 +37,98 @@ coding agent (Codex or Claude Code) through MCP.
 **Panel**
 - Live HP/Ki, position, nearby creatures, items, pets and the world map
 - Session statistics (XP/h, kills, loot) and hunt comparisons
-- Sound and tray alerts for players on screen and private messages
+- Alerts with sound for private messages, chat, players on screen and Ki drops
 - Bot profiles per character, so each character keeps its own settings
+
+## A tour of the panel
+
+The panel is in Polish. Labels are quoted as they appear, with a translation.
+
+### Automation
+
+The **Automatyka** (Automation) tab holds everything that runs while you play
+or hunt: healing rules, combat spells, buffs and the Hunter Knife. Each feature
+has its own switch, and enabled features resume on your next login.
+
+Healing is a list of **Reguły leczenia** (healing rules). Each rule says
+*when* (HP or Ki below a threshold) and *what* to use (a potion, senzu bean or
+spell). Rules are checked in priority order and share the item cooldown, so the
+most urgent one always wins.
+
+The session strip at the top shows XP/h, kills, Senzu/h and how long you have
+been hunting.
+
+### Atlas
+
+**Atlas** opens a full-screen map with three views:
+
+- **Świat** (World): every area you have discovered, with the hunting grounds the
+  bot found and approximate monster spawns.
+- **Zapisana mapa** (Saved map): the learned map, floor by floor, with stairs,
+  ladders, holes and other transitions the bot has confirmed.
+- **Mapa na żywo** (Live map): what the client sees around you right now.
+
+The atlas fills itself while you play. You don't need to record anything: walk
+around, change floors and fight, and the bot remembers tiles, transitions,
+monster sightings and where you gained XP. All of it is stored locally in
+`local_data/`.
+
+### Creating a route
+
+There are three ways to create a cavebot route. All of them end as a
+**szkic** (draft) that you can review and edit on the map before using it.
+
+**1. Plan it from a hunting ground (no recording).**
+Open **Atlas → Świat** and pick a hunting ground. The bot adds one automatically
+whenever you gain XP there during manual play. **Planowanie pętli** (loop
+planning) proposes loop variants that cover the ground's sectors and shows how
+much of the area each one covers. Add a connector with **Dodaj łącznik** if
+part of the area is unreachable. Check any transitions listed under **Przejścia
+do sprawdzenia w grze** (transitions to verify in game), then click **Edytuj
+szkic** (edit draft).
+
+**2. Record it while you hunt.**
+Start **Nagrywanie adaptacyjne** (adaptive recording) and hunt normally. A
+progress bar tells you when the recording is good enough:
+
+1. Gain XP in the first spot.
+2. Visit the next room or go back for another group.
+3. The bot looks for a way back to sectors you've already visited.
+4. A loop is detected, and you can stop recording.
+
+The bot turns what you did into a draft. **Optymalizuj trasę** (optimize route)
+removes detours and backtracking. You can compare the result with the original
+before accepting it.
+
+**3. Draw it on the map.**
+In a new draft, click points on the map or draw a path. The editor connects them
+using known paths and transitions, and marks any section it can't connect.
+
+In the editor you can drag waypoints, insert points after a waypoint, choose a
+specific transition (stairs, ladder, rope spot) for a floor change, and show the
+route one stage or floor at a time. Save the draft with a name when you're done.
+
+### Running a route
+
+On the **Cavebot** tab, choose the route and set up combat:
+
+- When to attack: **Gdy potwór jest na ekranie** (when a monster is on screen) or
+  **Gdy podejdzie na X SQM** (when it comes within X squares).
+- Target priority: **Najbliższy** (nearest), **Najmniej HP** (lowest HP) or
+  **Najwięcej HP** (highest HP).
+- Chase distance, loot time limit, lure size and spell conditions.
+
+Press start. The run bar at the top shows the current phase (route, lure, fight,
+chase, return), the current waypoint and any problem, such as a transition that
+needs checking. **Pauza** (pause) or the **Pause/Break** key stops everything at
+once. **Historia decyzji i raporty okrążeń** (decision history and loop reports)
+explains why the bot did what it did and sums up each loop.
+
+### Alerts
+
+The bell collects game events: a private message, a message in local chat, a
+player on screen, or a sudden Ki drop. You can turn each kind on or off, give it
+a sound, and choose whether it fires always or only while the cavebot is running.
 
 ## How it works
 

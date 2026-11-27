@@ -1,50 +1,28 @@
-# DBVictory Bot
+# Documentation
 
-A Tibia OTS bot powered by Claude Code via MCP (Model Context Protocol). Controls a game character through a MITM proxy, injected DLL, and automated action scripts.
+Start with the [main README](../README.md) for features, installation and a
+tour of the panel.
 
 ## Client updates
 
-- [Maintenance guide](CLIENT_UPDATE_GUIDE.md): files involved, new-build analysis,
-  tests, DLL builds, installation, fresh-login checks and troubleshooting.
+- [Maintenance guide](CLIENT_UPDATE_GUIDE.md): the files involved, how to
+  analyse a new client build, tests, DLL builds, installation, fresh-login
+  checks and troubleshooting.
+- [Offsets guide](CLIENT_UPDATE_OFFSETS_GUIDE.md): how to find the new memory
+  addresses, with the `tools/derive.py` helper.
 - [November 26 compatibility record](CLIENT_UPDATE.md): exact hashes, address
-  evidence, v1.38.3 results and operator confirmation.
+  evidence and test results for the current client build.
 
-## Baza wiedzy vBota
+## Running with an AI agent
 
-[Architektura klienta](vbot/architecture.md), [katalog wszystkich modułów](vbot/modules.md) i [wnioski dla DBVictory](vbot/decisions.md) są dostępne także bez uruchamiania gry jako zasoby MCP `dbvictory://knowledge/vbot/architecture`, `dbvictory://knowledge/vbot/modules` i `dbvictory://knowledge/vbot/decisions`.
+- [Codex on Windows](CODEX.md): setup, safe MCP checks, dashboard
+  authentication and the release process (partly in Polish).
 
-## Dashboard
+## Design notes
 
-![Dashboard](dashboard.png)
-
-The Electron dashboard provides real-time monitoring and control:
-
-- **Player Stats** — HP, Mana, Level, Position
-- **Creatures** — Nearby creatures with health bars
-- **Cavebot** — Record and replay navigation paths with a live minimap
-- **Actions** — Toggle automated scripts (healing, haste, auto-targeting, food, runes)
-- **Packet Counters** — Server/client packet throughput
-
-## Architecture
-
-- **MCP Server** (`mcp_server.py`) — Exposes bot tools to Claude Code via stdio JSON-RPC
-- **MITM Proxy** (`proxy.py`) — Intercepts client-server traffic for packet parsing and injection
-- **DLL Bridge** (`dll/dbvbot.cpp`) — Injected DLL for creature scanning, in-game targeting, and memory operations
-- **Dashboard** (`dashboard/`) — Next.js + Electron app with WebSocket real-time state push
-- **Actions** (`actions/`) — Modular async scripts (eat_food, speed_up, power_up, auto_targeting, auto_rune, full_light, cavebot)
-- **Cavebot** (`cavebot.py`) — Records player navigation, replays via actions map with minimap visualization
-
-## Cavebot TODO
-
-The cavebot is a first working version but not yet fully functional. Known issues and planned features:
-
-### Bugs
-1. **Stairs recording is incorrect** — floor transitions via stairs/ramps are not always captured properly in recordings, causing playback to fail at floor changes
-
-### Planned Features
-2. **Monster combat strategies** — move-and-attack behavior that keeps 1 square distance from the monster while fighting
-3. **Real item usage support** — shovel, rope, and other usable items during navigation
-4. **Terrain testing** — verify and fix playback on doors, ladders, and other interactive map objects
-
-### Future
-- **Anti-bot / Intelligent responder** — automated system to detect and respond to anti-bot checks or GM interactions
+- [Combat review and V2 direction](CAVEBOT_REVIEW.md) (Polish)
+- [OTClient source analysis](otclient_source_analysis.md)
+- [Creature tracking research](creature_tracking_research.md)
+- vBot comparison (Polish): [architecture](vbot/architecture.md),
+  [modules](vbot/modules.md), [decisions](vbot/decisions.md). These are also
+  available as MCP resources under `dbvictory://knowledge/vbot/…`.
