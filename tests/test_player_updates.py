@@ -246,31 +246,18 @@ def test_bundled_stats_after_a_known_stats_message_are_not_stale():
     assert state.hp == 71
 
 
-def test_dll_percentage_cannot_overwrite_exact_packet_health(monkeypatch, tmp_path):
-    import asyncio
-    import sys
-    from types import SimpleNamespace
-    from unittest.mock import Mock
+def test_dll_percentage_cannot_overwrite_exact_packet_health():
     from actions import dll_bridge as action
-
     state = GameState()
     state.player_id = 0x10000130
     state.hp, state.max_hp = 57, 123
     state.position = state.packet_position = (671, 156, 6)
-    bridge = SimpleNamespace(connected=True, read_only=False, dll_pos=(670, 156, 6),
-        read_creatures=lambda: [{"id": state.player_id, "hp": 100, "x": 671, "y": 156, "z": 6}],
-        disconnect=Mock(), send_command=Mock())
-    bot = SimpleNamespace(is_connected=True, player_id=state.player_id, log=Mock())
-    async def sleep(_):
-        bot.is_connected = False
-    async def connect(*_):
-        return True
-    bot.sleep = sleep
-    monkeypatch.setattr(action, "_make_bridge", lambda: bridge)
-    monkeypatch.setattr(action, "_connect_with_inject", connect)
-    monkeypatch.setattr(action, "_dbg", lambda *_: None)
-    monkeypatch.setattr(action, "DEBUG_LOG", str(tmp_path / "bridge.txt"))
-    monkeypatch.setattr(sys.modules["__main__"], "state", SimpleNamespace(game_state=state), raising=False)
-    asyncio.run(action.run(bot))
+    snapshot = [{"id": state.player_id, "name": "Hero", "hp": 100, "x": 670, "y": 156, "z": 6},
+                {"id": 0x40000001, "name": "Saibaman", "hp": 80, "x": 672, "y": 157, "z": 6}]
+    name, monsters = action.nearby_monsters(snapshot, {state.player_id}, state.position, 1000.0)
+    action._merge(state, monsters, 1000.0)
+    assert name == "Hero" and state.player_id not in state.creatures
+    # The DLL frame is shifted onto the client's own coordinates.
+    assert state.creatures[0x40000001]["x"] == 673
     assert (state.hp, state.max_hp) == (57, 123)
     assert state.position == state.packet_position == (671, 156, 6)

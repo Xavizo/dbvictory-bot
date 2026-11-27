@@ -140,7 +140,7 @@ def test_bundle_integrity_is_checked_before_applying(repos):
     assert release.status(installed)["installed"] == base
 
 
-@pytest.mark.parametrize("changed", ["dll/dbvbot.cpp", "requirements.txt", "dashboard/package-lock.json"])
+@pytest.mark.parametrize("changed", ["dll/marker_observer.cpp", "requirements.txt", "dashboard/package-lock.json"])
 def test_unsupported_dependencies_cannot_leave_half_an_update(repos, changed):
     installed, source, base = repos
     version = commit(source, changed, "unsupported")

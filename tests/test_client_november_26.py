@@ -99,23 +99,21 @@ def test_new_profile_has_its_own_dll_and_pipe():
 
 
 def test_new_bridge_uses_new_pipe_and_injects_exact_selected_artifact(monkeypatch, tmp_path):
+    from pathlib import Path
     from unittest.mock import Mock
     from actions import dll_bridge as action
-    from dbv.client_bridge.dll_bridge import DllBridge
+    from dbv.client_bridge.observer_pipe import ObserverPipe
     profile = select_profile(DIGEST)
-    bridge = DllBridge(read_only=True, profile=profile)
-    assert bridge.pipe_name == rb'\\.\pipe\dbvbot_marker_20261126'
+    assert ObserverPipe(profile).name == r'\\.\pipe\dbvbot_marker_20261126'
     folder = tmp_path / 'dll'
     folder.mkdir()
     (folder / profile.observer_dll).write_bytes(b'new synthetic observer')
     (folder / 'dbvobserver_marker_20261117.dll').write_bytes(b'old synthetic observer')
     monkeypatch.setattr(action, 'PROJECT_ROOT', str(tmp_path))
-    monkeypatch.setattr(action, '_dbg', Mock())
     injection = Mock()
-    monkeypatch.setattr(action.dll_inject, 'inject', injection)
-    action._inject_fresh_dll(observer=True, profile=profile)
-    from pathlib import Path
-    assert Path(injection.call_args.kwargs['dll_path']).read_bytes() == b'new synthetic observer'
+    monkeypatch.setattr(action.injector, 'inject', injection)
+    action._load_fresh_copy(profile)
+    assert Path(injection.call_args.args[0]).read_bytes() == b'new synthetic observer'
 
 
 def test_offline_build_check_rejects_unknown_executable_without_accepting_a_profile(tmp_path):

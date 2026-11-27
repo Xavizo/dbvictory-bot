@@ -95,7 +95,7 @@ if (Test-Path $cache) { Remove-Item -Recurse -Force $cache }
 # 4. Observer DLLs for every reviewed client build.
 $env:PATH = "$MinGwBin;$env:PATH"
 $ErrorActionPreference = "Continue"  # compilers write warnings to stderr; both scripts throw on failure
-foreach ($client in "legacy", "20261116", "20261126") {
+foreach ($client in "20261116", "20261126") {
     & (Join-Path $Stage "build_dll.ps1") -ClientVersion $client 2>&1 | ForEach-Object { "$_" }
 }
 Set-Location $Root
@@ -111,7 +111,7 @@ $ErrorActionPreference = "Stop"
 $icon = Join-Path $Stage "launcher\desktop.ico"
 Invoke-Checked $Python @("-I", (Join-Path $Root "tools\brand_exe.py"), (Join-Path $Scripts "pythonw.exe"), (Join-Path $Scripts "DBVictory.exe"), $icon)
 Invoke-Checked $Python @("-I", (Join-Path $Root "tools\brand_exe.py"), $Python, (Join-Path $Scripts "DBVictory Engine.exe"), $icon)
-foreach ($built in "dll\dbvbot.dll", "dll\dbvobserver_marker_20261117.dll", "dll\dbvobserver_marker_20261126.dll", "DBVictory.exe", "DBVictory Launcher.exe", "venv\Scripts\DBVictory.exe", "venv\Scripts\DBVictory Engine.exe") {
+foreach ($built in "dll\dbvobserver_marker_20261117.dll", "dll\dbvobserver_marker_20261126.dll", "DBVictory.exe", "DBVictory Launcher.exe", "venv\Scripts\DBVictory.exe", "venv\Scripts\DBVictory Engine.exe") {
     if (-not (Test-Path (Join-Path $Stage $built))) { throw "Build did not produce $built" }
 }
 

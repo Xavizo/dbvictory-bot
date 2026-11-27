@@ -292,7 +292,7 @@ Launcher ──► run_bot.py ──► MCP engine (dbv/mcp_server/server.py)
                               ├── dbv/client_bridge/proxy.py ◄──► game client ◄──► game server
                               ├── dbv/client_bridge/packet_observer.py → dbv/brain/state/game_state.py
                               ├── dbv/brain/navigation/passive_map.py / dbv/client_bridge/client_player_state.py (read-only memory)
-                              ├── dbv/client_bridge/dll_bridge.py ◄── named pipe ◄── observer DLL (in client)
+                              ├── dbv/client_bridge/observer_pipe.py ◄── named pipe ◄── observer DLL (in client)
                               ├── actions/*.py (healing, combat, cavebot…)
                               └── dbv/mcp_server/dashboard_api.py ──► dashboard/ (Next.js, shown with pywebview)
 ```

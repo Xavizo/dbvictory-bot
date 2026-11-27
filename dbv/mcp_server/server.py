@@ -927,13 +927,18 @@ def _check_port_listening(port: int) -> bool:
 
 
 def _check_pipe_exists() -> bool:
-    """Check if the dbvbot named pipe exists (DLL loaded and running)."""
+    """Whether the observer DLL is serving its pipe (without taking the connection)."""
     try:
         bridge = getattr(state.game_state, "dll_bridge", None)
         if bridge is not None:
             return bridge.connected
-        from dbv.client_bridge.dll_bridge import DllBridge
-        return DllBridge().pipe_exists()
+        from dbv.client_bridge.observer_pipe import ObserverPipe
+        from dbv.client_bridge.passive_map_win32 import ReadOnlyClient
+        client = ReadOnlyClient()
+        try:
+            return ObserverPipe(client.profile).exists()
+        finally:
+            client.close()
     except Exception:
         return False
 
@@ -973,7 +978,7 @@ def _build_status_report() -> str:
     # DLL pipe
     pipe_ok = _check_pipe_exists()
     if pipe_ok:
-        lines.append("[OK] DLL Pipe: dbvbot pipe available")
+        lines.append("[OK] DLL Pipe: observer pipe available")
     else:
         lines.append("[--] DLL Pipe: not detected (dll_bridge action will inject)")
 

@@ -92,8 +92,8 @@ Build with the existing 32-bit MinGW toolchain:
 .\build_dll.ps1 -ClientVersion 20261126
 ```
 
-`-ClientVersion 20261116` builds the prior marker observer; the default still
-builds the legacy `dbvbot.dll`. Build errors now return failure. No agent or
+`-ClientVersion 20261116` builds the prior marker observer; the default is
+`20261126`. The first (legacy) client is no longer supported. Build errors now return failure. No agent or
 game elevation is required for compilation.
 
 The matching synthetic native tests can be compiled as follows and executed
