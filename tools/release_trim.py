@@ -25,6 +25,18 @@ PYTHON_DROPPED = (
     "Lib/site-packages/PyWin32.chm", "Lib/site-packages/pythonwin",
     "Scripts/pip*.exe", "Scripts/idle*", "Scripts/pywin32_postinstall*", "Scripts/pywin32_testall*",
     "DLLs/_tkinter.pyd", "DLLs/tcl86t.dll", "DLLs/tk86t.dll", "tcl", "include", "libs",
+    # CPython's own test modules and tools no program here imports.
+    "DLLs/_test*.pyd", "DLLs/_ctypes_test.pyd", "DLLs/xxlimited*.pyd", "DLLs/_msi.pyd", "Lib/msilib",
+    "Lib/venv", "Lib/pydoc_data", "Lib/lib2to3", "Lib/turtle.py",
+    # cryptography (10 MB) comes with mcp only for PyJWT's optional algorithms and the MCP
+    # client's OAuth helpers; PyJWT imports it guarded and the bot is an MCP server.
+    "Lib/site-packages/cryptography", "Lib/site-packages/cryptography-*.dist-info",
+    # pycryptodome's self-tests; the bot uses Crypto.PublicKey.RSA.
+    "Lib/site-packages/Crypto/SelfTest",
+    # pywin32's COM support, samples and tests; the bot uses win32api, win32gui, win32job & co.
+    "Lib/site-packages/win32com", "Lib/site-packages/win32comext", "Lib/site-packages/win32/Demos",
+    "Lib/site-packages/win32/test", "Lib/site-packages/win32/include", "Lib/site-packages/win32/libs",
+    "Lib/site-packages/win32/scripts",
     # pywebview's Android bridge. Its WebView2 loaders stay for every architecture:
     # the EdgeChromium backend resolves all three on import.
     "Lib/site-packages/webview/lib/pywebview-android.jar",

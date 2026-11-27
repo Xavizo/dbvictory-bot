@@ -85,3 +85,27 @@ def test_trim_refuses_a_stage_without_the_panel_build(tmp_path):
         assert "BUILD_ID" in str(error)
     else:
         raise AssertionError("trim accepted a stage without the panel build")
+
+
+def test_trim_drops_unused_python_extras_but_keeps_what_the_bot_imports(tmp_path):
+    root = stage(tmp_path)
+    py = "venv/Scripts"
+    dropped = [f"{SITE}/cryptography/__init__.py", f"{SITE}/cryptography-50.0.2.dist-info/METADATA",
+               f"{SITE}/Crypto/SelfTest/__init__.py", f"{SITE}/win32com/__init__.py",
+               f"{SITE}/win32comext/shell/shell.pyd", f"{SITE}/win32/Demos/x.py", f"{SITE}/win32/test/x.py",
+               f"{SITE}/win32/libs/pywintypes.lib", f"{SITE}/win32/include/PyWinTypes.h", f"{SITE}/win32/scripts/x.py",
+               f"{py}/DLLs/_testcapi.pyd", f"{py}/DLLs/_ctypes_test.pyd", f"{py}/DLLs/_msi.pyd",
+               f"{py}/DLLs/xxlimited.pyd", f"{py}/Lib/msilib/__init__.py", f"{py}/Lib/venv/__init__.py",
+               f"{py}/Lib/pydoc_data/topics.py", f"{py}/Lib/lib2to3/__init__.py", f"{py}/Lib/turtle.py"]
+    kept = [f"{SITE}/Crypto/PublicKey/RSA.py", f"{SITE}/jwt/__init__.py", f"{SITE}/cffi/__init__.py",
+            f"{SITE}/pycparser/__init__.py", f"{SITE}/win32/lib/win32con.py", f"{SITE}/win32/win32job.pyd",
+            f"{SITE}/pywin32_system32/pywintypes312.dll", f"{SITE}/mcp-1.30.0.dist-info/METADATA",
+            f"{py}/DLLs/_ctypes.pyd", f"{py}/DLLs/_sqlite3.pyd", f"{py}/Lib/unittest/__init__.py",
+            f"{py}/Lib/pydoc.py"]
+    for rel in dropped + kept:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x")
+    release_trim.trim(root)
+    files = present(root)
+    assert not files & set(dropped)
+    assert set(kept) <= files

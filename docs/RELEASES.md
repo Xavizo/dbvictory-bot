@@ -58,6 +58,10 @@ Node.js nor the Next.js server. Before sealing,
 [`tools/release_trim.py`](../tools/release_trim.py) removes what only the build
 needs: `dashboard\node_modules` (Next.js, React, the compilers…) and the
 panel's build cache, pip, Tk/IDLE and the C headers from Python, and `tests\`.
+It also drops Python parts nothing imports (about 21 MB): `cryptography`
+(only PyJWT's optional algorithms and the MCP client's OAuth helpers use it),
+pywin32's COM packages, samples and tests, pycryptodome's self-tests and
+CPython's test modules, `venv`, `lib2to3` and `pydoc_data`.
 The build then imports the bot's and the windows' modules with the trimmed
 Python and serves the panel with `panel_server` before it zips anything.
 
