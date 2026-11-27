@@ -9,13 +9,14 @@ import time
 from uuid import uuid4
 
 from floor_step_witness import FloorStepWitness
+from dbv.paths import LOCAL_DATA_DIR
 
 
 HISTORY_SECONDS = 300
 AFTER_SECONDS = 30
 UNCONFIRMED_SECONDS = 2.5
 MAX_EVENTS = 32768
-REPORT_DIRECTORY = Path(__file__).resolve().parent / "local_data" / "movement-reports"
+REPORT_DIRECTORY = LOCAL_DATA_DIR / "movement-reports"
 log = logging.getLogger(__name__)
 
 

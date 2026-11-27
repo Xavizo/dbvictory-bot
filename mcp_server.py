@@ -32,6 +32,8 @@ log = logging.getLogger("mcp_server")
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from dbv import paths
+from dbv.paths import INSTALL_ROOT
 from dbv_revision import checkout_revision, revision_label, version_for
 from session_startup import LoginStartup
 from session_observations import session_observations, note_observation_gap, publish_semantic_result
@@ -46,7 +48,7 @@ def _engine_label(root, revision=None):
 
 
 # Capture once, before loading the engine. Reopening the panel reuses this identity.
-ENGINE_ROOT = Path(__file__).resolve().parent
+ENGINE_ROOT = INSTALL_ROOT
 ENGINE_REVISION = checkout_revision(ENGINE_ROOT)
 ENGINE_LABEL = _engine_label(ENGINE_ROOT, ENGINE_REVISION)
 
@@ -82,8 +84,8 @@ from barrier_band import BandScheduler, validate_config as validate_band_config
 from dashboard_security import SESSION_TOKEN
 
 # ── Constants ───────────────────────────────────────────────────────
-SETTINGS_FILE = Path(__file__).parent / "bot_settings.json"
-ACTIONS_DIR = Path(__file__).parent / "actions"
+SETTINGS_FILE = paths.SETTINGS_FILE
+ACTIONS_DIR = paths.ACTIONS_DIR
 INTERNAL_ACTIONS = {"dll_bridge"}
 
 
@@ -973,7 +975,7 @@ def _launch_dashboard() -> None:
     """Launch the built, loopback-only dashboard and its authenticated Electron UI."""
     global _dashboard_launched
     import shutil
-    dashboard_dir = Path(__file__).parent / "dashboard"
+    dashboard_dir = paths.DASHBOARD_DIR
     if os.name != "nt":
         log.warning("The game dashboard requires Windows.")
         return
@@ -981,7 +983,7 @@ def _launch_dashboard() -> None:
         log.warning("Build the dashboard first: cd dashboard && npm ci && npm run build")
         return
     npm = shutil.which("npm.cmd")
-    bundled = Path(__file__).parent / "runtime" / "node"
+    bundled = paths.BUNDLED_NODE_DIR
     if npm is None and (bundled / "npm.cmd").is_file() and (bundled / "node.exe").is_file():
         # A downloaded release ships Node.js; Codex or Claude may start MCP without it on PATH.
         npm = str(bundled / "npm.cmd")
@@ -1028,7 +1030,7 @@ mcp = FastMCP(
     ),
 )
 
-_VBOT_KNOWLEDGE = Path(__file__).resolve().parent / "docs" / "vbot"
+_VBOT_KNOWLEDGE = paths.DOCS_DIR / "vbot"
 
 
 @mcp.resource("dbvictory://knowledge/vbot/architecture", mime_type="text/markdown")
@@ -1321,7 +1323,7 @@ async def start_bot() -> str:
             observer = client_profile.observer
         finally:
             verified_client.close()
-        if observer and not Path(__file__).with_name("dll").joinpath(client_profile.observer_dll).is_file():
+        if observer and not paths.DLL_DIR.joinpath(client_profile.observer_dll).is_file():
             return f"ERROR: Build dll/{client_profile.observer_dll} before starting this client version."
     except Exception as exc:
         return f"ERROR: Client compatibility check failed: {exc}"

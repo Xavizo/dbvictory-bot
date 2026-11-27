@@ -15,6 +15,7 @@ from pet_tracking import PetTracker
 
 from constants import PACKET_FORMATS as PF
 from protocol import Direction, ServerOpcode
+from dbv.paths import INSTALL_ROOT
 
 log = logging.getLogger("game_state")
 
@@ -185,7 +186,7 @@ def _dump_stats_debug(gs: GameState, raw_hex: str | None) -> None:
     import os
     try:
         if _stats_debug_file is None:
-            path = os.path.join(os.path.dirname(__file__), "stats_debug.txt")
+            path = INSTALL_ROOT / "stats_debug.txt"
             _stats_debug_file = open(path, "a", encoding="utf-8")
         ts = time.strftime("%H:%M:%S")
         hex_part = f" raw={raw_hex}" if raw_hex else ""

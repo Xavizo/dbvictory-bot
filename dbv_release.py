@@ -12,6 +12,7 @@ import stat
 from uuid import uuid4
 
 from dbv_revision import VERSION_PATTERN, git_executable, git_output as _git, revision_label, version_for
+from dbv.paths import INSTALL_ROOT
 
 
 def _path(path):
@@ -471,7 +472,7 @@ def apply_pending(installation):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--installation", type=Path, default=Path(__file__).resolve().parent)
+    parser.add_argument("--installation", type=Path, default=INSTALL_ROOT)
     commands = parser.add_subparsers(dest="command", required=True)
     publish_cmd = commands.add_parser("publish")
     publish_cmd.add_argument("source", type=Path)

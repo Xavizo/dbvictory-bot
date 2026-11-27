@@ -15,10 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from protocol import ClientOpcode, PacketReader
+from dbv import paths
 
 log = logging.getLogger("cavebot")
 
-RECORDINGS_DIR = Path(__file__).parent / "recordings"
+RECORDINGS_DIR = paths.RECORDINGS_DIR
 
 # Walk opcode → direction name
 WALK_OPCODE_TO_DIR = {

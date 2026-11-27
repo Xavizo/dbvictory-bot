@@ -23,13 +23,14 @@ from dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
 from cavebot_combat import validate_combat
 from map_atlas import database_busy
 from session_observations import observation_family_status
+from dbv import paths
 
 log = logging.getLogger("dashboard_api")
 
 # References set by start_api()
 _main_loop: asyncio.AbstractEventLoop | None = None
 _state = None  # will be set to the BotState instance
-ACTIONS_DIR = Path(__file__).parent / "actions"
+ACTIONS_DIR = paths.ACTIONS_DIR
 
 API_PORT = 8089
 WS_PORT = 8090

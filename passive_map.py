@@ -15,6 +15,7 @@ import threading
 import time
 from map_navigation import navigation_features, load_confirmed_types, load_location_notes, movable_container_cover
 from navigation_tools import has_cut_web
+from dbv import paths
 
 CLIENT_SHA256 = "828ea9e11c6890f92cc14956733bac3aa7b80f57bfd8bb8e225568780c6e4b40"
 DAT_SHA256 = "26e6342c67378183dd422d3a044a7ef159e27ebfe2af1594fae8e0a35f200c91"
@@ -429,18 +430,18 @@ class PassiveMapMonitor:
             if getattr(self, "_inherited_scope", None) != scope:
                 # A client update changes the scope; start it from the same server's previous data.
                 from atlas_scope import inherit
-                inherit(Path(__file__).parent / "local_data", scope, server)
+                inherit(paths.LOCAL_DATA_DIR, scope, server)
                 self._inherited_scope = scope
             if self.learner is None or self.learner.scope != scope:
-                self.learner = TransitionLearner(Path(__file__).parent / "local_data",scope)
+                self.learner = TransitionLearner(paths.LOCAL_DATA_DIR,scope)
             if self.annotations is None or self.annotations.scope != scope:
                 from map_annotations import MapAnnotations
-                self.annotations = MapAnnotations(Path(__file__).parent / "local_data",scope)
+                self.annotations = MapAnnotations(paths.LOCAL_DATA_DIR,scope)
             if self.atlas is None or self.atlas.scope != scope:
                 from map_atlas import MapAtlas
                 types = load_confirmed_types(asset_sha256=asset.get("sha256"))
                 webs = {iid: entry for iid, entry in types.items() if entry['kind'] == 'web'}
-                self.atlas = MapAtlas(Path(__file__).parent / "local_data",scope,web_definitions=webs)
+                self.atlas = MapAtlas(paths.LOCAL_DATA_DIR,scope,web_definitions=webs)
             tasks = getattr(self.state,"_action_tasks",{})
             auto_task = getattr(self.state,"_auto_task",None)
             automated = ((auto_task is not None and not auto_task.done())

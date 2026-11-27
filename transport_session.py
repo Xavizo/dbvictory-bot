@@ -10,8 +10,9 @@ import threading
 from tempfile import TemporaryDirectory
 
 from engine_recovery import RecoveryOwner
+from dbv.paths import SCRIPTS_DIR
 
-WORKER = Path(__file__).resolve().parent / "scripts" / "local_transport.py"
+WORKER = SCRIPTS_DIR / "local_transport.py"
 
 
 class _Worker:

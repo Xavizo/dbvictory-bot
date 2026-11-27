@@ -5,6 +5,7 @@ import operator
 from functools import lru_cache
 from pathlib import Path
 from combat_wave import plan_wave, facing
+from dbv import paths
 
 OPERATORS = {'>': operator.gt, '>=': operator.ge, '=': operator.eq, '<=': operator.le, '<': operator.lt}
 
@@ -13,7 +14,7 @@ OPERATORS = {'>': operator.gt, '>=': operator.ge, '=': operator.eq, '<=': operat
 def catalogue_aims():
     # Local client metadata is optional. Unknown spells retain targeted behavior.
     try:
-        rows = json.loads((Path(__file__).parent/'dashboard/public/local-spells/catalog.json').read_text(encoding='utf-8'))['spells']
+        rows = json.loads(paths.SPELL_CATALOG.read_text(encoding='utf-8'))['spells']
         return {r['words'].strip().casefold(): 'self' for r in rows
                 if isinstance(r, dict) and r.get('category') == 'Area' and isinstance(r.get('words'), str)}
     except (OSError, ValueError, KeyError, TypeError):

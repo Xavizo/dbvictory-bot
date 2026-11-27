@@ -9,6 +9,7 @@ import json
 import time
 from functools import lru_cache
 from pathlib import Path
+from dbv import paths
 
 TURN_OPCODES = frozenset((0x6F, 0x70, 0x71, 0x72))
 CARDINALS = ((0, -1), (1, 0), (0, 1), (-1, 0))
@@ -21,7 +22,7 @@ PROFILES = {}
 @lru_cache(maxsize=1)
 def catalogue_waves():
     try:
-        rows = json.loads((Path(__file__).parent/'dashboard/public/local-spells/catalog.json').read_text(encoding='utf-8'))['spells']
+        rows = json.loads(paths.SPELL_CATALOG.read_text(encoding='utf-8'))['spells']
         return frozenset(r['words'].strip().casefold() for r in rows if r.get('category') == 'Wave')
     except (OSError, ValueError, KeyError, TypeError):
         return frozenset()

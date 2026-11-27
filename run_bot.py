@@ -32,8 +32,9 @@ import shutil
 import socket
 from tray_exit import EXIT_FILE_ENV, tray_input
 from launcher_lock import launcher_lock
+from dbv.paths import INSTALL_ROOT
 
-ROOT = Path(__file__).resolve().parent
+ROOT = INSTALL_ROOT
 # These actions must always require an explicit choice in the panel after start.
 COMBAT_ACTIONS = frozenset({
     'adaptive_cavebot', 'auto_combat', 'auto_targeting',

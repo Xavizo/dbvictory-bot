@@ -14,11 +14,13 @@ import logging
 import os
 from pathlib import Path
 import time
+from dbv import paths
+from dbv.paths import INSTALL_ROOT
 
 log = logging.getLogger(__name__)
 
-ROOT = Path(__file__).resolve().parent
-JOURNAL_DIR = ROOT / ".codex" / "journal"
+ROOT = INSTALL_ROOT
+JOURNAL_DIR = paths.JOURNAL_DIR
 FILE_LIMIT = 5 * 1024 * 1024
 FILE_COUNT = 5
 RING = {"packets": 2000, "events": 1000, "chat": 300, "messages": 300}
