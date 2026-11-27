@@ -17,7 +17,7 @@ SPENT = 8141
 FIRE = ("fire elemental", "fire elementalis", "mutant fire elemental", "fury mutant fire",
         "fury mutant fire elemental")
 DEFAULT_MONSTERS = tuple(
-    {"name": name, "corpses": ({"id": body_id, "skinned": SPENT},)}
+    {"name": name, "corpses": ({"id": body_id, "skinned": SPENT, "confirmed": False},)}
     for names, body_id in ((FIRE, FRESH), (("roco", "chibi roco", "fury roco"), ROCO),
                            (("gunso", "chibi gunso", "fury gunso"), GUNSO), (("mutant wolf",), MUTANT_WOLF))
     for name in names)
@@ -74,7 +74,8 @@ def validate_config(cfg):
             if skinned_by.setdefault(body_id, after) != after:
                 raise ValueError(f"Ciało {body_id} ma dwa różne ID po oskórowaniu.")
             if all(e["id"] != body_id for e in entries):
-                entries.append({"id": body_id, "skinned": after})
+                # Defaults are a guess; a corpse seen being skinned, or typed in, is confirmed.
+                entries.append({"id": body_id, "skinned": after, "confirmed": entry.get("confirmed") is True})
         clean.append({"name": name, "corpses": entries})
     overlap = set(skinned_by) & set(skinned_by.values())
     if overlap:

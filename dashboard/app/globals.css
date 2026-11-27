@@ -400,3 +400,4 @@ section[aria-label="Widok cavebota"],section[aria-label="Widok diagnostyki"] {di
 .knife-config-monster-head{display:flex;align-items:center;gap:8px}.knife-config-monster-head small{color:#e3b26a;font-size:10px}.knife-config-monster-head button{margin-left:auto}
 .knife-config-names{align-items:center}.knife-config-names>span{display:inline-flex;align-items:center;gap:2px;padding:0 2px 0 8px;background:#302639;border:1px solid #4c465e;border-radius:12px;font-size:11px}.knife-config-names input{width:80px;min-height:24px}
 .knife-config-suggestions ul{display:grid;gap:4px;margin:0;padding:0;list-style:none}.knife-config-suggestions li{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #6a5a2e;border-radius:6px;background:#2a2418;font-size:11px}.knife-config-suggestions li>span{flex:none}.knife-config-suggestions input{flex:1}
+.knife-config-names>span.knife-corpse-guess{border-style:dashed;color:#c9bfd6}

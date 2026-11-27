@@ -222,7 +222,9 @@ You rarely need to type IDs. When you skin a corpse that isn't on the list with
 the knife yourself, the bot notices the corpse change and the button shows
 **nowe ciało** (new corpse). The window then lists that corpse, with the name of
 the monster you last killed on that tile, and you can **Dodaj** (add) or
-**Ignoruj** (ignore) it. You can also look IDs up with **Identyfikacja
+**Ignoruj** (ignore) it. The default corpse IDs are a best guess and are marked
+**?**. An approved suggestion replaces the guessed IDs of that monster, so the
+list corrects itself as you play. You can also look IDs up with **Identyfikacja
 przedmiotów** (item identification) in the **Diagnostyka** tab.
 
 The list is saved in `bot_settings.json`, takes effect without restarting the

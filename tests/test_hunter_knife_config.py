@@ -53,7 +53,14 @@ def test_monster_without_corpse_id_is_kept_but_skins_nothing():
 
 def test_ids_from_text_and_missing_skinned_id_default_to_spent():
     cfg = validate_config({"monsters": [{"name": "a", "corpses": ["777", {"id": 778}]}]})
-    assert cfg["monsters"][0]["corpses"] == [{"id": 777, "skinned": SPENT}, {"id": 778, "skinned": SPENT}]
+    assert cfg["monsters"][0]["corpses"] == [{"id": 777, "skinned": SPENT, "confirmed": False},
+                                             {"id": 778, "skinned": SPENT, "confirmed": False}]
+
+
+def test_defaults_are_unconfirmed_and_saved_confirmations_are_kept():
+    assert not any(c["confirmed"] for m in validate_config({})["monsters"] for c in m["corpses"])
+    cfg = validate_config({"monsters": [{"name": "roco", "corpses": [{"id": 1, "confirmed": True}]}]})
+    assert cfg["monsters"][0]["corpses"][0]["confirmed"] is True
 
 
 @pytest.mark.parametrize("monsters", [

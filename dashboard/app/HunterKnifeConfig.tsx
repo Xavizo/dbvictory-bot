@@ -44,13 +44,16 @@ export default function HunterKnifeConfig({ monsters, defaults, suggestions, ign
   useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
   const open = suggestions.filter(s => !handled.includes(s.id));
 
-  function addCorpse(name: string, id: number, skinned: number) {
-    const known = list.flatMap(m => m.corpses).find(c => c.id === id);
+  /** An approved suggestion replaces the monster's unconfirmed default corpses. */
+  function addCorpse(name: string, id: number, skinned: number, replaceGuess = false) {
+    const next = list.map(m => m.name !== name || !replaceGuess ? m : { ...m, corpses: m.corpses.filter(c => c.confirmed) });
+    const known = next.flatMap(m => m.corpses).find(c => c.id === id);
     if (known && known.skinned !== skinned) return setError(`Ciało ${id} ma już ID po oskórowaniu ${known.skinned}.`);
-    const exists = list.some(m => m.name === name);
+    const corpse = { id, skinned, confirmed: true };
+    const exists = next.some(m => m.name === name);
     setList(exists
-      ? list.map(m => m.name !== name || m.corpses.some(c => c.id === id) ? m : { ...m, corpses: [...m.corpses, { id, skinned }] })
-      : [...list, { name, corpses: [{ id, skinned }] }]);
+      ? next.map(m => m.name !== name ? m : { ...m, corpses: [...m.corpses.filter(c => c.id !== id), corpse] })
+      : [...next, { name, corpses: [corpse] }]);
     setError("");
     return true;
   }
@@ -88,11 +91,11 @@ export default function HunterKnifeConfig({ monsters, defaults, suggestions, ign
     <div className="spell-picker-content">
       <header><strong>Hunter Knife · potwory do skórowania</strong>
         <button type="button" className="spell-remove" aria-label="Zamknij konfigurację Hunter Knife" disabled={busy} onClick={onClose}>×</button></header>
-      <p className="knife-config-help">Nóż jest używany tylko na ciałach potworów z tej listy. Gdy sam oskórujesz nowe ciało nożem, pojawi się tu propozycja do dodania. ID możesz też sprawdzić w zakładce <b>Diagnostyka</b> → <b>Identyfikacja przedmiotów</b> (Look na ciele przed i po oskórowaniu).</p>
+      <p className="knife-config-help">Nóż jest używany tylko na ciałach potworów z tej listy. Gdy sam oskórujesz ciało nożem, a bot go nie zna, pojawi się tu propozycja. Zatwierdzona zastępuje domyślne (oznaczone „?”) ID tego potwora. ID możesz też sprawdzić w zakładce <b>Diagnostyka</b> → <b>Identyfikacja przedmiotów</b> (Look na ciele przed i po oskórowaniu).</p>
       {!!open.length && <section aria-label="Propozycje" className="knife-config-suggestions">
         <h4>Ręcznie oskórowane ciała <small>{open.length}</small></h4>
         <ul>{open.map(row => <SuggestionRow key={row.id} row={row} busy={busy}
-          onAdd={name => { if (addCorpse(name, row.id, row.skinned)) setHandled([...handled, row.id]); }}
+          onAdd={name => { if (addCorpse(name, row.id, row.skinned, true)) setHandled([...handled, row.id]); }}
           onIgnore={() => { setIgnore([...ignore, row.id]); setHandled([...handled, row.id]); }}/>)}</ul>
       </section>}
       <section aria-label="Potwory">
@@ -104,7 +107,8 @@ export default function HunterKnifeConfig({ monsters, defaults, suggestions, ign
               {!m.corpses.length && <small>bez ID ciała · nóż go pominie</small>}
               <button type="button" className="spell-remove" aria-label={`Usuń potwora ${m.name}`} disabled={busy || list.length <= 1}
                 onClick={() => setList(list.filter(x => x.name !== m.name))}>×</button></div>
-            <div className="knife-config-names">{m.corpses.map(c => <span key={c.id}>{c.id} → {c.skinned}
+            <div className="knife-config-names">{m.corpses.map(c => <span key={c.id} className={c.confirmed ? "" : "knife-corpse-guess"}
+              title={c.confirmed ? "Potwierdzone" : "Domyślne, niepotwierdzone. Ręczne oskórowanie tego potwora je zastąpi."}>{c.id} → {c.skinned}{!c.confirmed && " ?"}
               <button type="button" className="spell-remove" aria-label={`Usuń ciało ${c.id} potwora ${m.name}`} disabled={busy}
                 onClick={() => setList(list.map(x => x.name === m.name ? { ...x, corpses: x.corpses.filter(y => y.id !== c.id) } : x))}>×</button></span>)}
               <input inputMode="numeric" aria-label={`Nowe ID ciała potwora ${m.name}`} placeholder="ID ciała" value={draft.id} disabled={busy}
