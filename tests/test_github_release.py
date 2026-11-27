@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 from contextlib import nullcontext
+import shutil
 import zipfile
 
 import pytest
@@ -175,3 +176,108 @@ def test_latest_release_needs_assets_from_its_own_repository():
     info["assets"][1]["browser_download_url"] = "https://example.com/x.zip"
     with pytest.raises(ValueError):
         gr.fetch_latest(gr.DEFAULT_REPO, get)
+
+
+def test_update_that_ships_fewer_files_leaves_no_empty_program_folders(root):
+    install_old(root, {"bot.py": b"old", "dashboard/node_modules/typescript/lib/tsc.js": b"x",
+                       "dashboard/node_modules/next/dist/server.js": b"s", "venv/Scripts/tcl/init.tcl": b"t",
+                       "venv/Scripts/python.exe": b"py"})
+    (root / "dashboard" / "node_modules" / "keep-empty-elsewhere").mkdir()
+    latest, data = package({"bot.py": b"new", "dashboard/node_modules/next/dist/server.js": b"s",
+                            "venv/Scripts/python.exe": b"py"})
+    assert gr.install(root, NEW, fetch=lambda repo: latest, opener=lambda req, timeout: Response(data))["updated"]
+    assert not (root / "dashboard" / "node_modules" / "typescript").exists()
+    assert not (root / "venv" / "Scripts" / "tcl").exists()
+    assert (root / "dashboard" / "node_modules" / "next" / "dist" / "server.js").is_file()
+    assert (root / "venv" / "Scripts" / "python.exe").is_file()
+
+
+def test_empty_folders_left_by_an_older_updater_go_at_the_next_check(root):
+    install_old(root, {"bot.py": b"old", "dashboard/node_modules/next/package.json": b"{}"})
+    (root / "dashboard" / "node_modules" / "@next" / "swc-win32-x64-msvc").mkdir(parents=True)
+    gr.status(root, fetch=lambda repo: (_ for _ in ()).throw(OSError("offline")))
+    assert not (root / "dashboard" / "node_modules" / "@next").exists()
+    assert (root / "dashboard" / "node_modules" / "next" / "package.json").is_file()
+
+
+def patch_package(full_files, changed, version="v1.1.0", revision=NEW, base="v1.0.0"):
+    """A full release plus its patch against `base`, as fetch_latest returns them."""
+    latest, data = package(full_files, version, revision)
+    files = {**full_files, "release.json": json.dumps({"version": version, "revision": revision}).encode()}
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for path in [*changed, "release.json"]:
+            archive.writestr(f"{gr.PACKAGE_ROOT}/{path}", files[path])
+        archive.writestr(f"{gr.PACKAGE_ROOT}/{gr.MANIFEST_FILE}", json.dumps(manifest(files)))
+    patch = buffer.getvalue()
+    asset = f"DBVictory-Bot-{version}-patch-{base}.zip"
+    latest["patch"] = {"from": base, "asset": asset, "sha256": sha(patch), "size": len(patch),
+                       "url": f"https://github.com/{gr.DEFAULT_REPO}/releases/download/{version}/{asset}"}
+    return latest, data, patch
+
+
+def opener_for(latest, data, patch, log):
+    def opener(request, timeout):
+        url = request.full_url
+        log.append(url.rsplit("/", 1)[-1])
+        return Response(patch if url == latest["patch"]["url"] else data)
+    return opener
+
+
+def test_update_downloads_only_the_patch_when_installed_release_is_its_base(root):
+    install_old(root, {"bot.py": b"old", "big.dll": b"same", "gone.py": b"x"})
+    latest, data, patch = patch_package({"bot.py": b"new", "big.dll": b"same"}, ["bot.py"])
+    report = gr.status(root, fetch=lambda repo: latest)
+    assert report["state"] == "available"
+    log = []
+    assert gr.install(root, NEW, fetch=lambda repo: latest, opener=opener_for(latest, data, patch, log))["updated"]
+    assert log == [latest["patch"]["asset"]]
+    assert (root / "bot.py").read_bytes() == b"new" and (root / "big.dll").read_bytes() == b"same"
+    assert not (root / "gone.py").exists()
+    assert dbv_revision.read_release(root)["version"] == "v1.1.0"
+    assert json.loads((root / gr.MANIFEST_FILE).read_text())["files"].keys() == {"bot.py", "big.dll", "release.json"}
+    assert not list(gr._feed(root).glob("*.zip")) and not list(gr._feed(root).glob("stage-*"))
+
+
+def test_patch_falls_back_to_the_full_package(root):
+    # Another base version, a program file missing from the installation, and a corrupt patch.
+    for case in ("other-base", "missing-file", "corrupt"):
+        for child in list(root.iterdir()):
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
+        install_old(root, {"bot.py": b"old", "big.dll": b"same"})
+        base = "v0.9.0" if case == "other-base" else "v1.0.0"
+        latest, data, patch = patch_package({"bot.py": b"new", "big.dll": b"same"}, ["bot.py"], base=base)
+        if case == "missing-file":
+            (root / "big.dll").unlink()
+        if case == "corrupt":
+            patch = patch[:-1] + b"!"
+        log = []
+        assert gr.install(root, NEW, fetch=lambda repo: latest, opener=opener_for(latest, data, patch, log))["updated"]
+        assert log == ([latest["patch"]["asset"]] if case == "missing-file" or case == "corrupt" else []) + ["x.zip"], case
+        assert (root / "bot.py").read_bytes() == b"new" and (root / "big.dll").read_bytes() == b"same", case
+
+
+def test_patch_skips_examples_the_player_deleted(root):
+    install_old(root, {"bot.py": b"old", "recordings/route.json": b"example"})
+    (root / "recordings" / "route.json").unlink()
+    latest, data, patch = patch_package({"bot.py": b"new", "recordings/route.json": b"example"}, ["bot.py"])
+    log = []
+    assert gr.install(root, NEW, fetch=lambda repo: latest, opener=opener_for(latest, data, patch, log))["updated"]
+    assert log == [latest["patch"]["asset"]] and not (root / "recordings" / "route.json").exists()
+
+
+def test_bad_patch_metadata_only_means_a_full_download():
+    meta = {"format": 1, "version": "v1.1.0", "revision": NEW, "asset": "DBVictory-Bot-v1.1.0.zip",
+            "sha256": "0" * 64, "size": 10,
+            "patch": {"from": "v1.0.0", "asset": "DBVictory-Bot-v1.1.0-patch-v1.0.0.zip", "sha256": "1" * 64, "size": 5}}
+    base = f"https://github.com/{gr.DEFAULT_REPO}/releases/download/v1.1.0/"
+    names = ["release.json", meta["asset"], meta["patch"]["asset"]]
+    info = {"assets": [{"name": n, "browser_download_url": base + n} for n in names]}
+
+    def get(url, **kw):
+        return json.dumps(info if "api.github.com" in url else meta).encode()
+    assert gr.fetch_latest(gr.DEFAULT_REPO, get)["patch"]["url"] == base + meta["patch"]["asset"]
+    info["assets"][2]["browser_download_url"] = "https://example.com/p.zip"
+    assert "patch" not in gr.fetch_latest(gr.DEFAULT_REPO, get)
+    meta["patch"]["asset"] = "../evil.zip"
+    assert "patch" not in gr.fetch_latest(gr.DEFAULT_REPO, get)

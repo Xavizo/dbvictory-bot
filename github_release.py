@@ -28,6 +28,8 @@ MANIFEST_FILE = "release-manifest.json"
 DEFAULT_REPO = "Xavizo/dbvictory-bot"
 PACKAGE_ROOT = "DBVictory-Bot"
 ASSET_PATTERN = r"DBVictory-Bot-v\d+\.\d+\.\d+\.zip"
+# Only the files that changed since the release named after "patch-".
+PATCH_PATTERN = r"DBVictory-Bot-v\d+\.\d+\.\d+-patch-v\d+\.\d+\.\d+\.zip"
 USER_AGENT = "DBVictory-Launcher"
 TIMEOUT = 10
 MAX_PACKAGE = 2 * 1024 ** 3
@@ -168,7 +170,33 @@ def fetch_latest(repo, get=_get):
     url = assets.get(meta["asset"])
     if not isinstance(url, str) or not url.startswith(_download_prefix(repo)):
         raise ValueError("Najnowsze wydanie nie zawiera paczki programu.")
-    return {**meta, "url": url}
+    latest = {**meta, "url": url}
+    latest.pop("patch", None)
+    patch = _patch(meta.get("patch"), assets, repo)
+    if patch:
+        latest["patch"] = patch
+    return latest
+
+
+def _patch(patch, assets, repo):
+    """The release's patch package, or None: a missing or odd patch only means a full download."""
+    if (not isinstance(patch, dict) or not _version(patch.get("from"))
+            or not isinstance(patch.get("asset"), str) or not re.fullmatch(PATCH_PATTERN, patch["asset"])
+            or not isinstance(patch.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", patch["sha256"])
+            or type(patch.get("size")) is not int or not 0 < patch["size"] <= MAX_PACKAGE):
+        return None
+    url = assets.get(patch["asset"])
+    if not isinstance(url, str) or not url.startswith(_download_prefix(repo)):
+        return None
+    return {key: patch[key] for key in ("from", "asset", "sha256", "size")} | {"url": url}
+
+
+def _usable_patch(root, latest):
+    patch = latest.get("patch")
+    release = read_release(root) or {}
+    if patch and patch["from"] == release.get("version") and _installed_manifest(root):
+        return patch
+    return None
 
 
 def _deferred(feed):
@@ -240,7 +268,8 @@ def status(root, check_only=False, *, fetch=fetch_latest):
     new_label = revision_label(latest["revision"], latest["version"])
     if _deferred(feed) == latest["revision"]:
         return _result(root, "current", f"Zainstalowana wersja {label}. Wydanie {new_label} odłożone.")
-    size = f"{latest['size'] / 1024 ** 2:.0f} MB"
+    download = (_usable_patch(root, latest) or latest)["size"]
+    size = f"{max(download / 1024 ** 2, 1):.0f} MB"
     return _result(root, "available", f"Dostępne wydanie {new_label} ({size}). "
                    "Zainstaluj je teraz albo odłóż i graj na obecnej wersji.", latest=latest, can_defer=True)
 
@@ -288,8 +317,11 @@ def _download(latest, target, opener=_open):
     return target
 
 
-def _extract(package, stage, latest):
-    """Unpack only files listed in the package's manifest, verifying every hash."""
+def _extract(package, stage, latest, *, partial=False):
+    """Unpack only files listed in the package's manifest, verifying every hash.
+
+    A partial (patch) package carries the full manifest but only some of its files.
+    """
     with zipfile.ZipFile(package) as archive:
         members = {}
         for info in archive.infolist():
@@ -304,6 +336,8 @@ def _extract(package, stage, latest):
         files = parse_manifest(json.loads(raw))
         for path, (sha, size) in files.items():
             info = members.get(path)
+            if info is None and partial:
+                continue
             if info is None or info.file_size != size:
                 raise ValueError(f"Paczka jest niekompletna: {path}")
             target = stage / path
@@ -404,6 +438,36 @@ def _remember_leftovers(root, paths):
     _write_json(path, sorted(set(known if isinstance(known, list) else []) | set(paths)))
 
 
+# Folders that hold only program files. An update removes files, never folders,
+# so a release that ships fewer files leaves empty folders here.
+PROGRAM_TREES = ("dashboard/node_modules", "runtime/node", "venv/Scripts")
+
+
+def _prune_empty_folders(root):
+    """Once per installed version, since the walk touches thousands of folders."""
+    version = (read_release(root) or {}).get("version")
+    marker = _feed(root) / "pruned.json"
+    try:
+        if json.loads(marker.read_text(encoding="utf-8")).get("version") == version:
+            return
+    except (OSError, ValueError, AttributeError):
+        pass
+    for top in PROGRAM_TREES:
+        base = root / top
+        if not base.is_dir():
+            continue
+        for folder, _dirs, _names in os.walk(base, topdown=False):
+            if Path(folder) != base:
+                try:
+                    os.rmdir(folder)  # only succeeds when empty
+                except OSError:
+                    pass
+    try:
+        _write_json(marker, {"version": version})
+    except OSError:
+        pass
+
+
 def cleanup(root):
     """Delete old copies left by a previous update. Files still in use stay listed."""
     root = _long(root)
@@ -411,6 +475,7 @@ def cleanup(root):
     try:
         items = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        _prune_empty_folders(root)
         return
     remaining = []
     for item in items if isinstance(items, list) else []:
@@ -428,6 +493,36 @@ def cleanup(root):
         _write_json(path, remaining)
     else:
         path.unlink(missing_ok=True)
+    _prune_empty_folders(root)
+
+
+def _unpack(root, feed, latest, source, opener, *, partial):
+    package = _download(source, feed / source["asset"], opener)
+    tx = uuid4().hex
+    stage = feed / f"stage-{tx}"
+    try:
+        new = _extract(package, stage, latest, partial=partial)
+        write, remove = plan(root, _installed_manifest(root), new)
+        if partial:
+            # Shipped examples the player deleted stay deleted rather than forcing a full download.
+            write = [p for p in write if (stage / p).is_file() or not _seed(p)]
+            if not all((stage / p).is_file() for p in write):
+                raise ValueError("Łatka nie obejmuje tej instalacji.")
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return tx, stage, package, write, remove
+
+
+def _prepare(root, feed, latest, opener):
+    """Download and unpack the update: the patch when it covers this installation, else the full package."""
+    patch = _usable_patch(root, latest)
+    if patch:
+        try:
+            return _unpack(root, feed, latest, patch, opener, partial=True)
+        except (OSError, ValueError, zipfile.BadZipFile):
+            (feed / patch["asset"]).unlink(missing_ok=True)
+    return _unpack(root, feed, latest, latest, opener, partial=False)
 
 
 def install(root, revision, *, fetch=fetch_latest, opener=_open):
@@ -451,12 +546,8 @@ def install(root, revision, *, fetch=fetch_latest, opener=_open):
         if _version(latest["version"]) <= _version(release["version"]):
             return _result(root, "current", "Ta wersja jest już zainstalowana.")
         feed.mkdir(parents=True, exist_ok=True)
-        package = _download(latest, feed / latest["asset"], opener)
-        tx = uuid4().hex
-        stage = feed / f"stage-{tx}"
+        tx, stage, package, write, remove = _prepare(root, feed, latest, opener)
         try:
-            new = _extract(package, stage, latest)
-            write, remove = plan(root, _installed_manifest(root), new)
             try:
                 _apply(root, stage, write, remove, tx)
             except BaseException:
