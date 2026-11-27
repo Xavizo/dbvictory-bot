@@ -1,18 +1,23 @@
-"""Eat food every 10 seconds. Uses hotkey-style packet — works from any backpack/slot."""
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from dbv.client_bridge.protocol import build_use_item_packet
-from dbv.client_bridge.constants import ITEM_RED_HAM
+"""Food: eat a red ham every 10 seconds.
 
-FOOD_ID = ITEM_RED_HAM
-INTERVAL = 10     # seconds between eats
+Uses the hotkey form of "use item" (position 0xFFFF, 0, 0), so the server
+finds the ham in any open or closed backpack by itself.
+"""
+from dbv.client_bridge.constants import ITEM_RED_HAM
+from dbv.client_bridge.protocol import build_use_item_packet
+
+EVERY_SECONDS = 10
+HOTKEY_POSITION = (0xFFFF, 0, 0)
+
+
+def eat_packet(item_id=ITEM_RED_HAM):
+    return build_use_item_packet(*HOTKEY_POSITION, item_id, 0, 0)
 
 
 async def run(bot):
+    meal = eat_packet()
     while True:
         if bot.is_connected:
-            # Hotkey-style: pos=(0xFFFF, 0, 0) — server finds the item automatically
-            pkt = build_use_item_packet(0xFFFF, 0, 0, FOOD_ID, 0, 0)
-            await bot.inject_to_server(pkt)
-            bot.log(f"Ate food (item {FOOD_ID})")
-        await bot.sleep(INTERVAL)
+            await bot.inject_to_server(meal)
+            bot.log(f"Zjedzono jedzenie (przedmiot {ITEM_RED_HAM})")
+        await bot.sleep(EVERY_SECONDS)

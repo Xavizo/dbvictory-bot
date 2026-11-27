@@ -426,17 +426,15 @@ Actions are Python files in `actions/` with an `async def run(bot)` entry point.
 They appear in the panel and can be turned on and off at runtime.
 
 ```python
-"""Eat food every 10 seconds."""
-from dbv.client_bridge.protocol import build_use_item_packet
-
-FOOD_ID = 3583  # red ham
-INTERVAL = 10
+"""Say a spell once a minute while the character is logged in."""
+WORDS, EVERY = "utevo lux", 60
 
 async def run(bot):
     while True:
         if bot.is_connected:
-            await bot.inject_to_server(build_use_item_packet(0xFFFF, 0, 0, FOOD_ID, 0, 0))
-        await bot.sleep(INTERVAL)
+            await bot.say(WORDS)
+            bot.log(f"said {WORDS!r}")
+        await bot.sleep(EVERY)
 ```
 
 Old flat imports such as `from protocol import ...` still work for one release, then only the `dbv.*` names do.
