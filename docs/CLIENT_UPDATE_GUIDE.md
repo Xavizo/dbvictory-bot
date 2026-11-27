@@ -137,7 +137,7 @@ older files will not adapt the current connection path.
 | [dll/test_target_marker.cpp](../dll/test_target_marker.cpp), [dll/test_marker_observer.cpp](../dll/test_marker_observer.cpp) | Synthetic native marker/observer checks; compile and run as x86 executables on Windows. |
 | [tests/test_packet_observer.py](../tests/test_packet_observer.py), [tests/test_relogin_identity.py](../tests/test_relogin_identity.py), [tests/test_automation_safety.py](../tests/test_automation_safety.py) | Observer queue, fresh identity and automation guards. |
 | [tests/desktop_launcher.test.cjs](../tests/desktop_launcher.test.cjs), [tests/test_desktop_session.py](../tests/test_desktop_session.py), [tests/test_launcher_preflight.py](../tests/test_launcher_preflight.py), [tests/test_dbv_release.py](../tests/test_dbv_release.py) | Manual Connect, preparation, updater and release boundaries. |
-| [CLIENT_UPDATE.md](CLIENT_UPDATE.md), [CODEX.md](CODEX.md), [README.md](../README.md) | Build-specific evidence, operating instructions and entry links. Keep status claims consistent. |
+| [CLIENT_UPDATE.md](CLIENT_UPDATE.md), [README.md](../README.md) | Build-specific evidence, operating instructions and entry links. Keep status claims consistent. |
 
 ## 3. Record identity and preserve a rollback baseline
 

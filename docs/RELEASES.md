@@ -72,8 +72,8 @@ Optional `-PythonDir` reuses an existing relocatable Python instead of
 
 [`github_release.py`](../github_release.py), called through
 `launcher_files.py`, is used when the folder has `release.json` and no `.git`.
-Git installations keep the local release queue described in
-[CODEX.md](CODEX.md).
+Git installations keep the local release queue in
+[`dbv_release.py`](../dbv_release.py).
 
 1. At start the launcher reads `releases/latest` from the GitHub API and the
    small `release.json` asset. Offline or on any error it starts the installed

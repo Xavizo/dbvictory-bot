@@ -49,7 +49,6 @@ LIGHT_PATCHED_BYTES = "E9 8A 01 00 00 90"
 
 # ── Offsets from offsets.json ──────────────────────────────────────
 # Loaded at import time so the rest of the codebase can use them directly.
-# See docs/otclient_source_analysis.md for the original OTCv8 source layout.
 _offsets_path = _PROJECT_ROOT / "offsets.json"
 try:
     with open(_offsets_path, encoding="utf-8") as _f:
