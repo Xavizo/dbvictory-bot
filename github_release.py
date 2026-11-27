@@ -404,6 +404,36 @@ def _remember_leftovers(root, paths):
     _write_json(path, sorted(set(known if isinstance(known, list) else []) | set(paths)))
 
 
+# Folders that hold only program files. An update removes files, never folders,
+# so a release that ships fewer files leaves empty folders here.
+PROGRAM_TREES = ("dashboard/node_modules", "runtime/node", "venv/Scripts")
+
+
+def _prune_empty_folders(root):
+    """Once per installed version, since the walk touches thousands of folders."""
+    version = (read_release(root) or {}).get("version")
+    marker = _feed(root) / "pruned.json"
+    try:
+        if json.loads(marker.read_text(encoding="utf-8")).get("version") == version:
+            return
+    except (OSError, ValueError, AttributeError):
+        pass
+    for top in PROGRAM_TREES:
+        base = root / top
+        if not base.is_dir():
+            continue
+        for folder, _dirs, _names in os.walk(base, topdown=False):
+            if Path(folder) != base:
+                try:
+                    os.rmdir(folder)  # only succeeds when empty
+                except OSError:
+                    pass
+    try:
+        _write_json(marker, {"version": version})
+    except OSError:
+        pass
+
+
 def cleanup(root):
     """Delete old copies left by a previous update. Files still in use stay listed."""
     root = _long(root)
@@ -411,6 +441,7 @@ def cleanup(root):
     try:
         items = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        _prune_empty_folders(root)
         return
     remaining = []
     for item in items if isinstance(items, list) else []:
@@ -428,6 +459,7 @@ def cleanup(root):
         _write_json(path, remaining)
     else:
         path.unlink(missing_ok=True)
+    _prune_empty_folders(root)
 
 
 def install(root, revision, *, fetch=fetch_latest, opener=_open):

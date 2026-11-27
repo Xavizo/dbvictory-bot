@@ -86,7 +86,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     asset = f"{PACKAGE_ROOT}-{args.version}.zip"
     target = args.out / asset
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for rel in [*files, MANIFEST]:
             archive.write(stage / rel, f"{PACKAGE_ROOT}/{rel}")
     (args.out / "release.json").write_text(json.dumps({

@@ -4,6 +4,8 @@
 # The package bundles a relocatable Python in venv\Scripts (so every existing
 # venv\Scripts\python.exe path keeps working), Node.js in runtime\node, the
 # built panel with Electron, the observer DLLs and DBVictory Launcher.exe.
+# tools\release_trim.py then drops what only the build needed (compilers,
+# type checkers, pip, Tk), so players download and unpack less.
 #
 #   -PythonDir  existing relocatable Python to copy (default: `uv python install`)
 #   -NodeDir    existing Node.js folder to copy (default: download the version on PATH)
@@ -118,7 +120,28 @@ foreach ($built in "dll\dbvbot.dll", "dll\dbvobserver_marker_20261117.dll", "dll
     if (-not (Test-Path (Join-Path $Stage $built))) { throw "Build did not produce $built" }
 }
 
-# 7. Version file, checksum manifest, zip and release description.
+# 7. Drop what only the build needed, then prove the trimmed runtime still starts.
+Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_trim.py"), $Stage)
+Invoke-Checked $Python @("-c", "import mcp, Crypto, websockets, pymem, ssl, sqlite3, ctypes, win32api, win32job; from mcp.os.win32 import utilities; print('Trimmed Python OK')")
+Invoke-Checked (Join-Path $Stage "dashboard\node_modules\electron\dist\electron.exe") @("--version")
+# `next start` writes caches and a trace into .next; ship the build exactly as `next build` left it.
+$builtPanel = Join-Path $Stage "dashboard\.next"
+$pristine = Join-Path $Work "next-pristine"
+Copy-Item -Recurse $builtPanel $pristine
+$panel = Start-Process -FilePath (Join-Path $NodeTarget "npm.cmd") -ArgumentList "run", "start" -WorkingDirectory (Join-Path $Stage "dashboard") -PassThru -WindowStyle Hidden
+try {
+    Invoke-Checked (Join-Path $NodeTarget "node.exe") @((Join-Path $Stage "dashboard\node_modules\wait-on\bin\wait-on"), "--timeout", "60000", "http-get://127.0.0.1:4747")
+    $page = Invoke-WebRequest "http://127.0.0.1:4747/" -UseBasicParsing
+    if ($page.StatusCode -ne 200 -or $page.Content -notmatch "/_next/static/") { throw "Trimmed panel did not serve its page" }
+    Write-Host "Trimmed panel OK"
+} finally {
+    cmd /c "taskkill /T /F /PID $($panel.Id) >nul 2>&1"
+    Start-Sleep -Seconds 2  # let the killed server release its files in .next
+}
+Remove-Tree $builtPanel
+Move-Item $pristine $builtPanel
+
+# 8. Version file, checksum manifest, zip and release description.
 Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_package.py"), $Stage, "--version", $Version,
     "--revision", $Revision, "--repo", $Repo, "--out", $Out)
 Remove-Tree $Work

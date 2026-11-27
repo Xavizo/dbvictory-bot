@@ -175,3 +175,25 @@ def test_latest_release_needs_assets_from_its_own_repository():
     info["assets"][1]["browser_download_url"] = "https://example.com/x.zip"
     with pytest.raises(ValueError):
         gr.fetch_latest(gr.DEFAULT_REPO, get)
+
+
+def test_update_that_ships_fewer_files_leaves_no_empty_program_folders(root):
+    install_old(root, {"bot.py": b"old", "dashboard/node_modules/typescript/lib/tsc.js": b"x",
+                       "dashboard/node_modules/next/dist/server.js": b"s", "venv/Scripts/tcl/init.tcl": b"t",
+                       "venv/Scripts/python.exe": b"py"})
+    (root / "dashboard" / "node_modules" / "keep-empty-elsewhere").mkdir()
+    latest, data = package({"bot.py": b"new", "dashboard/node_modules/next/dist/server.js": b"s",
+                            "venv/Scripts/python.exe": b"py"})
+    assert gr.install(root, NEW, fetch=lambda repo: latest, opener=lambda req, timeout: Response(data))["updated"]
+    assert not (root / "dashboard" / "node_modules" / "typescript").exists()
+    assert not (root / "venv" / "Scripts" / "tcl").exists()
+    assert (root / "dashboard" / "node_modules" / "next" / "dist" / "server.js").is_file()
+    assert (root / "venv" / "Scripts" / "python.exe").is_file()
+
+
+def test_empty_folders_left_by_an_older_updater_go_at_the_next_check(root):
+    install_old(root, {"bot.py": b"old", "dashboard/node_modules/next/package.json": b"{}"})
+    (root / "dashboard" / "node_modules" / "@next" / "swc-win32-x64-msvc").mkdir(parents=True)
+    gr.status(root, fetch=lambda repo: (_ for _ in ()).throw(OSError("offline")))
+    assert not (root / "dashboard" / "node_modules" / "@next").exists()
+    assert (root / "dashboard" / "node_modules" / "next" / "package.json").is_file()
