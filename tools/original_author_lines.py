@@ -8,8 +8,9 @@ Blame runs with ``-w -M -C``, so lines that were only re-indented, moved or
 copied into another file still count as his. By default it skips lines that
 carry no authorship of their own, which a rewrite cannot avoid sharing with
 any Python or C++ file: blank lines, lone brackets and quotes, and bare words
-such as ``try:``, ``continue`` or ``return True``, plus ``async def run(bot):``,
-the entry point every action must define.
+such as ``try:``, ``continue`` or ``return True``, plain import lines (they only
+name existing modules), and ``async def run(bot):``, the entry point every
+action must define.
 """
 import argparse
 import re
@@ -26,7 +27,7 @@ TRIVIAL = re.compile(
         [\s(){}\[\];,:'"`]*                                     # punctuation only
       | (\"\"\"|''')                                            # docstring fence
       | (try|else|finally|except(\s+\w+)?|pass|break|continue|return(\s+(True|False|None|0|1|-1))?)\s*:?\s*;?
-      | (import\s+[\w.]+|from\s+__future__\s+import\s+\w+)       # one bare import
+      | (import\s+[\w., ]+|from\s+[\w.]+\s+import\s+[\w., ]+)     # a plain import line
       | \#\s*(include\s+<\w+(\.h)?>|pragma\s+once)              # C/C++ system header
       | (break|continue|return\s*\w*)\s*;                         # C/C++ jump
       | @\w+                                                    # bare decorator

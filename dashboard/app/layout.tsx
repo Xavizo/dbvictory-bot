@@ -1,16 +1,10 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "DBVictory Bot",
-  description: "Bot dashboard",
-};
+export const metadata: Metadata = { title: "DBVictory Bot", description: "Panel bota DBVictory" };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="pl" className="dark">
       <head>
@@ -18,9 +12,7 @@ export default function RootLayout({
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}
         <script src="/desktop-bridge.js" />
       </head>
-      <body className="text-gray-100 antialiased">
-        {children}
-      </body>
+      <body className="text-gray-100 antialiased">{children}</body>
     </html>
   );
 }

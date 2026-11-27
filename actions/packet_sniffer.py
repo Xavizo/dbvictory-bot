@@ -1,58 +1,55 @@
-"""Log packet metadata; raw payloads require explicit diagnostic opt-in."""
-import sys, os
-from pathlib import Path
+"""Packet diagnostics: log every packet the client sends.
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+Each line has the opcode, its name and the size. Packet bytes may contain
+chat and other private data, so they are written only when the bot was
+started with DBV_ALLOW_PACKET_CAPTURE=1. The log goes to sniff_log.txt in
+the bot folder and is started fresh each time the action is enabled.
+"""
+import os
+import struct
+
 from dbv.client_bridge.protocol import ClientOpcode
+from dbv.paths import INSTALL_ROOT
 
-SNIFF_LOG = Path(__file__).parent.parent / "sniff_log.txt"
+LOG_FILE = INSTALL_ROOT / "sniff_log.txt"
+
+
+def opcode_name(opcode):
+    try:
+        return ClientOpcode(opcode).name
+    except ValueError:
+        return "?"
+
+
+def describe(opcode, payload, with_payload):
+    """The log lines for one client packet."""
+    shown = (payload.hex(" ") or "(empty)") if with_payload else "[redacted]"
+    lines = [f"0x{opcode:02X} ({opcode_name(opcode)}) [{len(payload)} bytes] {shown}"]
+    if with_payload and opcode == ClientOpcode.USE_ITEM and len(payload) >= 8:
+        x, y, z, item, stack = struct.unpack_from("<HHBHB", payload)
+        lines.append(f"  -> USE_ITEM pos=({x}, {y}, {z}) item_id={item} stack={stack}")
+    return lines
 
 
 async def run(bot):
-    state = sys.modules["__main__"].state
-    proxy = state.game_proxy
+    proxy = bot.state.game_proxy
+    with_payload = os.environ.get("DBV_ALLOW_PACKET_CAPTURE") == "1"
+    with open(LOG_FILE, "w", encoding="utf-8", buffering=1) as log_file:
+        log_file.write("--- Packet diagnostic logger started ---\n")
 
-    def sniffer(opcode, reader):
-        try:
+        def on_client_packet(opcode, reader):
             try:
-                name = ClientOpcode(opcode).name
-            except ValueError:
-                name = "?"
+                lines = describe(opcode, reader.peek_remaining(), with_payload)
+            except Exception as exc:
+                lines = [f"ERROR: {exc}"]
+            bot.log(f"[SNIFF] {lines[0]}")
+            log_file.write("".join(line + "\n" for line in lines))
 
-            raw = reader.peek_remaining()
-            # Payloads may contain chat and other private game data.
-            include_payload = os.environ.get("DBV_ALLOW_PACKET_CAPTURE") == "1"
-            hex_dump = (raw.hex(" ") if raw else "(empty)") if include_payload else "[redacted]"
-
-            line = f"0x{opcode:02X} ({name}) [{len(raw)} bytes] {hex_dump}\n"
-            bot.log(f"[SNIFF] {line.strip()}")
-            with open(SNIFF_LOG, "a") as f:
-                f.write(line)
-
-            # Also parse known packet types for readability
-            if include_payload and opcode == ClientOpcode.USE_ITEM and len(raw) >= 8:
-                import struct
-                x = struct.unpack_from('<H', raw, 0)[0]
-                y = struct.unpack_from('<H', raw, 2)[0]
-                z = raw[4]
-                item_id = struct.unpack_from('<H', raw, 5)[0]
-                stack = raw[7]
-                detail = f"  -> USE_ITEM pos=({x}, {y}, {z}) item_id={item_id} stack={stack}\n"
-                with open(SNIFF_LOG, "a") as f:
-                    f.write(detail)
-
-        except Exception as e:
-            with open(SNIFF_LOG, "a") as f:
-                f.write(f"ERROR: {e}\n")
-
-    proxy.register_client_packet_callback(sniffer)
-    with open(SNIFF_LOG, "w") as f:
-        f.write("--- Packet diagnostic logger started ---\n")
-    bot.log("[SNIFF] Packet diagnostic logger installed — press your hotkey now")
-
-    try:
-        while True:
-            await bot.sleep(60)
-    except BaseException:
-        proxy.unregister_client_packet_callback(sniffer)
-        bot.log("[SNIFF] Removed")
+        proxy.register_client_packet_callback(on_client_packet)
+        bot.log("[SNIFF] Diagnostyka pakietów włączona; naciśnij teraz swój skrót")
+        try:
+            while True:
+                await bot.sleep(60)
+        finally:
+            proxy.unregister_client_packet_callback(on_client_packet)
+            bot.log("[SNIFF] Diagnostyka pakietów wyłączona")
