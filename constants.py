@@ -11,8 +11,9 @@ to be duplicated in Python code.
 import json
 import os
 from pathlib import Path
+from dbv.paths import INSTALL_ROOT
 
-_PROJECT_ROOT = Path(__file__).parent
+_PROJECT_ROOT = INSTALL_ROOT
 
 # ── Network ────────────────────────────────────────────────────────
 SERVER_HOST = os.environ.get("DBV_SERVER_HOST", "87.98.220.215")

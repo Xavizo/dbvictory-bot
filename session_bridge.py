@@ -15,11 +15,12 @@ import secrets
 import threading
 import time
 from multiprocessing.connection import Client, Listener
+from dbv.paths import INSTALL_ROOT, RUNTIME_DIR
 
 log = logging.getLogger(__name__)
 
-ROOT = Path(__file__).resolve().parent
-INFO_PATH = ROOT / ".codex" / "runtime" / "observer.json"
+ROOT = INSTALL_ROOT
+INFO_PATH = RUNTIME_DIR / "observer.json"
 MAX_REQUEST = 4096
 CALL_TIMEOUT = 15.
 

@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 from pathlib import Path
+from dbv.paths import ACTIONS_DIR, LOCAL_DATA_DIR
 from cavebot_combat import validate_combat
 from game_alerts import validate_config as validate_alerts, default_config
 from speed_up import validate_config as validate_speed
@@ -13,7 +14,7 @@ from barrier_spell import validate_config as validate_barrier
 from barrier_band import validate_config as validate_band
 from potions import validate_config as validate_potions
 
-ROOT=Path(__file__).parent/'local_data/profiles.json'
+ROOT=LOCAL_DATA_DIR/'profiles.json'
 INTERNAL={'dll_bridge','adaptive_cavebot'}
 
 
@@ -31,7 +32,7 @@ def validate_bot(value):
     for name,cfg in value['actions'].items():
         if (not re.fullmatch(r'[a-z][a-z0-9_]{0,63}',name) or name in INTERNAL
                 or not isinstance(cfg,dict) or 'enabled' in cfg):raise ValueError('Profil zawiera stan uruchomienia akcji.')
-        if not (Path(__file__).parent/'actions'/f'{name}.py').is_file():raise ValueError('Nieznana akcja w profilu.')
+        if not (ACTIONS_DIR/f'{name}.py').is_file():raise ValueError('Nieznana akcja w profilu.')
         if name=='speed_up':cfg=validate_speed(cfg)
         if name=='barrier_spell':cfg=validate_barrier(cfg)
         if name=='auto_barrier_band':cfg=validate_band(cfg)

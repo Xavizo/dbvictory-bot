@@ -15,6 +15,7 @@ import os
 import struct
 import sys
 import logging
+from dbv.paths import DLL_DIR
 
 log = logging.getLogger("inject")
 
@@ -226,7 +227,7 @@ def inject(dll_path: str = None) -> bool:
     by resolving LoadLibraryA from the target's own kernel32.dll.
     """
     if dll_path is None:
-        dll_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dll", "dbvbot.dll")
+        dll_path = str(DLL_DIR / "dbvbot.dll")
 
     if not os.path.exists(dll_path):
         raise RuntimeError(f"DLL not found: {dll_path}")

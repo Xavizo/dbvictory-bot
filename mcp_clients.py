@@ -17,8 +17,9 @@ import shutil
 import subprocess
 import sys
 from uuid import uuid4
+from dbv.paths import INSTALL_ROOT
 
-ROOT = Path(__file__).resolve().parent
+ROOT = INSTALL_ROOT
 NAME = "dbvictory-bot"
 TARGETS = ("codex", "claude-desktop", "claude-code")
 ENV = {"PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}

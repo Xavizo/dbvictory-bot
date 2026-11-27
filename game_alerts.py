@@ -10,6 +10,7 @@ from ki_loss import KI_DROP_WINDOW, KI_HIT_GRACE, KiDropDetector
 import json
 from pathlib import Path
 from collections import deque
+from dbv import paths
 
 KINDS = ('private', 'default', 'player', 'ki_loss')
 KI_ALARM_DURATION = 10
@@ -21,7 +22,7 @@ def default_config():
 
 def spell_words():
     try:
-        path = Path(__file__).parent/'dashboard/public/local-spells/catalog.json'
+        path = paths.SPELL_CATALOG
         rows = json.loads(path.read_text(encoding='utf-8'))['spells']
         return {str(row[key]).strip().rstrip('!').casefold() for row in rows for key in ('name', 'words')}
     except (OSError, ValueError, KeyError, TypeError):

@@ -63,7 +63,8 @@ def test_launch_refuses_unowned_port_and_passes_token_only_to_electron(monkeypat
     build_dir = tmp_path / "dashboard" / ".next"
     build_dir.mkdir(parents=True)
     (build_dir / "BUILD_ID").write_text("test-build")
-    monkeypatch.setattr(server, "__file__", str(tmp_path / "mcp_server.py"))
+    monkeypatch.setattr(server.paths, "DASHBOARD_DIR", tmp_path / "dashboard")
+    monkeypatch.setattr(server.paths, "BUNDLED_NODE_DIR", tmp_path / "runtime" / "node")
     monkeypatch.setattr(server, "os", SimpleNamespace(name="nt", environ={server.EXIT_FILE_ENV: "stale"}))
     monkeypatch.setattr(server.state, "tray_exit_file", tmp_path / "quit", raising=False)
     monkeypatch.setattr(server.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
