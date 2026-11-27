@@ -215,6 +215,22 @@ The bell collects game events: a private message, a message in local chat, a
 player on screen, or a sudden Ki drop. You can turn each kind on or off, give it
 a sound, and choose whether it fires always or only while the cavebot is running.
 
+![Alerts: one of each kind, with sender, position and message](docs/screenshots/alerts.png)
+
+Each entry shows the kind, the time, who or what triggered it, and the message:
+
+- **Wiadomość prywatna** (private message): the sender and the text.
+- **Czat Default** (Default chat): the speaker and what they said in local chat.
+  Only players in view count; your own messages and spell words are ignored.
+- **Pojawienie się gracza** (player appeared): the player's name and position.
+  While another player stays in view, the sound repeats every 1.5 s.
+- **Nagła utrata Ki** (sudden Ki loss): where it happened and how far Ki fell.
+  It fires when Ki drops from at least 90% to 5% or less in one change without
+  any hit on your character, and the alarm lasts 10 s.
+
+**Oznacz jako przeczytane** (mark as read) clears the counter on the bell, and
+**Test sygnału** plays the alert sound.
+
 ## How it works
 
 ![The launcher, ready to start](docs/screenshots/launcher.jpg)
