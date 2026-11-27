@@ -1,4 +1,5 @@
-# DBVictory Bot
+DBVictory Bot
+=============
 
 A desktop bot for the DBVictory game client (Windows). It runs next to the
 official client, reads the game state from network traffic and client memory,
@@ -405,16 +406,18 @@ A second agent can also attach read-only to a session the launcher started
 Actions are Python files in `actions/` with an `async def run(bot)` entry point.
 They appear in the panel and can be turned on and off at runtime.
 
-```python
-"""Say a spell once a minute while the character is logged in."""
-WORDS, EVERY = "utevo lux", 60
+```py
+"""Cast a light spell every minute while a character is in game."""
+import itertools
+
+SPELL, PAUSE_SECONDS = "utevo lux", 60
 
 async def run(bot):
-    while True:
-        if bot.is_connected:
-            await bot.say(WORDS)
-            bot.log(f"said {WORDS!r}")
-        await bot.sleep(EVERY)
+    for cast in itertools.count(1):        # runs until the action is turned off
+        if bot.is_connected:           # a character is in game right now
+            await bot.say(SPELL)
+            bot.log(f"cast #{cast}: {SPELL}")
+        await bot.sleep(PAUSE_SECONDS)     # also stops the action during a pause
 ```
 
 Old flat imports such as `from protocol import ...` still work for one release, then only the `dbv.*` names do.
@@ -443,10 +446,16 @@ cd dashboard; npm test; npm run typecheck; npm run build
 - Your settings (`bot_settings.json`), learned data (`local_data/`) and logs are
   excluded from Git.
 
-## Credits
+## License
 
-This project is a fork of the original DBVictory proxy bot by
-**patrykjanik** ([@pumanitro](https://github.com/pumanitro)), which provided the first proxy, packet parser, DLL and
-cavebot. It has since been almost completely rewritten: the launcher and
-updater, client profiles, native observer, atlas, combat, healing, Hunter Knife
-and most of the panel are new.
+The bot's own code is released under the [MIT License](LICENSE). Some pieces
+keep their own terms and are not covered by it:
+
+- **Python runtime and Python packages** bundled in release builds
+  (`venv\`) are under their own licenses (the PSF License for CPython, and each
+  package's license from `requirements.txt`).
+- **JavaScript packages** used by the panel (`dashboard/package.json`) are under
+  their own licenses.
+- **Game client data**, such as spell icons in `dashboard/spells/icons/`, map
+  data in `config/starter-map.json.gz` and client offsets, comes from the
+  DBVictory game and its client and belongs to their owners.

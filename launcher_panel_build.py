@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from dbv.paths import state_dir
 from dbv_release import _file_lock, _git, _head, _local_child, _panel_tree, _repo, _sha, _write_json
 
 
@@ -20,7 +21,7 @@ def _source_ui(source, revision):
 
 
 def _receipt(source):
-    return _local_child(_local_child(source, ".codex"), "launcher-panel-build.json")
+    return _local_child(_local_child(source, state_dir(source).name), "launcher-panel-build.json")
 
 
 def verify_prebuilt(source, revision, directory, *, copied_digest=None):
@@ -48,7 +49,7 @@ def build_for_release(installation, source, revision):
     with _file_lock(receipt.with_name("launcher-panel-build.lock")):
         receipt.unlink(missing_ok=True)
         env = {**os.environ, "NEXT_TELEMETRY_DISABLED": "1"}
-        for runtime in sorted((installation / ".codex/runtime").glob("node-v*-win-x64"), reverse=True):
+        for runtime in sorted((state_dir(installation) / "runtime").glob("node-v*-win-x64"), reverse=True):
             if (runtime / "node.exe").is_file() and (runtime / "npm.cmd").is_file():
                 env["PATH"] = str(runtime) + os.pathsep + env.get("PATH", "")
                 break

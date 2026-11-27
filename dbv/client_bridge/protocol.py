@@ -5,117 +5,68 @@ All numbers are little-endian. A position is x:u16, y:u16, z:u8 and a string
 is a u16 length followed by Latin-1 bytes. Opcodes are listed by value.
 """
 import struct
-from enum import IntEnum
+import enum
 
 
-class ClientOpcode(IntEnum):
-    """Client → server."""
-    LOGIN_SERVER = 0x01          # login server: account login
-    GAME_LOGIN = 0x0A            # game server: character login
-    LOGOUT = 0x14
-    PING = 0x1E
-    PONG = 0x1F
-    NEW_WALK = 0x45              # OTCv8 "new walking" step (DBVClient_v5)
-    AUTO_WALK = 0x64             # path of directions
-    WALK_NORTH = 0x65
-    WALK_EAST = 0x66
-    WALK_SOUTH = 0x67
-    WALK_WEST = 0x68
-    STOP_WALK = 0x69
-    WALK_NORTHEAST = 0x6A
-    WALK_SOUTHEAST = 0x6B
-    WALK_SOUTHWEST = 0x6C
-    WALK_NORTHWEST = 0x6D
-    TURN_NORTH = 0x6F
-    TURN_EAST = 0x70
-    TURN_SOUTH = 0x71
-    TURN_WEST = 0x72
-    MOVE_THING = 0x78            # drag an item: from, item, stack, to, count
-    BUY_ITEM = 0x7A              # NPC trade
-    SELL_ITEM = 0x7B
-    CLOSE_NPC_TRADE = 0x7C
-    REQUEST_TRADE = 0x7D         # player trade
-    ACCEPT_TRADE = 0x7F
-    REJECT_TRADE = 0x80
-    USE_ITEM = 0x82              # position, item, stack, container index
-    USE_ITEM_EX = 0x83           # use an item on a tile or another item
-    USE_ON_CREATURE = 0x84       # use an item (rune) on a creature
-    CLOSE_CONTAINER = 0x87
-    UP_CONTAINER = 0x88          # open the parent container
-    LOOK = 0x8C
-    LOOK_IN_TRADE = 0x8E
-    SAY = 0x96                   # speak mode, text
-    OPEN_CHANNEL = 0x98
-    CLOSE_CHANNEL = 0x99
-    OPEN_PRIVATE_CHANNEL = 0x9A
-    SET_FIGHT_MODES = 0xA0       # fight, chase, safe
-    ATTACK = 0xA1                # creature id, 0 cancels
-    FOLLOW = 0xA2
+class ClientOpcode(enum.IntEnum):
+    """Client → server, grouped by what they do."""
+    # session
+    LOGIN_SERVER, GAME_LOGIN, LOGOUT = 0x01, 0x0A, 0x14   # account login, character login
+    PING, PONG = 0x1E, 0x1F
+    # movement: 0x65..0x68 are N/E/S/W, the diagonals follow STOP_WALK
+    NEW_WALK, AUTO_WALK = 0x45, 0x64      # OTCv8 "new walking" step; a path of directions
+    WALK_NORTH, WALK_EAST, WALK_SOUTH, WALK_WEST, STOP_WALK = 0x65, 0x66, 0x67, 0x68, 0x69
+    WALK_NORTHEAST, WALK_SOUTHEAST, WALK_SOUTHWEST, WALK_NORTHWEST = 0x6A, 0x6B, 0x6C, 0x6D
+    TURN_NORTH, TURN_EAST, TURN_SOUTH, TURN_WEST = 0x6F, 0x70, 0x71, 0x72
+    # items and trade
+    MOVE_THING = 0x78                     # drag an item: from, item, stack, to, count
+    BUY_ITEM, SELL_ITEM, CLOSE_NPC_TRADE = 0x7A, 0x7B, 0x7C          # NPC trade
+    REQUEST_TRADE, ACCEPT_TRADE, REJECT_TRADE = 0x7D, 0x7F, 0x80     # player trade
+    USE_ITEM, USE_ITEM_EX, USE_ON_CREATURE = 0x82, 0x83, 0x84        # on itself, on a thing, on a creature
+    CLOSE_CONTAINER, UP_CONTAINER = 0x87, 0x88                       # UP opens the parent container
+    LOOK, LOOK_IN_TRADE = 0x8C, 0x8E
+    BROWSE_FIELD, SEEK_IN_CONTAINER = 0xCB, 0xCC                     # BROWSE lists a tile's items
+    # talking
+    SAY = 0x96                            # speak mode, text
+    OPEN_CHANNEL, CLOSE_CHANNEL, OPEN_PRIVATE_CHANNEL = 0x98, 0x99, 0x9A
+    # combat
+    SET_FIGHT_MODES, ATTACK, FOLLOW = 0xA0, 0xA1, 0xA2   # ATTACK takes a creature id, 0 cancels
     CANCEL_ATTACK = 0xBE
-    BROWSE_FIELD = 0xCB          # list the items on a tile
-    SEEK_IN_CONTAINER = 0xCC
-    SET_OUTFIT = 0xD3
-    ADD_VIP = 0xDC
-    REMOVE_VIP = 0xDD
-    REQUEST_QUEST_LOG = 0xF0
-    REQUEST_QUEST_LINE = 0xF1
+    # character and social
+    SET_OUTFIT = 0xD3                     # change appearance
+    ADD_VIP, REMOVE_VIP = 0xDC, 0xDD
+    REQUEST_QUEST_LOG, REQUEST_QUEST_LINE = 0xF0, 0xF1
 
 
-class ServerOpcode(IntEnum):
-    """Server → client."""
-    LOGIN_OR_PENDING = 0x0A      # player id, then the first map description
-    GM_ACTIONS = 0x0B
-    UPDATE_NEEDED = 0x0C
-    LOGIN_TOKEN = 0x0D
-    LOGIN_ERROR = 0x14
-    LOGIN_ADVISE = 0x15
-    LOGIN_WAIT = 0x16
-    LOGIN_SUCCESS = 0x17
-    PING = 0x1D
-    PONG = 0x1E
-    CHALLENGE = 0x1F
-    MAP_DESCRIPTION = 0x64       # full view around a position
-    MAP_SLICE_NORTH = 0x65       # one new row or column after a step
-    MAP_SLICE_EAST = 0x66
-    MAP_SLICE_SOUTH = 0x67
-    MAP_SLICE_WEST = 0x68
-    TILE_ADD_THING = 0x6A
-    TILE_TRANSFORM_THING = 0x6B
-    TILE_REMOVE_THING = 0x6C
-    CREATURE_MOVE = 0x6D
-    OPEN_CONTAINER = 0x6E        # in this protocol 0x6E is a container, not a turn
-    CLOSE_CONTAINER = 0x6F
-    CREATE_IN_CONTAINER = 0x70
-    CHANGE_IN_CONTAINER = 0x71
-    REMOVE_FROM_CONTAINER = 0x72
-    MAGIC_EFFECT = 0x83
-    ANIMATED_TEXT = 0x84
-    SHOOT_EFFECT = 0x85
-    CREATURE_HEALTH = 0x8C
-    CREATURE_LIGHT = 0x8D
-    CREATURE_OUTFIT = 0x8E
-    CREATURE_SPEED = 0x8F
-    CREATURE_SKULL = 0x90
-    CREATURE_PARTY = 0x91
-    PLAYER_STATS = 0xA0
-    PLAYER_SKILLS = 0xA1
-    PLAYER_ICONS = 0xA2
-    PLAYER_CANCEL_ATTACK = 0xA3
-    TALK = 0xAA
-    CHANNELS = 0xAB
-    OPEN_CHANNEL = 0xAC
-    PRIVATE_CHANNEL = 0xAD
-    CLOSE_CHANNEL = 0xB2
-    TEXT_MESSAGE = 0xB4
-    PLAYER_CANCEL_WALK = 0xB5
-    FLOOR_CHANGE_UP = 0xBE
-    FLOOR_CHANGE_DOWN = 0xBF
-    VIP_ADD = 0xD2
-    VIP_STATE = 0xD3
-    VIP_LOGOUT = 0xD4
+class ServerOpcode(enum.IntEnum):
+    """Server → client, grouped by what they carry."""
+    # login and session
+    LOGIN_OR_PENDING = 0x0A               # player id, then the first map description
+    GM_ACTIONS, UPDATE_NEEDED, LOGIN_TOKEN = 0x0B, 0x0C, 0x0D
+    LOGIN_ERROR, LOGIN_ADVISE, LOGIN_WAIT, LOGIN_SUCCESS = 0x14, 0x15, 0x16, 0x17
+    PING, PONG, CHALLENGE = 0x1D, 0x1E, 0x1F
+    # map: a full view, then one new row or column after each step
+    MAP_DESCRIPTION = 0x64
+    MAP_SLICE_NORTH, MAP_SLICE_EAST, MAP_SLICE_SOUTH, MAP_SLICE_WEST = 0x65, 0x66, 0x67, 0x68
+    TILE_ADD_THING, TILE_TRANSFORM_THING, TILE_REMOVE_THING, CREATURE_MOVE = 0x6A, 0x6B, 0x6C, 0x6D
+    FLOOR_CHANGE_UP, FLOOR_CHANGE_DOWN = 0xBE, 0xBF
+    # containers (in this protocol 0x6E opens a container; it is not a turn)
+    OPEN_CONTAINER, CLOSE_CONTAINER = 0x6E, 0x6F
+    CREATE_IN_CONTAINER, CHANGE_IN_CONTAINER, REMOVE_FROM_CONTAINER = 0x70, 0x71, 0x72
+    # effects and creatures
+    MAGIC_EFFECT, ANIMATED_TEXT, SHOOT_EFFECT = 0x83, 0x84, 0x85
+    CREATURE_HEALTH, CREATURE_LIGHT, CREATURE_OUTFIT = 0x8C, 0x8D, 0x8E
+    CREATURE_SPEED, CREATURE_SKULL, CREATURE_PARTY = 0x8F, 0x90, 0x91
+    # the player
+    PLAYER_STATS, PLAYER_SKILLS, PLAYER_ICONS, PLAYER_CANCEL_ATTACK = 0xA0, 0xA1, 0xA2, 0xA3
+    PLAYER_CANCEL_WALK = 0xB5             # the server refused a step
+    # chat
+    TALK, CHANNELS, OPEN_CHANNEL, PRIVATE_CHANNEL = 0xAA, 0xAB, 0xAC, 0xAD
+    CLOSE_CHANNEL, TEXT_MESSAGE = 0xB2, 0xB4
+    VIP_ADD, VIP_STATE, VIP_LOGOUT = 0xD2, 0xD3, 0xD4
 
 
-class Direction(IntEnum):
+class Direction(enum.IntEnum):
     """The client's own direction numbers."""
     NORTH, EAST, SOUTH, WEST = 0, 1, 2, 3
     NORTHEAST, SOUTHEAST, SOUTHWEST, NORTHWEST = 4, 5, 6, 7
@@ -129,96 +80,85 @@ _U16, _U32 = struct.Struct("<H"), struct.Struct("<I")
 _POSITION = struct.Struct("<HHB")
 
 
-class PacketReader:
+def _fixed(layout, first_only=True):
+    """A reader method for one struct layout; the cursor moves past it."""
+    def read(self):
+        values = layout.unpack_from(self._data, self._pos)
+        self._pos += layout.size
+        return values[0] if first_only else values
+    return read
+
+
+class PacketReader:  # a cursor over one packet body
     """Reads a packet body front to back.
 
     Running past the end raises IndexError (bytes, strings, u8) or
-    struct.error (u16, u32), the same errors callers already handle.
+    struct.error (u16, u32, positions), the same errors callers already handle.
     """
 
-    def __init__(self, data: bytes):
-        self._data = data
-        self._pos = 0
+    def __init__(self, data: bytes, start: int = 0):
+        self._data, self._pos = data, start
 
-    @property
-    def position(self) -> int:
-        return self._pos
+    position = property(lambda self: self._pos, doc="Offset of the next unread byte.")
+    remaining = property(lambda self: len(self._data) - self._pos, doc="Bytes not read yet.")
+    read_u16 = _fixed(_U16)
+    read_u32 = _fixed(_U32)
+    read_position = _fixed(_POSITION, first_only=False)   # (x, y, z)
 
-    @property
-    def remaining(self) -> int:
-        return len(self._data) - self._pos
+    def read_u8(self):
+        byte = self._data[self._pos]          # IndexError at the end, like bytes
+        self._pos = self._pos + 1
+        return byte
 
-    def _unpack(self, layout):
-        values = layout.unpack_from(self._data, self._pos)
-        self._pos += layout.size
-        return values
-
-    def read_u8(self) -> int:
-        value = self._data[self._pos]
-        self._pos += 1
-        return value
-
-    def read_u16(self) -> int:
-        return self._unpack(_U16)[0]
-
-    def read_u32(self) -> int:
-        return self._unpack(_U32)[0]
-
-    def read_position(self) -> tuple[int, int, int]:
-        return self._unpack(_POSITION)
-
-    def read_bytes(self, count: int) -> bytes:
+    def read_bytes(self, count: int):
         if count > self.remaining:
             raise IndexError(f"need {count} bytes at offset {self._pos}, only {self.remaining} left")
-        chunk = self._data[self._pos:self._pos + count]
-        self._pos += count
-        return chunk
+        start, self._pos = self._pos, self._pos + count
+        return self._data[start:self._pos]
 
-    def read_string(self) -> str:
-        size = self.read_u16()
-        if size > self.remaining:
-            raise IndexError(f"string of {size} bytes, only {self.remaining} left")
-        return self.read_bytes(size).decode("latin-1")
+    def read_string(self):
+        """A u16 length, then that many Latin-1 bytes."""
+        length = self.read_u16()
+        if length > self.remaining:
+            raise IndexError(f"string of {length} bytes, only {self.remaining} left")
+        return self.read_bytes(length).decode("latin-1")
 
-    def peek_remaining(self) -> bytes:
+    def peek_remaining(self):
         """The unread rest, without consuming it."""
-        return self._data[self._pos:]
+        return self._data[self.position:]
 
 
-class PacketWriter:
+class PacketWriter:  # appends to one packet body
     """Builds a packet body. Integers are truncated to their width."""
 
-    def __init__(self):
-        self._buf = bytearray()
+    def __init__(self) -> None:
+        self._out = bytearray()
 
-    @property
-    def data(self) -> bytes:
-        return bytes(self._buf)
+    data = property(lambda self: bytes(self._out), doc="Everything written so far.")
+    size = property(lambda self: len(self._out), doc="Bytes written so far.")
 
-    @property
-    def size(self) -> int:
-        return len(self._buf)
+    def write_bytes(self, raw: bytes) -> None:
+        self._out.extend(raw)
 
-    def write_bytes(self, data: bytes):
-        self._buf += data
+    def write_u8(self, number: int) -> None:
+        self._out.append(number % 0x100)
 
-    def write_u8(self, value: int):
-        self._buf.append(value & 0xFF)
+    def write_u16(self, number: int) -> None:
+        self._out.extend(_U16.pack(number % 0x10000))
 
-    def write_u16(self, value: int):
-        self._buf += _U16.pack(value & 0xFFFF)
+    def write_u32(self, number: int) -> None:
+        self._out.extend(_U32.pack(number % 0x100000000))
 
-    def write_u32(self, value: int):
-        self._buf += _U32.pack(value & 0xFFFFFFFF)
+    def write_position(self, x: int, y: int, z: int) -> None:
+        self._out.extend(_POSITION.pack(x % 0x10000, y % 0x10000, z % 0x100))
 
-    def write_position(self, x: int, y: int, z: int):
-        self._buf += _POSITION.pack(x & 0xFFFF, y & 0xFFFF, z & 0xFF)
+    def write_string(self, text: str) -> None:
+        encoded = text.encode("latin-1")
+        self.write_u16(len(encoded))
+        self.write_bytes(encoded)
 
-    def write_string(self, text: str):
-        raw = text.encode("latin-1")
-        self.write_u16(len(raw))
-        self._buf += raw
 
+Packet = bytes   # an encoded packet: the opcode byte, then its fields
 
 _WIDTH = {"B": 0xFF, "H": 0xFFFF, "I": 0xFFFFFFFF}
 
@@ -230,37 +170,37 @@ def _packet(opcode, layout="", *values) -> bytes:
 
 # ── packets the bot sends ─────────────────────────────────────────
 
-def build_walk_packet(direction: Direction) -> bytes:
+def build_walk_packet(direction: Direction) -> Packet:
     return _packet(WALK_OPCODES[direction])
 
 
-def build_turn_packet(direction: Direction) -> bytes:
+def build_turn_packet(direction: Direction) -> Packet:
     """Face north, east, south or west without moving."""
     return _packet(TURN_OPCODES[direction])
 
 
-def build_stop_walk_packet() -> bytes:
+def build_stop_walk_packet() -> Packet:
     return _packet(ClientOpcode.STOP_WALK)
 
 
-def build_ping_packet() -> bytes:
+def build_ping_packet() -> Packet:
     return _packet(ClientOpcode.PING)
 
 
-def build_logout_packet() -> bytes:
+def build_logout_packet() -> Packet:
     return _packet(ClientOpcode.LOGOUT)
 
 
-def build_attack_packet(creature_id: int) -> bytes:
+def build_attack_packet(creature_id: int) -> Packet:
     """Attack a creature; 0 stops attacking."""
     return _packet(ClientOpcode.ATTACK, "I", creature_id)
 
 
-def build_follow_packet(creature_id: int) -> bytes:
+def build_follow_packet(creature_id: int) -> Packet:
     return _packet(ClientOpcode.FOLLOW, "I", creature_id)
 
 
-def build_say_packet(text: str, mode: int = 1) -> bytes:
+def build_say_packet(text: str, mode: int = 1) -> Packet:
     """Speak ``text``; mode 1 is normal speech (spells are spoken too)."""
     writer = PacketWriter()
     writer.write_u8(ClientOpcode.SAY)
@@ -269,26 +209,24 @@ def build_say_packet(text: str, mode: int = 1) -> bytes:
     return writer.data
 
 
-def build_set_fight_modes_packet(fight_mode: int = 1, chase_mode: int = 0, safe_mode: int = 1) -> bytes:
+def build_set_fight_modes_packet(fight_mode: int = 1, chase_mode: int = 0, safe_mode: int = 1) -> Packet:
     """fight: 1 offensive, 2 balanced, 3 defensive; chase: 0 stand, 1 chase; safe: 0 PvP, 1 safe."""
     return _packet(ClientOpcode.SET_FIGHT_MODES, "BBB", fight_mode, chase_mode, safe_mode)
 
 
-def build_use_item_packet(x: int, y: int, z: int, item_id: int, stack_pos: int, index: int) -> bytes:
+def build_use_item_packet(x: int, y: int, z: int, item_id: int, stack_pos: int, index: int) -> Packet:
     """Use an item. Position (0xFFFF, 0, 0) is the hotkey form: the server finds the item."""
     return _packet(ClientOpcode.USE_ITEM, "HHBHBB", x, y, z, item_id, stack_pos, index)
 
 
-def build_use_on_creature_packet(x: int, y: int, z: int, item_id: int, stack_pos: int, creature_id: int) -> bytes:
+def build_use_on_creature_packet(x: int, y: int, z: int, item_id: int, stack_pos: int, creature_id: int) -> Packet:
     """Use an item on a creature, e.g. an attack rune on a monster."""
     return _packet(ClientOpcode.USE_ON_CREATURE, "HHBHBI", x, y, z, item_id, stack_pos, creature_id)
 
 
-def build_use_item_ex_packet(
-    from_x: int, from_y: int, from_z: int,
-    item_id: int, stack_pos: int,
-    to_x: int, to_y: int, to_z: int, to_stack_pos: int, *, target_item_id: int | None = None,
-) -> bytes:
+def build_use_item_ex_packet(from_x: int, from_y: int, from_z: int, item_id: int, stack_pos: int,
+                             to_x: int, to_y: int, to_z: int, to_stack_pos: int,
+                             *, target_item_id: int | None = None) -> Packet:
     """Use an item on a tile or a thing, e.g. a rope on a hole or a shovel on the ground.
 
     ``target_item_id`` adds the target thing's item id, which this server
@@ -301,7 +239,7 @@ def build_use_item_ex_packet(
 
 
 def build_move_item_packet(from_pos: tuple, item_id: int, from_stack: int, to_pos: tuple, count: int,
-                           *, count_bytes=1) -> bytes:
+                           *, count_bytes=1) -> Packet:
     """Move ``count`` of an item; ``count_bytes`` is 1 or 2 depending on the item kind."""
     if count_bytes not in (1, 2):
         raise ValueError("Nieobsługiwany format liczby sztuk.")
@@ -309,5 +247,5 @@ def build_move_item_packet(from_pos: tuple, item_id: int, from_stack: int, to_po
                    *from_pos, item_id, from_stack, *to_pos, count)
 
 
-def build_look_packet(x: int, y: int, z: int, item_id: int, stack_pos: int) -> bytes:
+def build_look_packet(x: int, y: int, z: int, item_id: int, stack_pos: int) -> Packet:
     return _packet(ClientOpcode.LOOK, "HHBHB", x, y, z, item_id, stack_pos)

@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useBot } from "@/lib/useBot";
+import { useBot } from "../lib/useBot";
 import RouteReplayPanel from "./RouteReplayPanel";
 import MovementHistoryPanel from "./MovementHistoryPanel";
 import CavebotReports from "./CavebotReports";
@@ -20,7 +20,7 @@ import BarrierSpellPanel from "./BarrierSpellPanel";
 import ItemIdentificationPanel from "./ItemIdentificationPanel";
 
 function ActionCard({action,onRefresh}:{action:ActionInfo;onRefresh:()=>void}) {
-  const [confirmDelete,setConfirmDelete]=useState(false);
+  const [confirmDelete,setConfirmDelete]=useState<boolean>(false);
   const [expanded,setExpanded]=useState(false);
   const [actionError,setActionError]=useState("");
   const [busy,setBusy]=useState(false);
@@ -42,18 +42,15 @@ function ActionCard({action,onRefresh}:{action:ActionInfo;onRefresh:()=>void}) {
       <button role="switch" aria-checked={action.enabled} aria-label={`${title}: włącz lub wyłącz`} disabled={busy} onClick={()=>change(!action.enabled)} className={`action-switch ${action.enabled ? "on" : ""}`}><span/></button>
       <h3>{title}</h3>
       <span className={`action-state ${action.running ? "running" : action.enabled ? "enabled" : ""}`}>
-        <i className="status-dot"/>{action.running ? "Pracuje" : action.completed ? "Zakończona" : action.enabled ? "Czeka na grę" : "Wyłączona"}
-      </span>
-      <button className="action-expand" aria-expanded={expanded} aria-controls={`action-details-${action.name}`} onClick={()=>setExpanded(!expanded)}>{expanded ? "Ukryj ▴" : "Opis / logi ▾"}</button>
-    </div>
+        <i className="status-dot"/>{action.running ? "Pracuje" : action.completed ? "Zakończona" : action.enabled ? "Czeka na grę" : "Wyłączona"}</span>
+      <button className="action-expand" aria-expanded={expanded} aria-controls={`action-details-${action.name}`} onClick={()=>setExpanded(!expanded)}>{expanded ? "Ukryj ▴" : "Opis / logi ▾"}</button></div>
     {actionError && <p role="alert" className="px-3 pb-2 text-xs text-red-300">{actionError}</p>}
     <div hidden={!expanded} id={`action-details-${action.name}`} className="action-details">
       <p className="action-description">{action.description || "Brak opisu tej akcji."}</p>
       <p className="mb-2 font-mono text-xs text-gray-500">{action.name}</p>
       {action.logs?.length ? <div className="action-log">{action.logs.map((line,i)=><div key={i}>{line}</div>)}</div> : <p className="text-xs text-gray-500">Brak zdarzeń w tej sesji.</p>}
       <button disabled={busy} className="mt-3 text-xs text-red-300" onClick={()=>setConfirmDelete(true)}>Usuń plik akcji…</button>
-      {confirmDelete && <div className="mt-3 rounded-lg border border-red-900 bg-red-950/30 p-3 text-xs"><p>Usunąć <strong>{action.name}</strong>? Tej operacji nie można cofnąć.</p><div className="mt-3 flex gap-3"><button onClick={()=>setConfirmDelete(false)} className="secondary-button">Anuluj</button><button disabled={busy} onClick={remove} className="rounded bg-red-700 px-3 py-2">Usuń akcję</button></div></div>}
-    </div>
+      {confirmDelete && <div className="mt-3 rounded-lg border border-red-900 bg-red-950/30 p-3 text-xs"><p>Usunąć <strong>{action.name}</strong>? Tej operacji nie można cofnąć.</p><div className="mt-3 flex gap-3"><button onClick={()=>setConfirmDelete(false)} className="secondary-button">Anuluj</button><button disabled={busy} onClick={remove} className="rounded bg-red-700 px-3 py-2">Usuń akcję</button></div></div>}</div>
   </article>;
 }
 
@@ -65,11 +62,11 @@ const observationLabels: Record<string,string> = {
 };
 const observationStates = {fresh:"Aktualne", stale:"Nieaktualne", waiting:"Brak próbki", gap:"Luka", observed:"Zaobserwowano"};
 
-export default function Dashboard() {
+export default function DashboardPage() {
   const { state, mcpConnected, refresh, dashboardError } = useBot();
 
   const [view,setView]=useState<WorkspaceView>("cavebot");
-  const [showProxySeq,setShowProxySeq]=useState(false);
+  const [showProxySeq,setShowProxySeq]=useState<boolean>(false);
 
   const [controlError,setControlError]=useState("");
   const [controlBusy,setControlBusy]=useState(false);

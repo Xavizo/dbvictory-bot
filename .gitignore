@@ -1,24 +1,25 @@
 # Python environments and caches
-venv/
+**/venv/
 .venv/
-__pycache__/
+**/__pycache__/
 *.py[co]
 .pytest_cache/
 
 # Player data and secrets: never commit
-.env
-bot_settings.json
+**/.env
+**/bot_settings.json
 local_data/
 /recordings/
 .codex/
+.dbvictory/
 
 # Diagnostics written while the bot runs
 sniff_log.txt
-*_debug*.txt
-*_dump.txt
-*.bin
+**/*_debug*.txt
+**/*_dump.txt
+**/*.bin
 /dll/*.txt
-electron_err.log
+**/electron_err.log
 
 # Build output
 /dll/*.dll

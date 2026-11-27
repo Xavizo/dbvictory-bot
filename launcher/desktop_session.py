@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import os
 import sys
 
+from dbv.paths import state_dir
 from launcher_lock import launcher_lock
 
 
@@ -17,10 +18,10 @@ def main(root):
     from dbv_revision import installed_revision
     from run_bot import prepare_environment, run
 
-    feed = root / ".codex" / "updates"
+    feed = state_dir(root) / "updates"
     with ExitStack() as session:
         def lock_reviewed_release():
-            session.enter_context(launcher_lock(root / ".codex" / "standalone.lock"))
+            session.enter_context(launcher_lock(state_dir(root) / "standalone.lock"))
             if (installed_revision(root) != os.environ.get("DBV_LAUNCHER_REVISION")
                     or any((feed / name).exists() for name in ("pending.json", "transaction.json"))
                     or (feed / "github" / "transaction.json").exists()):

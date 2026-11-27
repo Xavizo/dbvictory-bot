@@ -253,7 +253,7 @@ class PanelApp:
                 or not re.fullmatch(r"[0-9a-f]{32}", self.launcher_id or "")):
             return
         self._ready_written = True
-        marker = paths.INSTALL_ROOT / ".codex" / "launcher-events" / f"{self.launcher_id}.ready"
+        marker = paths.state_dir(paths.INSTALL_ROOT) / "launcher-events" / f"{self.launcher_id}.ready"
         try:
             with open(marker, "x"):
                 pass
@@ -421,7 +421,7 @@ class Tray:
 
 
 def _storage():
-    base = os.environ.get("LOCALAPPDATA") or str(paths.INSTALL_ROOT / ".codex")
+    base = os.environ.get("LOCALAPPDATA") or str(paths.state_dir(paths.INSTALL_ROOT))
     return os.path.join(base, "DBVictory Bot", "panel-webview")
 
 

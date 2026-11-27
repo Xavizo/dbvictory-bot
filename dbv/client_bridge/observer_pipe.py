@@ -72,9 +72,7 @@ class ObserverPipe:
         self._last_sent_at = float("-inf")
 
     # ── connection ────────────────────────────────────────────────
-    @property
-    def connected(self) -> bool:
-        return self._handle is not None
+    connected = property(lambda self: self._handle is not None, doc="Whether the pipe is open.")
 
     def open(self) -> bool:
         if self._handle is not None:

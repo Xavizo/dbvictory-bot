@@ -161,7 +161,7 @@ async def run(bot):
     state = bot.state
     bridge = _make_bridge()
     while not bot.is_connected:
-        await bot.sleep(1)
+        await bot.sleep(1.0)  # until a character is in game
     try:
         attached = await _attach(bot, bridge)
     except BaseException:

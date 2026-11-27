@@ -1,7 +1,7 @@
 """Read-only bridge from another MCP instance to the process that owns the game.
 
 The owner listens on a local named pipe (loopback TCP off Windows) with an HMAC
-handshake. Its address and a random key go to .codex/runtime/observer.json,
+handshake. Its address and a random key go to .dbvictory/runtime/observer.json,
 removed on exit. Requests and replies are JSON, never pickle. Only operations
 the owner registered are served; each runs on the owner's event loop. The
 bridge itself has no way to send packets or change actions.
@@ -15,7 +15,7 @@ import secrets
 import threading
 import time
 from multiprocessing.connection import Client, Listener
-from dbv.paths import INSTALL_ROOT, RUNTIME_DIR
+from dbv.paths import INSTALL_ROOT, RUNTIME_DIR, state_dir
 
 log = logging.getLogger(__name__)
 
@@ -130,8 +130,12 @@ class ObserverBridge:
 
 
 def read_info(info_path=None):
+    path = Path(info_path or INFO_PATH)
+    if info_path is None and not path.exists():
+        # This process started before the launcher moved .codex to .dbvictory.
+        path = state_dir(ROOT) / "runtime" / "observer.json"
     try:
-        return json.loads(Path(info_path or INFO_PATH).read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as error:

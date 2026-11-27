@@ -21,7 +21,7 @@ from dbv import paths
 from dbv.brain.hunts.farming_telemetry import experience_for_level
 from dbv.client_bridge.protocol import WALK_OPCODES as _WALK_BY_DIRECTION, ClientOpcode, PacketReader
 
-log = logging.getLogger("cavebot")
+log = logging.getLogger(name="cavebot")
 
 RECORDINGS_DIR = paths.RECORDINGS_DIR
 
@@ -45,8 +45,13 @@ MAX_AUTOWALK_STEPS = 50
 MAX_NEW_WALK_STEPS = 4096
 
 
-def _auto_label(item_id: int) -> str:
-    return ITEM_LABELS.get(item_id, f"Use item {item_id}")
+def _auto_label(item_id):
+    """The known name of an item (a door, a ladder...) or "Use item <id>"."""
+    return ITEM_LABELS[item_id] if item_id in ITEM_LABELS else _generic_label(item_id)
+
+
+def _generic_label(item_id):
+    return f"Use item {item_id}"
 
 
 def _on_map(x, y, z=0):
@@ -87,7 +92,7 @@ def _read_new_walk(reader: PacketReader, elapsed: float) -> list[dict]:
 def _read_autowalk(reader, here):
     """Destination of a click-to-walk path; None for an empty, long or broken one."""
     try:
-        count = reader.read_u8()
+        count = reader.read_u8()  # steps in the path
         if not 0 < count <= MAX_AUTOWALK_STEPS:
             return None, 0
         x, y, z = here
@@ -246,10 +251,10 @@ def _refuse_start(state, name, mode, atlas):
     task = getattr(state, "_action_tasks", {}).get("adaptive_cavebot")
     if task and not task.done():
         return "Zatrzymaj V2 przed nagrywaniem własnej drogi."
-    if state.recording_active:
-        return f"Already recording '{state.recording_name}'. Stop it first."
+    if state.recording_active:  # one recording at a time
+        return "Already recording '%s'. Stop it first." % (state.recording_name,)
     if not name or any(not (c.isalnum() or c in "-_") for c in name):
-        return "Invalid name. Use alphanumeric, hyphens, underscores only."
+        return "Invalid name. " + "Use alphanumeric, hyphens, underscores only."
     if mode not in ("manual", "adaptive"):
         return "Nieznany tryb nagrywania."
     if mode == "adaptive" and not getattr(state, "connected", False):
@@ -283,10 +288,10 @@ def start_recording(state, name: str, *, mode: str = "manual") -> str | None:
     state._recording_atlas_scope = getattr(atlas, "scope", None)
     _sample_recording_position(state)
 
-    proxy = state.game_proxy
-    if proxy is None:
-        state.recording_active = False
-        return "Game proxy not available."
+    relay = state.game_proxy
+    if relay is None:
+        _abandon(state)
+        return "Game proxy" + " not available."
 
     def current():
         return state.recording_active and state.recording_start_time == started_at
@@ -296,43 +301,43 @@ def start_recording(state, name: str, *, mode: str = "manual") -> str | None:
             elapsed = round(time.time() - started_at, 3)
             waypoints.extend(client_waypoints(opcode, reader, list(state.game_state.position), elapsed))
 
-    stop_event = threading.Event()
+    stopped = threading.Event()
 
     def follow_server():
         """Every 50 ms: copy server events into the recording and sample the position."""
-        while not stop_event.wait(0.05) and current():
+        while not stopped.wait(0.05) and current():
             _record_server_events(state.game_state, waypoints, started_at)
             _sample_recording_position(state)
 
     state._recording_callback = on_client_packet
-    proxy.register_client_packet_callback(on_client_packet)
-    state._recording_event_stop = stop_event
-    state._recording_event_thread = threading.Thread(target=follow_server, daemon=True)
-    state._recording_event_thread.start()
+    relay.register_client_packet_callback(on_client_packet)
+    follower = threading.Thread(target=follow_server, daemon=True)
+    state._recording_event_stop, state._recording_event_thread = stopped, follower
+    follower.start()
     if adaptive:
         from dbv.brain.cavebot.adaptive_recording import watch_hunt_evidence
         # Each worker owns its recording and progress. A late check from an
         # older run cannot publish into the next run, even with the same name.
         threading.Thread(target=watch_hunt_evidence, name="hunt-readiness", daemon=True,
                          args=(_recording_data(state), state.passive_map_monitor,
-                               stop_event, state.recording_hunt_progress)).start()
+                               stopped, state.recording_hunt_progress)).start()
     log.info("Recording started: '%s' at %s", name, start)
     return None
 
 
 def _recording_data(state):
     gs = state.game_state
-    data = {
-        "name": state.recording_name,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "version": 2,
-        "started_at": state.recording_start_time,
-        "atlas_scope": getattr(state, "_recording_atlas_scope", None),
-        "action_time_precision_ms": 1,
-        "start_position": list(state.recording_start_pos),
-        "waypoints": state.recording_waypoints,
-        "observed_path": state.recording_observed_path,
-    }
+    data = dict(
+        name=state.recording_name,
+        created_at=datetime.now(tz=timezone.utc).isoformat(),
+        version=2,
+        started_at=state.recording_start_time,
+        atlas_scope=getattr(state, "_recording_atlas_scope", None),
+        action_time_precision_ms=1,
+        start_position=[*state.recording_start_pos],
+        waypoints=state.recording_waypoints,
+        observed_path=state.recording_observed_path,
+    )
     encounters = getattr(state, "_recording_encounters", None)
     if encounters:
         data["encounters"] = encounters.events
@@ -341,8 +346,13 @@ def _recording_data(state):
     return data
 
 
+def _abandon(state):
+    """Mark the recording as not running (its data stays until the reset)."""
+    state.recording_active = False  # its threads stop at their next check
+
+
 def _reset_recording(state):
-    state.recording_active = False
+    _abandon(state)
     state.recording_mode = "manual"
     state._recording_encounters = state.recording_hunt_progress = state._recording_xp_sample = None
     state.recording_name = ""
@@ -350,14 +360,16 @@ def _reset_recording(state):
     state.recording_start_pos, state.recording_start_time = (0, 0, 0), 0
 
 
-def stop_recording(state, *, discard: bool = False) -> dict | None:
+def stop_recording(state, *, discard=False):
     """Stop recording; save the result unless ``discard``. Returns the recording, or None."""
-    if not state.recording_active:
-        return None
-    state.recording_active = False
-    stop_event, state._recording_event_stop = getattr(state, "_recording_event_stop", None), None
-    if stop_event:
-        stop_event.set()
+    return _finish_recording(state, discard) if state.recording_active else None
+
+
+def _finish_recording(state, discard):
+    _abandon(state)
+    stopped, state._recording_event_stop = getattr(state, "_recording_event_stop", None), None
+    if stopped:
+        stopped.set()
     follower, state._recording_event_thread = getattr(state, "_recording_event_thread", None), None
     if follower:
         follower.join(timeout=1)
@@ -373,17 +385,17 @@ def stop_recording(state, *, discard: bool = False) -> dict | None:
         recording["recording_mode"] = "adaptive"
     name, count = state.recording_name, len(state.recording_waypoints)
     _reset_recording(state)
-    if discard:
-        log.info("Recording '%s' discarded (%d waypoints)", name, count)
-        return None
-    save_recording(recording)
-    log.info("Recording '%s' saved (%d waypoints)", name, count)
-    return recording
+    if not discard:
+        save_recording(recording)  # recordings/<name>.json
+        log.info("Recording '%s' saved (%d waypoints)", name, count)
+        return recording  # the saved data, for the caller's message
+    log.info("Recording '%s' discarded (%d waypoints)", name, count)
+    return None
 
 
 # ── files ───────────────────────────────────────────────────────────
 
-def _safe_recording_path(name: str) -> Path | None:
+def _safe_recording_path(name):
     """recordings/<name>.json, or None when the name would leave that folder."""
     root = RECORDINGS_DIR.resolve()
     candidate = (RECORDINGS_DIR / f"{name}.json").resolve()
@@ -393,8 +405,9 @@ def _safe_recording_path(name: str) -> Path | None:
     return None
 
 
-def save_recording(recording: dict) -> None:
-    RECORDINGS_DIR.mkdir(exist_ok=True)
+def save_recording(recording):
+    """Write a recording to recordings/<its name>.json (the folder is made when missing)."""
+    _recordings_folder()
     target = _safe_recording_path(recording["name"])
     if target is not None:
         target.write_text(json.dumps(recording, indent=2), encoding="utf-8")
@@ -404,7 +417,8 @@ def _read_json(target: Path):
     return json.loads(target.read_text(encoding="utf-8"))
 
 
-def load_recording(name: str) -> dict | None:
+def load_recording(name):
+    """A saved recording, or None when it is missing or unreadable."""
     target = _safe_recording_path(name)
     if target is None or not target.exists():
         return None
@@ -421,19 +435,25 @@ def _summary(target: Path, data: dict) -> dict:
             "last_stats": data.get("last_stats")}
 
 
-def list_recordings() -> list[dict]:
+def _recordings_folder():
+    folder = RECORDINGS_DIR
+    folder.mkdir(exist_ok=True)
+    return folder
+
+
+def list_recordings():
     """Name, size, mode, date and last run stats of every readable recording, by file name."""
-    RECORDINGS_DIR.mkdir(exist_ok=True)
     summaries = []
-    for target in sorted(RECORDINGS_DIR.glob("*.json")):
+    for target in sorted(_recordings_folder().glob("*.json")):
         try:
             summaries.append(_summary(target, _read_json(target)))
-        except (json.JSONDecodeError, OSError):
+        except (OSError, json.JSONDecodeError):
             pass  # unreadable files are not listed
     return summaries
 
 
-def delete_recording(name: str) -> bool:
+def delete_recording(name):
+    """Delete recordings/<name>.json. Returns whether there was one."""
     target = _safe_recording_path(name)
     if target is None or not target.exists():
         return False
@@ -442,15 +462,15 @@ def delete_recording(name: str) -> bool:
     return True
 
 
-def remove_waypoints(name: str, indices: list[int]) -> dict | None:
+def remove_waypoints(name, indices):
     """Drop the waypoints at ``indices`` from a saved recording and save it again."""
     recording = load_recording(name)
     if recording is None:
         return None
     drop = set(indices)
     kept = [wp for i, wp in enumerate(recording.get("waypoints", [])) if i not in drop]
-    recording["waypoints"] = kept
-    save_recording(recording)
+    recording.update(waypoints=kept)
+    save_recording(recording)  # the same file, with fewer waypoints
     log.info("Removed %d waypoint(s) from '%s', %d remaining", len(indices), name, len(kept))
     return recording
 
@@ -461,7 +481,7 @@ _EFFECT_LOOKAHEAD = 15    # waypoints searched for the effect of a use
 _COMMANDS = ("walk", "use_item", "use_item_ex")
 
 
-def _manhattan(a, b) -> int:
+def _manhattan(a, b):
     """Distance in steps along x and y; z is ignored."""
     return sum(abs(a[k] - b[k]) for k in (0, 1))
 
@@ -470,8 +490,7 @@ def _xyz(point):
     return tuple(point[:3])
 
 
-def _has_effect_after(waypoints: list[dict], start: int, player_z: int,
-                      target_x: int, target_y: int, target_z: int) -> bool:
+def _has_effect_after(waypoints, start, player_z, target_x, target_y, target_z):
     """Whether the use at ``start`` changed something: a floor (stairs, ladder) or the used tile (door).
 
     The next movement or use command ends the search: what follows belongs to
@@ -491,7 +510,7 @@ def _has_effect_after(waypoints: list[dict], start: int, player_z: int,
     return False
 
 
-def _is_map_click_walk(wp: dict) -> bool:
+def _is_map_click_walk(wp):
     """Whether a use_item is a click on the map to walk there.
 
     A click on a far tile (or on a known ground item) walks, whatever floor the
@@ -503,17 +522,17 @@ def _is_map_click_walk(wp: dict) -> bool:
     return wp.get("item_id") in GROUND_ITEM_IDS or _manhattan((wp["x"], wp["y"], wp["z"]), wp["pos"]) > 1
 
 
-def _simplify_path(points: list[tuple], max_gap: int = 3) -> list[tuple]:
+def _simplify_path(points, max_gap=3):
     """Thin a path of (x, y, z, item_id, stack_pos) so kept points are about ``max_gap`` apart.
 
     The last point is always kept, and so are both points around every floor
     change, so stairs and ramps are never cut out.
     """
     if len(points) < 2:
-        return points
+        return points  # nothing to thin
     kept = [points[0]]
     last = len(points) - 1
-    for i in range(1, len(points)):
+    for i in range(1, last + 1):
         at_floor_change = points[i][2] != points[i - 1][2] or (i < last and points[i + 1][2] != points[i][2])
         if i == last or at_floor_change or _manhattan(points[i], kept[-1]) >= max_gap:
             kept.append(points[i])
@@ -542,8 +561,8 @@ def _use_with_node(wp, index):
             "from_x": wp["from_x"], "from_y": wp["from_y"], "from_z": wp["from_z"],
             "item_id": wp["item_id"], "stack_pos": wp.get("stack_pos", 0),
             "to_x": wp["to_x"], "to_y": wp["to_y"], "to_z": wp["to_z"],
-            "to_stack_pos": wp.get("to_stack_pos", 0),
-            "label": wp.get("label", f"Use item {wp['item_id']}"),
+            "to_stack_pos": wp["to_stack_pos"] if "to_stack_pos" in wp else 0,
+            "label": wp["label"] if "label" in wp else _generic_label(wp["item_id"]),
             "player_pos": wp["pos"], "wp_range": [index, index]}
 
 
@@ -584,13 +603,11 @@ class _MapBuilder:
         found, i = [], start
         while i < len(self.waypoints):
             wp = self.waypoints[i]
-            if wp.get("type", "") == "position":
-                i += 1
-            elif kinds_wanted(wp):
+            if wp.get("type", "") != "position":
+                if not kinds_wanted(wp):
+                    break
                 found.append(i)
-                i += 1
-            else:
-                break
+            i = i + 1
         return found, i
 
     def keyboard_walks(self, start):
@@ -627,7 +644,7 @@ class _MapBuilder:
     def click_walk(self, clicks):
         if not clicks:
             return
-        path = []
+        path: list[tuple] = []
         for i in clicks:
             wp = self.waypoints[i]
             _add_point(path, (*_xyz(wp["pos"]), wp["item_id"], wp.get("stack_pos", 1)))
@@ -670,13 +687,13 @@ def _needs_exact_arrival(node, following):
         or (following["type"] == "walk_to" and following["target"][2] != node["target"][2]))
 
 
-def build_actions_map(recording: dict) -> list[dict]:
+def build_actions_map(recording):
     """The navigation nodes for a recording's raw waypoints."""
     nodes = _merge_repeats(_MapBuilder(recording.get("waypoints", [])).build())
     for node, following in zip(nodes, nodes[1:]):
         if _needs_exact_arrival(node, following):
             node["exact"] = True
-    return nodes
+    return nodes  # in route order
 
 
 def _describe(node):
@@ -696,12 +713,12 @@ def _describe(node):
     return None
 
 
-def actions_map_to_text(actions_map: list[dict]) -> str:
+def actions_map_to_text(actions_map):
     """One numbered line per node, with the waypoints it came from, for the log preview."""
-    lines = []
+    lines: list[str] = []
     for number, node in enumerate(actions_map, start=1):
         text = _describe(node)
         if text is not None:
             span = node.get("wp_range")
             lines.append(f"{number}. {text}" + (f" [wp {span[0] + 1}-{span[1] + 1}]" if span else ""))
-    return "\n".join(lines)
+    return "\n".join(map(str, lines))

@@ -20,17 +20,15 @@ from dbv.client_bridge.constants import PACKET_FORMATS as PF
 from dbv.client_bridge.protocol import Direction, ServerOpcode as Op
 from dbv.paths import INSTALL_ROOT
 
-log = logging.getLogger("game_state")
+log = logging.getLogger(name="game_state")
 
 STOP = -1                 # a handler's answer when the message's end is unknown
 MONSTER = 0x40000000      # creature ids from here up are monsters
 MAX_CREATURE_AGE = 120    # seconds; packet-sourced creatures older than this are dropped
 PRUNE_INTERVAL = 1.0
 # Bounds that tell real PLAYER_STATS apart from look-alike bytes inside map data.
-MAX_VALID_HP = 50000
-MAX_VALID_LEVEL = 5000
-MAX_VALID_MANA = 50000
-MAX_VALID_CAPACITY = 100000
+MAX_VALID_HP = MAX_VALID_MANA = 50_000
+MAX_VALID_LEVEL, MAX_VALID_CAPACITY = 5_000, 100_000
 WORLD_LIGHT = 0x82
 COOLDOWN, GROUP_COOLDOWN = 0xA4, 0xA5
 HASTE_SPELL, BARRIER_SPELL = 195, 219
@@ -54,7 +52,7 @@ def _on_map(x, y, z=0):
     return 0 < x < 65535 and 0 < y < 65535 and z < 16
 
 
-class GameState:
+class GameState:  # one per login; replaced on every reconnect
     """Everything known about the session. Vitals and position prefer the client snapshot."""
 
     hp = client_field("hp")
@@ -87,7 +85,7 @@ class GameState:
             from dbv.brain.state.session_observations import publish_player_sample
             publish_player_sample(journal, sample)
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Where vitals come from: the verified client snapshot or packets.
         self.client_state_required = False
         self.ki_revision = 0               # counts every Ki change at the active source
@@ -153,7 +151,7 @@ _stats_lines = 0
 STATS_LOG_LIMIT = 500
 
 
-def _dump_stats_debug(gs: GameState, raw_hex: str | None) -> None:
+def _dump_stats_debug(gs, raw_hex=None):
     """Append the stats to stats_debug.txt (first 500 updates of a run only)."""
     global _stats_log, _stats_lines
     if getattr(gs, "_packet_snapshot_detached", False) or _stats_lines >= STATS_LOG_LIMIT:
@@ -178,16 +176,16 @@ def _set_packet_position(gs, xyz, *, absolute=True):
     gs.position = gs.packet_position = xyz
     if absolute:
         gs.packet_position_trusted = True
-    gs.last_map_time = time.time()
-    gs._map_update_seen = True
+    gs.last_map_time, gs._map_update_seen = time.time(), True
 
 
 def _forget_packet_creatures(gs):
     gs.creatures = {cid: c for cid, c in gs.creatures.items() if c.get("source") == "dll"}
 
 
-def _record_kill(gs: GameState, cid: int) -> None:
-    creature = gs.creatures.get(cid, {})
+def _record_kill(gs, cid):
+    """Add a monster's death to the kill log, with where it and the player were."""
+    creature = gs.creatures[cid] if cid in gs.creatures else {}
     px, py, pz = gs.position
     gs.kill_log.append({"t": time.time(), "name": creature.get("name", ""), "cid": cid,
                         "x": creature.get("x", 0), "y": creature.get("y", 0), "z": creature.get("z", 0),
@@ -196,19 +194,20 @@ def _record_kill(gs: GameState, cid: int) -> None:
 
 
 def _note_death(gs, cid):
-    if cid >= MONSTER and cid not in gs._recent_kills:
-        gs._recent_kills.add(cid)
-        _record_kill(gs, cid)
+    recent = gs._recent_kills
+    if cid >= MONSTER and cid not in recent:
+        recent.add(cid)  # a death is counted once, however often the server repeats it
+        _record_kill(gs, cid=cid)
 
 
-def _check_pz_message(text: str, gs: GameState) -> None:
+def _check_pz_message(text, gs):
     """Follow protection-zone enter/leave messages."""
-    lower = text.lower()
+    lower = str.lower(text)
     if "protection zone" not in lower:
         return
     if any(word in lower for word in ("enter", "inside", "cannot attack")):
         inside = True
-    elif "left" in lower or "leave" in lower:
+    elif any(word in lower for word in ("left", "leave")):
         inside = False
     else:
         return
@@ -233,14 +232,14 @@ def _server_text(gs, kind, text, at, *, framed=True):
             log.debug("Optional potion observation failed")
     lower = text.lower()
     if "can't throw there" in lower:
-        gs.last_cant_throw = time.time()
+        gs.last_cant_throw = time.time()  # the throw failed; callers wait before retrying
     if framed and "not reachable" in lower:
         target = gs.attack_target_id
         if target and target >= MONSTER:
             gs.unreachable_creatures[target] = time.time() + 10
             gs.attack_target_id = 0
             log.info("NOT REACHABLE: skipping 0x%08X for 10 s", target)
-    _check_pz_message(text, gs)
+    _check_pz_message(text, gs=gs)
 
 
 def _apply_stats(gs, data, at):
@@ -254,17 +253,17 @@ def _apply_stats(gs, data, at):
     gs.max_mana = _u32(data, at + f.get("max_mana", 27))
     gs.magic_level = data[at + f.get("magic_level", 31)]
     gs.soul = data[at + f.get("soul", 33)]
-    gs.stats_updated_at = time.time()
+    gs.stats_updated_at = updated = time.time()
     # Experience gained right after a kill belongs to that kill.
     gained = gs.experience - gs._prev_experience
     if gs._prev_experience > 0 and gained > 0 and gs.kill_log:
         kill = gs.kill_log[-1]
-        if time.time() - kill["t"] < 2.0 and "xp" not in kill:
+        if updated - kill["t"] < 2.0 and "xp" not in kill:
             kill["xp"] = gained
-    gs._prev_experience = gs.experience
+    gs._prev_experience = gs.experience  # the next update measures its gain from here
     log.info("Stats: HP=%s/%s MP=%s/%s Lv=%s XP=%s ML=%s", gs.hp, gs.max_hp, gs.mana, gs.max_mana,
              gs.level, gs.experience, gs.magic_level)
-    _dump_stats_debug(gs, None)
+    _dump_stats_debug(gs)
 
 
 # ── message handlers: (data, pos after the opcode, gs, received_at) -> next pos or STOP ──
@@ -381,14 +380,14 @@ def _text_message(data, pos, gs, received_at):
     kind = data[pos + f.get("type", 0)]
     start = pos + f.get("text", 3)
     end = start + _u16(data, pos + f.get("length", 1))
-    if end > len(data):
+    if len(data) < end:
         return STOP
     text = data[start:end].decode("latin-1", errors="replace")
     # Date the message by when the frame arrived, not by when it was parsed.
     at = time.time() - (time.perf_counter() - received_at) if received_at is not None else time.time()
     _server_text(gs, kind, text, at)
     log.debug("TEXT_MESSAGE type=%s length=%s", kind, len(text))
-    return end
+    return end  # the next message starts after the text
 
 
 def _login(data, pos, gs, received_at):
@@ -535,7 +534,7 @@ def _world_light(data, pos, gs, received_at):
 
 
 def _nothing(data, pos, gs, received_at):
-    return pos
+    return pos  # a message with no body
 
 
 # DBVictory never sends FLOOR_CHANGE_UP/DOWN (0xBE/0xBF): floor changes arrive as a
@@ -615,7 +614,7 @@ def _search_for_floor_position(data: bytes, start: int, gs: GameState, anchor) -
         _set_packet_position(gs, max(candidates)[1])
 
 
-def _search_for_tile_updates(data: bytes, start: int, gs: GameState) -> None:
+def _search_for_tile_updates(data, start, gs):
     """Note every TILE_TRANSFORM_THING (doors opening and closing) anywhere in the frame.
 
     Add/remove thing (0x6A/0x6C) are too common in map refreshes to be useful.
@@ -629,11 +628,11 @@ def _search_for_tile_updates(data: bytes, start: int, gs: GameState) -> None:
     while 0 <= i < len(data) - 5:
         try:
             x, y, z = _u16(data, i + ox), _u16(data, i + oy), data[i + oz]
-        except (struct.error, IndexError):
+        except (IndexError, struct.error):
             x = y = z = -1
         if 100 <= x <= 65000 and 100 <= y <= 65000 and 0 <= z <= 15:
-            gs.tile_updates.append((now, x, y, z))
-            gs.server_events.append((now, "tile_transform_item", {"x": x, "y": y, "z": z}))
+            gs.tile_updates.append((now, x, y, z))  # kept for 5 s, see above
+            gs.server_events.append((now, "tile_transform_item", dict(x=x, y=y, z=z)))
         i = data.find(bytes([Op.TILE_TRANSFORM_THING]), i + 1)
 
 
@@ -645,7 +644,7 @@ def _plausible_stats(data, at, f):
             return False
         mana, max_mana = _u32(data, at + f.get("mana", 23)), _u32(data, at + f.get("max_mana", 27))
         capacity = _u32(data, at + f.get("capacity", 8))
-    except (struct.error, IndexError):
+    except (IndexError, struct.error):
         return False
     # DBVictory can report bonus Ki above the nominal maximum (e.g. 119/100).
     return (mana <= MAX_VALID_MANA and max_mana <= MAX_VALID_MANA
@@ -653,7 +652,7 @@ def _plausible_stats(data, at, f):
             and capacity <= MAX_VALID_CAPACITY * f.get("capacity_scale", 1))
 
 
-def _search_for_stats(data: bytes, start: int, gs: GameState) -> None:
+def _search_for_stats(data, start, gs):
     """Apply every plausible PLAYER_STATS in the rest of the frame, in order (the last wins)."""
     f = _fmt("player_stats")
     size = f.get("size", 36)
@@ -666,7 +665,7 @@ def _search_for_stats(data: bytes, start: int, gs: GameState) -> None:
             i += 1
 
 
-def _search_for_icons(data: bytes, start: int, gs: GameState) -> None:
+def _search_for_icons(data, start, gs):
     """The first plausible PLAYER_ICONS (u16 below 0x8000) in the rest of the frame."""
     size = _fmt("player_icons").get("size", 2)
     for i in range(start, len(data) - size):
@@ -691,8 +690,9 @@ def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None)
     before = gs.packet_position if gs.packet_position_trusted else (0, 0, 0)
     gs._map_update_seen = False
     pos, saw_icons, anchor, complete = 0, False, None, True
-    while pos < len(data):
-        opcode = data[pos]
+    end = len(data)
+    while pos < end:
+        opcode = data[pos]  # each message starts with its opcode
         try:
             following = _parse_at(opcode, data, pos + 1, gs, received_at=received_at)
         except Exception:
@@ -715,10 +715,10 @@ def scan_packet(data: bytes, gs: GameState, *, received_at: float | None = None)
         kind = "floor_change_up" if after[2] < before[2] else "floor_change_down"
         gs.server_events.append((time.time(), kind, {"pos": list(after), "z": after[2]}))
     _search_for_tile_updates(data, 0, gs)  # doors can sit anywhere, even after map data
-    if pos < len(data):
-        _search_for_stats(data, pos, gs)
+    if pos < end:   # the frame was not read to its end
+        _search_for_stats(data, start=pos, gs=gs)
         if not saw_icons:
-            _search_for_icons(data, pos, gs)
+            _search_for_icons(data, start=pos, gs=gs)
     _prune_creatures(gs, time.time())
     return complete
 
@@ -731,7 +731,7 @@ def _prune_creatures(gs, now):
     gs.creatures = {cid: c for cid, c in gs.creatures.items() if c.get("source") == "dll" or c.get("t", 0) >= oldest}
 
 
-def _parse(opcode: int, reader, gs: GameState) -> None:
+def _parse(opcode, reader, gs):
     """Single-message parser for callers that hold a PacketReader."""
     if opcode == Op.LOGIN_OR_PENDING:
         pid = reader.read_u32()
@@ -755,10 +755,10 @@ def _apply_reader_stats(gs, body):
     (gs.hp, gs.max_hp, gs.capacity, gs.experience, gs.level, _, gs.mana, gs.max_mana,
      gs.magic_level, _, gs.soul) = struct.unpack_from("<IIIQHBIIBBB", body)
     log.info("Stats: HP=%s/%s MP=%s/%s Lv=%s XP=%s", gs.hp, gs.max_hp, gs.mana, gs.max_mana, gs.level, gs.experience)
-    _dump_stats_debug(gs, None)
+    _dump_stats_debug(gs)
 
 
-def parse_server_packet(opcode: int, reader, gs: GameState) -> None:
+def parse_server_packet(opcode, reader, gs):
     """Parse one message from a reader; errors are only logged."""
     try:
         _parse(opcode, reader, gs)

@@ -103,7 +103,7 @@ Git installations keep the local release queue in
 1. At start the launcher reads `releases/latest` from the GitHub API and the
    small `release.json` asset. Offline or on any error it starts the installed
    version.
-2. **Zainstaluj aktualizację** downloads the package to `.codex\updates\github`,
+2. **Zainstaluj aktualizację** downloads the package to `.dbvictory\updates\github`,
    checks its SHA-256 and size, unpacks only files listed in its manifest and
    checks each file's hash. When the installed version is the patch's base
    (`release.json` → `patch.from`), it downloads the patch instead: the full
@@ -116,13 +116,13 @@ Git installations keep the local release queue in
    Folders emptied under `dashboard\node_modules`, `runtime\node` and
    `venv\Scripts` are removed once per installed version.
    A journal (`transaction.json`) rolls an interrupted swap back.
-4. Never touched: `bot_settings.json`, `.env`, `.mcp.json`, `.codex\`,
+4. Never touched: `bot_settings.json`, `.env`, `.mcp.json`, `.dbvictory\`,
    `local_data\`, `dashboard\public\local-spells\`. Shipped `recordings\` are
    added when missing and never overwritten.
 5. The launcher restarts itself on the new version.
 
 **Odłóż wydanie** stores the skipped commit in
-`.codex\updates\github\deferred.json`; that release is not offered again, a
+`.dbvictory\updates\github\deferred.json`; that release is not offered again, a
 newer one is.
 
 ## Game client updates

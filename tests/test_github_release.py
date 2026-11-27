@@ -342,7 +342,7 @@ def test_install_reports_download_extract_and_swap_progress_then_clears_it(root,
     assert ("download", len(data), len(data)) in seen
     extract = [(d, t) for s, d, t in seen if s == "extract"]
     assert extract[-1][0] == extract[-1][1]
-    assert not (root / ".codex" / "updates" / "github" / "progress.json").exists()
+    assert not (root / ".dbvictory" / "updates" / "github" / "progress.json").exists()
 
 
 def test_progress_is_throttled_but_always_writes_the_end(tmp_path):

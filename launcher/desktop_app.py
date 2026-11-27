@@ -18,6 +18,7 @@ import threading
 import time
 from uuid import uuid4
 
+from dbv.paths import migrate_state_dir, state_dir
 from launcher import desktop_host as host_module
 
 WAITING_FOR_LIST = ("Zaloguj się na konto i pozostaw otwartą listę postaci. Gdy będziesz gotowy, kliknij "
@@ -337,7 +338,7 @@ class Launcher:
             self.set(state, report["message"] + queued, **extra)
 
     async def _show_install_progress(self, label):
-        progress = read_progress(self.root / ".codex" / "updates" / "github" / "progress.json")
+        progress = read_progress(state_dir(self.root) / "updates" / "github" / "progress.json")
         if progress and self.view["phase"] == "applying" and progress != self.view.get("progress"):
             self.set("applying", f"Aktualizacja do {label}", progress=progress)
 
@@ -415,7 +416,7 @@ class Launcher:
         if self.child or self.read_only:
             return
         launcher_id = uuid4().hex
-        events = self.root / ".codex" / "launcher-events"
+        events = state_dir(self.root) / "launcher-events"
         events.mkdir(parents=True, exist_ok=True)
         self.marker = events / f"{launcher_id}.ready"
         self.session_error = ""
@@ -776,10 +777,10 @@ def _release_single_instance():
 
 
 def _log_to_file(root):
-    """pythonw has no console: keep start-up failures in .codex/launcher.log."""
+    """pythonw has no console: keep start-up failures in .dbvictory/launcher.log."""
     import logging
     try:
-        folder = Path(root) / ".codex"
+        folder = state_dir(root)
         folder.mkdir(exist_ok=True)
         log_file = folder / "launcher.log"
         if log_file.exists() and log_file.stat().st_size > 1_000_000:
@@ -792,6 +793,10 @@ def _log_to_file(root):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    try:
+        migrate_state_dir(Path.cwd())  # first: once the log is open, the folder cannot move
+    except Exception:
+        pass  # the old folder keeps working
     _log_to_file(Path.cwd())
     read_only = "--check" in argv
     if not _single_instance():
