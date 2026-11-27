@@ -68,170 +68,40 @@ export interface TransitionLearningState {
   storage_error?: string | null; file?: string; limit_reached?: boolean; passive: boolean;
 }
 
+// Shapes of /api/state, as dashboard_api._build_state_json writes them.
 export interface ActionInfo {
-  name: string;
-  enabled: boolean;
-  running: boolean;
-  completed?: boolean;
-  senzu_deferral?: "waiting" | "used" | "watch" | "held";
-  description: string;
-  logs?: string[];
-  config?: Record<string, any>;
+  name: string; description: string;
+  enabled: boolean; running: boolean; completed?: boolean;
+  senzu_deferral?: string;
+  logs?: string[];                 // the action's latest bot.log lines
+  config?: Record<string, any>;    // its settings, without "enabled"
 }
-
 export interface PlayerInfo {
-  stats_age?: number;
-  hp: number;
-  max_hp: number;
-  mana: number;
-  max_mana: number;
-  level: number;
-  experience: number;
+  hp: number; max_hp: number; mana: number; max_mana: number;
+  level: number; experience: number; magic_level: number; soul: number;
   position: [number, number, number];
-  magic_level: number;
-  soul: number;
+  stats_age?: number;              // seconds since the last stats update, -1 before any
 }
-
-export interface CreatureInfo {
-  id: number;
-  health: number;
-  name: string;
-  x: number;
-  y: number;
-  z: number;
+export interface CreatureInfo { id: number; name: string; health: number; x: number; y: number; z: number }
+export interface RecordingSummary {
+  name: string; count: number; mode?: "manual" | "adaptive"; created_at: string;
+  last_stats?: {xp_per_hour: number; kills_per_hour: number; senzu_per_hour: number; session_seconds: number; timestamp: string};
 }
-
-export interface WaypointInfo {
-  type: string;
-  direction?: string;
-  x?: number;
-  y?: number;
-  z?: number;
-  item_id?: number;
-  stack_pos?: number;
-  index?: number;
-  from_x?: number;
-  from_y?: number;
-  from_z?: number;
-  to_x?: number;
-  to_y?: number;
-  to_z?: number;
-  to_stack_pos?: number;
-  label?: string;
-  pos: number[];
-  player_pos?: number[];
-  dll_pos?: number[];
-  t: number;
-}
-
-export interface RecordingLastStats {
-  xp_per_hour: number;
-  kills_per_hour: number;
-  senzu_per_hour: number;
-  session_seconds: number;
-  timestamp: string;
-}
-
-export interface RecordingInfo {
-  name: string;
-  mode?: "manual" | "adaptive";
-  count: number;
-  created_at: string;
-  last_stats?: RecordingLastStats;
-}
-
-export interface MinimapNodeInfo {
-  index: number;
-  type: string;
-  target: [number, number, number];
-  visited: boolean;
-}
-
-export interface MinimapData {
-  grid: string[];
-  width: number;
-  height: number;
-  origin: [number, number];
-  floor: number;
-  floors: number[];
-  nodes: MinimapNodeInfo[];
-  player_node_index: number;
-}
-
-export interface MinimapSequence {
-  seq_index: number;
-  floor: number;
-  start: number;
-  end: number;
-  minimap: MinimapData;
-}
-
-export interface ActionsMapNode {
-  type: string;
-  target: [number, number, number];
-  item_id?: number;
-  stack_pos?: number;
-  index?: number;
-  label?: string;
-  x?: number;
-  y?: number;
-  z?: number;
-  wp_range?: [number, number];
-}
-
-export interface ActionsMapResponse {
-  name: string;
-  actions_map: ActionsMapNode[];
-  text_preview: string;
-  node_count: number;
-}
-
 export interface CavebotState {
   recording: {
     active: boolean;
     mode?: "manual" | "adaptive";
     hunt_progress?: {stage: 0 | 1 | 2 | 3 | 4 | null; areas?: number; total_areas?: number; revisited?: number; sectors?:number; missing_sectors?:number} | null;
-    name: string;
-    waypoint_count: number;
-    waypoints: WaypointInfo[];
+    name: string; waypoint_count: number; waypoints: Record<string, any>[];   // the last 20 raw waypoints
     position_count?: number;
     observed_path?: {pos:[number,number,number];t:number;break_before?:boolean}[];
     trace_limited?: boolean;
   };
-  playback: {
-    active: boolean;
-    recording_name: string;
-    index: number;
-    total: number;
-    loop: boolean;
-    logs: string[];
-    minimap: MinimapSequence[] | Record<string, MinimapData> | null;
-    actions_map_count: number;
-    stats?: {
-      loop_count: number;
-      kills: number;
-      senzu_used: number;
-      xp_gained: number;
-      xp_per_hour: number;
-      predicted_level_1h: number;
-      session_seconds: number;
-      senzu_per_hour: number;
-      senzu_series: [number, number][];
-    };
-  };
-  recordings: RecordingInfo[];
+  recordings: RecordingSummary[];
 }
-
-export interface ProxySequence {
-  proxy_created: boolean;
-  listening: boolean;
-  client_connected: boolean;
-  server_connected: boolean;
-  xtea_captured: boolean;
-  logged_in: boolean;
-  packets_flowing: boolean;
-  timestamps?: Record<string, number | null>;
-}
+type ProxyStep = "proxy_created" | "listening" | "client_connected" | "server_connected" | "xtea_captured" | "logged_in" | "packets_flowing";
+/** How far the game proxy got; timestamps are seconds after the proxy was created. */
+export type ProxySequence = Record<ProxyStep, boolean> & {timestamps?: Record<string, number | null>};
 
 export type AlertKind = "private" | "default" | "player" | "ki_loss";
 export type AlertConfig = Record<AlertKind, {enabled:boolean;sound:boolean;scope:"always"|"cavebot"}>;
@@ -273,7 +143,7 @@ export interface BotState {
   combat_profile?: import("./cavebotModel").CombatConfig;
   adaptive_cavebot?: {navigation_wait?:{reason:string;observations:string[];review_in_ms:number}|null;map_preview?: LiveMovementPreview | null;domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
   passive_map?: PassiveMapState;
-  connected: boolean;
+  connected: boolean;               // logged in through the game proxy
   session_kills?: number;
   automation_paused?: boolean;
   automation_pause_kind?: "manual"|"emergency"|null;
@@ -281,15 +151,12 @@ export interface BotState {
   item_identification?: ItemIdentificationState | null;
   hunter_knife?: {last_issue?:{position:[number,number,number];reason:string;action:"skin"|"uncover";spell?:string;since_spell_ms?:number}|null;unassigned_bodies?:number;status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number;monsters?:KnifeMonster[];default_monsters?:KnifeMonster[];ignored_suggestions?:number[];suggestions?:KnifeSuggestion[]};
   barrier_band?: {status:string;equipped_id:number|null;stock:number|null;attempts:number};
-  actions: ActionInfo[];
-  packets_from_server: number;
-  packets_from_client: number;
-  player: PlayerInfo;
-  creatures: CreatureInfo[];
-  dll_injected: boolean;
-  dll_bridge_connected: boolean;
-  cavebot?: CavebotState;
-  proxy_sequence?: ProxySequence;
+  actions: ActionInfo[];             // every script in actions/, internal ones excluded
+  packets_from_server: number; packets_from_client: number;
+  player: PlayerInfo; creatures: CreatureInfo[];
+  dll_injected: boolean;            // the observer pipe is connected
+  dll_bridge_connected: boolean;    // ... and its reader action is running
+  cavebot?: CavebotState; proxy_sequence?: ProxySequence;
 }
 
 export interface IdentifiedItem {item_id:number;where:"map"|"inventory";position:[number,number,number]|null;time:number}
@@ -336,10 +203,13 @@ export type KnifeCorpse = {id:number;skinned:number;confirmed?:boolean};
 export type KnifeMonster = {name:string;corpses:KnifeCorpse[]};
 export type KnifeSuggestion = {id:number;skinned:number;name:string|null;seen:number};
 
+function okOrThrow(response: Response): Response {
+  if (response.ok) return response;
+  throw new Error(`HTTP ${response.status}`);
+}
+
 export async function fetchState(signal?: AbortSignal): Promise<BotState> {
-  const res = await authenticatedFetch(`${API_BASE}/api/state`, {signal});
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return okOrThrow(await authenticatedFetch(`${API_BASE}/api/state`, {signal})).json();
 }
 
 export async function fetchCavebotReports<T>(query:string,signal:AbortSignal):Promise<T>{
@@ -348,45 +218,15 @@ export async function fetchCavebotReports<T>(query:string,signal:AbortSignal):Pr
   return response.json();
 }
 
-export async function toggleAction(
-  name: string,
-  enabled: boolean
-): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/actions/${name}/toggle`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-}
+const actionPath = (name: string, verb = "") => `/api/actions/${encodeURIComponent(name)}${verb && "/" + verb}`;
 
+/** Turn an action on or off; rejects with the server's reason. */
+export const toggleAction = (name: string, enabled: boolean) => control(actionPath(name, "toggle"), {enabled});
+/** Merge settings into an action's config (not "enabled"); rejects with the server's reason. */
+export const updateActionConfig = (name: string, config: Record<string, any>) => control(actionPath(name, "config"), config);
 
+/** Stop and delete an action's script. A failure is only logged; the next state shows what happened. */
 export async function deleteAction(name: string): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/actions/${name}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    console.error("Delete failed:", res.status, err);
-  }
+  const response = await authenticatedFetch(API_BASE + actionPath(name), {method: "DELETE"});
+  if (!response.ok) console.error("Delete failed:", response.status, await response.json().catch(() => ({})));
 }
-
-export async function updateActionConfig(
-  name: string,
-  config: Record<string, any>
-): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/actions/${name}/config`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-}
-
-// ── Cavebot API ─────────────────────────────────────────────────
