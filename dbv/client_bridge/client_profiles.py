@@ -31,6 +31,9 @@ class ClientProfile:
     observer_pipe: bytes | None = None
 
 
+# Retired 2026-11-27: the first client build is no longer accepted (it is not in
+# PROFILES). Its layout stays as the reference for synthetic memory fixtures and
+# as the key of the map catalogue learned on it.
 LEGACY = ClientProfile(
     "828ea9e11c6890f92cc14956733bac3aa7b80f57bfd8bb8e225568780c6e4b40",
     "26e6342c67378183dd422d3a044a7ef159e27ebfe2af1594fae8e0a35f200c91",
@@ -62,7 +65,7 @@ NOVEMBER_26 = ClientProfile(
     observer_dll="dbvobserver_marker_20261126.dll",
     observer_pipe=rb"\\.\pipe\dbvbot_marker_20261126",
 )
-PROFILES = {p.sha256: p for p in (LEGACY, UPDATED, NOVEMBER_26)}
+PROFILES = {p.sha256: p for p in (UPDATED, NOVEMBER_26)}
 
 
 CLIENT_UPDATED_MESSAGE = (

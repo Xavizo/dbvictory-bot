@@ -1,10 +1,62 @@
-"""Pipe health checks must not steal the bridge connection or truncate HANDLEs."""
-import ctypes
+"""Observer pipe: status checks never steal the connection, and nothing but marker leases is written."""
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
+
+from dbv.client_bridge import observer_pipe
+from dbv.client_bridge.client_profiles import LEGACY, UPDATED, NOVEMBER_26
+from dbv.client_bridge.observer_pipe import ObserverPipe
 from dbv.mcp_server import server
+
+
+def win_error(code):
+    error = OSError(f"Windows error {code}")
+    error.winerror = code  # set by Windows itself; plain OSError lacks it elsewhere
+    return error
+
+
+class FakePipeApi:
+    """Stands in for _winapi; ``incoming`` is what the DLL has written so far."""
+
+    def __init__(self, incoming=b"", wait_error=None, open_error=None):
+        self.incoming = bytearray(incoming)
+        self.written = []
+        self.closed = []
+        self.opened = []
+        self.wait_error = wait_error
+        self.open_error = open_error
+
+    def CreateFile(self, name, *args):
+        if self.open_error:
+            raise win_error(self.open_error)
+        self.opened.append(name)
+        return 77
+
+    def WaitNamedPipe(self, name, timeout):
+        if self.wait_error:
+            raise win_error(self.wait_error)
+
+    def PeekNamedPipe(self, handle, size=0):
+        return len(self.incoming), 0
+
+    def ReadFile(self, handle, size):
+        data = bytes(self.incoming[:size])
+        del self.incoming[:size]
+        return data, 0
+
+    def WriteFile(self, handle, data):
+        self.written.append(bytes(data))
+        return len(data), 0
+
+    def CloseHandle(self, handle):
+        self.closed.append(handle)
+
+
+@pytest.fixture
+def api(monkeypatch):
+    fake = FakePipeApi()
+    monkeypatch.setattr(observer_pipe, "_api", fake)
+    return fake
 
 
 def test_status_uses_existing_connection_without_probing(monkeypatch):
@@ -17,66 +69,62 @@ def test_disconnected_bridge_is_not_reported_as_healthy(monkeypatch):
     assert not server._check_pipe_exists()
 
 
-@pytest.fixture
-def pipe_module():
-    if not hasattr(ctypes, "WinDLL"):
-        pytest.skip("Native Windows ctypes API")
-    from dbv.client_bridge import dll_bridge
-    return dll_bridge
+def test_each_build_uses_its_own_pipe():
+    assert ObserverPipe(UPDATED).name == r"\\.\pipe\dbvbot_marker_20261117"
+    assert ObserverPipe(NOVEMBER_26).name == r"\\.\pipe\dbvbot_marker_20261126"
 
 
-def test_createfile_declares_pointer_sized_handle(pipe_module):
-    from ctypes import wintypes
-    assert pipe_module.kernel32.CreateFileA.restype is wintypes.HANDLE
+def test_retired_or_unverified_builds_have_no_pipe():
+    with pytest.raises(ValueError):
+        ObserverPipe(LEGACY)
+    from dataclasses import replace
+    with pytest.raises(ValueError):
+        ObserverPipe(replace(UPDATED, sha256="0" * 64))
 
 
-def test_invalid_handle_never_connects(pipe_module, monkeypatch):
-    api = Mock()
-    api.CreateFileA.return_value = pipe_module.INVALID_HANDLE_VALUE
-    monkeypatch.setattr(pipe_module, "kernel32", api)
-    bridge = pipe_module.DllBridge()
-    assert not bridge.connect()
-    assert not bridge.connected
-    api.SetNamedPipeHandleState.assert_not_called()
-    api.WriteFile.assert_not_called()
-
-
-def test_failed_pipe_mode_closes_handle(pipe_module, monkeypatch):
-    api = Mock()
-    api.CreateFileA.return_value = 123
-    api.SetNamedPipeHandleState.return_value = False
-    monkeypatch.setattr(pipe_module, "kernel32", api)
-    bridge = pipe_module.DllBridge()
-    assert not bridge.connect()
-    assert not bridge.connected
-    api.CloseHandle.assert_called_once_with(123)
+def test_missing_pipe_never_connects(monkeypatch):
+    fake = FakePipeApi(open_error=2)
+    monkeypatch.setattr(observer_pipe, "_api", fake)
+    pipe = ObserverPipe(UPDATED)
+    assert not pipe.open() and not pipe.connected
 
 
 @pytest.mark.parametrize("error,exists", [(121, True), (231, True), (2, False), (5, False)])
-def test_busy_pipe_exists_but_absent_pipe_does_not(pipe_module, monkeypatch, error, exists):
-    api = Mock()
-    api.WaitNamedPipeA.return_value = False
-    monkeypatch.setattr(pipe_module, "kernel32", api)
-    monkeypatch.setattr(ctypes, "get_last_error", lambda: error)
-    assert pipe_module.DllBridge().pipe_exists() is exists
-    api.CreateFileA.assert_not_called()
+def test_busy_pipe_exists_but_absent_pipe_does_not(monkeypatch, error, exists):
+    fake = FakePipeApi(wait_error=error)
+    monkeypatch.setattr(observer_pipe, "_api", fake)
+    assert ObserverPipe(UPDATED).exists() is exists
+    assert not fake.opened
 
 
-@pytest.mark.parametrize("cmd", ["hook_xtea", "hook_peekmsg", "game_attack", "set_player_pos", "init"])
-def test_observer_rejects_every_command_even_when_connected(pipe_module, monkeypatch, cmd):
-    api = Mock()
-    monkeypatch.setattr(pipe_module, "kernel32", api)
-    bridge = pipe_module.DllBridge(read_only=True)
-    bridge._handle = 123
-    assert not bridge.send_command({"cmd": cmd})
-    api.WriteFile.assert_not_called()
-    assert bridge.pipe_name != pipe_module.PIPE_NAME
+def test_snapshot_lines_split_across_reads_are_joined(api):
+    pipe = ObserverPipe(UPDATED)
+    assert pipe.open()
+    api.incoming += b'{"creatures":[{"id":1073741825}],"px":5,'
+    assert pipe.poll() is None
+    api.incoming += b'"py":6,"pz":7}\n{"creatures":[{"id":2}]'
+    assert pipe.poll() == [{"id": 1073741825}]
+    assert pipe.position == (5, 6, 7)
+    api.incoming += b',"px":0}\n'
+    assert pipe.poll() == [{"id": 2}]
+    assert pipe.position == (5, 6, 7)  # a zero position is ignored
 
 
-def test_observer_initialization_never_sends_hooks_or_offsets():
-    from actions.dll_bridge import _send_init_commands
-    bridge = SimpleNamespace(read_only=True, send_command=Mock())
-    from unittest.mock import patch
-    with patch("actions.dll_bridge._dbg"):
-        _send_init_commands(bridge, 0x10000130)
-    bridge.send_command.assert_not_called()
+def test_only_the_newest_complete_snapshot_is_used(api):
+    pipe = ObserverPipe(UPDATED)
+    pipe.open()
+    api.incoming += b'{"creatures":[1]}\nnot json\n{"creatures":[2]}\n{"other":1}\n'
+    assert pipe.poll() == [2]
+
+
+def test_broken_pipe_closes_the_connection(api, monkeypatch):
+    pipe = ObserverPipe(UPDATED)
+    pipe.open()
+    def broken(handle, size=0):
+        raise win_error(109)
+    monkeypatch.setattr(api, "PeekNamedPipe", broken)
+    assert pipe.poll() is None and not pipe.connected and api.closed == [77]
+
+
+def test_there_is_no_generic_command_channel():
+    assert not any(hasattr(ObserverPipe, name) for name in ("send_command", "write", "send"))

@@ -1,640 +1,202 @@
-"""DLL Bridge: reads creatures from injected dbvbot.dll via named pipe.
+"""Internal action: attach the observer DLL and feed its data into the game state.
 
-Auto-injects the DLL if needed, then polls creature data every 100ms
-and updates game_state.creatures with authoritative memory-read data.
+Runs whenever the bot is connected. It
+  1. picks the observer DLL that matches the verified client build,
+  2. reuses its pipe if the DLL is already loaded, otherwise loads a fresh copy,
+  3. binds the logged-in character in client memory and samples its vitals,
+  4. copies nearby monsters from the DLL snapshots into ``game_state.creatures``,
+  5. keeps the visual target marker lease alive while combat actions run.
 """
-import sys
-import asyncio
-import os
-import glob
-import json
-import shutil
-import time
-import logging
+from __future__ import annotations
 
-# Ensure project root is importable
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import asyncio, logging, os, shutil, time
+from pathlib import Path
 
-from dbv.client_bridge.dll_bridge import DllBridge
-from dbv.client_bridge import inject as dll_inject
+from dbv.client_bridge import injector
+from dbv.client_bridge.observer_pipe import ObserverPipe
 
-log = logging.getLogger("action.dll_bridge")
+log = logging.getLogger("action.observer")
 
-POLL_INTERVAL = 0.016  # seconds between creature reads (~60 FPS)
-PROXIMITY_RANGE = 10  # max tile Chebyshev distance (screen is ~8x6 but allow margin)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEBUG_LOG = os.path.join(PROJECT_ROOT, "dll_bridge_debug.txt")
-OFFSETS_FILE = os.path.join(PROJECT_ROOT, "offsets.json")
-
-
-def _load_offsets():
-    """Load offsets.json and build a set_offsets command dict for the DLL."""
-    try:
-        with open(OFFSETS_FILE, "r") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        _dbg(f"offsets.json load failed: {e}")
-        return None
-
-    # Build flat dict for DLL's parse_set_offsets()
-    cmd = {"cmd": "set_offsets"}
-    cmd["game_singleton_rva"] = data.get("game_singleton_rva", "0xB2E970")
-
-    game_off = data.get("game_offsets", {})
-    cmd["attacking_creature"] = game_off.get("attacking_creature", "0x0C")
-    cmd["protocol_game"] = game_off.get("protocol_game", "0x18")
-    cmd["attack_flag"] = game_off.get("attack_flag", "0x34")
-    cmd["seq_counter"] = game_off.get("seq_counter", "0x70")
-
-    creature_off = data.get("creature_offsets", {})
-    cmd["creature_id"] = creature_off.get("id", "0x34")
-    cmd["creature_name"] = creature_off.get("name", "0x38")
-    cmd["creature_hp"] = creature_off.get("health", "0x50")
-    cmd["creature_refs"] = creature_off.get("refs", "0x04")
-    cmd["npc_position_from_id"] = creature_off.get("npc_position_from_id", -40)
-    cmd["player_position_from_id"] = creature_off.get("player_position_from_id", -40)
-
-    vtable_range = data.get("creature_vtable_rva_range", ["0x870000", "0x8A0000"])
-    cmd["vtable_rva_min"] = vtable_range[0]
-    cmd["vtable_rva_max"] = vtable_range[1]
-
-    funcs = data.get("functions", {})
-    cmd["xtea_encrypt_rva"] = funcs.get("xtea_encrypt_rva", "0x3AF220")
-    cmd["game_attack_rva"] = funcs.get("game_attack_rva", "0x8F220")
-    cmd["send_attack_rva"] = funcs.get("send_attack_rva", "0x19D100")
-    cmd["game_doattack_rva"] = funcs.get("game_doattack_rva", "0x89680")
-
-    return cmd
-
-
-def _find_latest_dll():
-    dll_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dll")
-    candidates = glob.glob(os.path.join(dll_dir, "dbvbot*.dll"))
-    if not candidates:
-        return None
-    return max(candidates, key=os.path.getmtime)
-
-
-def _dbg(msg):
-    with open(DEBUG_LOG, "a", encoding="utf-8") as f:
-        f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
-
-
-def _inject_fresh_dll(*, observer=False, profile=None):
-    """Copy the DLL to a unique temp name and inject it.
-
-    LoadLibraryA keys on filename — re-injecting the same filename just bumps
-    the refcount without calling DllMain.  A unique copy forces a fresh load.
-    """
-    if observer:
-        from dbv.client_bridge.client_profiles import UPDATED, select_profile
-        profile = profile or UPDATED
-        if select_profile(profile.sha256) != profile or not profile.observer_dll:
-            raise ValueError("Unverified observer profile")
-        dll_source = os.path.join(PROJECT_ROOT, "dll", profile.observer_dll)
-    else:
-        dll_source = _find_latest_dll()
-    if not dll_source or not os.path.isfile(dll_source):
-        raise FileNotFoundError("No dbvbot*.dll found in dll/ directory")
-    dll_dir = os.path.dirname(dll_source)
-    prefix = "dbvobserver" if observer else "dbvbot"
-    temp_name = f"{prefix}_live_{time.time_ns()}.dll"
-    temp_path = os.path.join(dll_dir, temp_name)
-    shutil.copy2(dll_source, temp_path)
-    _dbg(f"injecting fresh DLL copy: {temp_name}")
-    dll_inject.inject(dll_path=temp_path)
-    return temp_name
-
-
-def _send_init_commands(bridge, player_id):
-    """Send full init sequence to DLL: offsets, init, hooks, scans, map mode."""
-    if getattr(bridge, "read_only", False):
-        _dbg("observer profile: generic commands disabled; visual marker capability only")
-        return
-    # 1. Send offsets first (before any hooks that use them)
-    offsets_cmd = _load_offsets()
-    if offsets_cmd:
-        bridge.send_command(offsets_cmd)
-        _dbg("sent set_offsets from offsets.json")
-
-    # 2. Core init
-    bridge.send_command({"cmd": "init", "player_id": player_id})
-    bridge.send_command({"cmd": "hook_attack"})
-    bridge.send_command({"cmd": "hook_send"})
-    bridge.send_command({"cmd": "scan_xtea"})
-    bridge.send_command({"cmd": "hook_xtea"})
-    bridge.send_command({"cmd": "scan_game_attack"})
-
-    # 3. PeekMessage hook for safe targeting at game loop boundary
-    # (replaces WndProc-based targeting which crashed Lua VM)
-    bridge.send_command({"cmd": "hook_peekmsg"})
-    # WndProc hook kept as fallback (auto-skips targeting if PeekMsg active)
-    bridge.send_command({"cmd": "hook_wndproc"})
-
-    # 4. Creature map scanning (replaces VirtualQuery)
-    bridge.send_command({"cmd": "scan_gmap"})
-    bridge.send_command({"cmd": "use_map_scan", "enabled": True})
-
-    # 5. Tile scan init is deferred to the poll loop (needs player position first)
-
-    _dbg("sent full init: offsets + hooks + peekmsg + gmap (tile_scan deferred)")
-
-
-async def _connect_with_inject(bridge, bot):
-    """Try existing pipe, health-check it, re-inject if needed. Returns True on success."""
-    t0 = time.time()
-    _dbg(f"[TIMING] _connect_with_inject START t=0.0s")
-
-    # Try existing pipe first (DLL may still be loaded with live thread)
-    # Short sleep — just enough for pipe thread to be ready
-    await bot.sleep(0.2)
-
-    if bridge.connect():
-        _dbg(f"[TIMING] existing pipe connected t={time.time()-t0:.1f}s — sending init...")
-        _send_init_commands(bridge, bot.player_id)
-        # Fast health check: if pipe is alive, first read_creatures returns
-        # within 1-2s. A stale pipe from a previous session will never respond.
-        # 6 attempts × 0.5s = 3s max (was 40 × 0.5s = 20s)
-        for check in range(6):
-            await bot.sleep(0.5)
-            test = bridge.read_creatures()
-            if test is not None:
-                _dbg(f"[TIMING] pipe healthy — {len(test)} creatures t={time.time()-t0:.1f}s")
-                return True
-        _dbg(f"[TIMING] pipe dead after 3s health check t={time.time()-t0:.1f}s — will inject fresh")
-        bridge.disconnect()
-    else:
-        _dbg(f"[TIMING] no existing pipe t={time.time()-t0:.1f}s")
-
-    # Inject a fresh copy
-    _dbg(f"[TIMING] injecting fresh DLL t={time.time()-t0:.1f}s")
-    try:
-        _inject_fresh_dll(observer=bridge.read_only, profile=getattr(bridge, "profile", None))
-    except Exception as e:
-        _dbg(f"[TIMING] injection failed t={time.time()-t0:.1f}s: {e}")
-        return False
-    _dbg(f"[TIMING] injection done t={time.time()-t0:.1f}s — waiting for pipe...")
-
-    # Poll for pipe instead of fixed sleep — DLL may be ready in < 1s
-    for attempt in range(30):
-        await bot.sleep(0.3)
-        if bridge.connect():
-            _dbg(f"[TIMING] pipe connected attempt {attempt+1} t={time.time()-t0:.1f}s — sending init...")
-            _send_init_commands(bridge, bot.player_id)
-            _dbg(f"[TIMING] init sent t={time.time()-t0:.1f}s — waiting for first scan...")
-            # Wait for DLL to complete first full creature scan
-            for check in range(40):
-                await bot.sleep(0.5)
-                test = bridge.read_creatures()
-                if test is not None:
-                    _dbg(f"[TIMING] first data — {len(test)} creatures t={time.time()-t0:.1f}s DONE")
-                    return True
-            _dbg(f"[TIMING] no data after 20s wait t={time.time()-t0:.1f}s — continuing anyway")
-            return True
-        if attempt % 5 == 0:
-            _dbg(f"[TIMING] pipe connect attempt {attempt+1} t={time.time()-t0:.1f}s")
-
-    _dbg(f"[TIMING] FAILED after all attempts t={time.time()-t0:.1f}s")
-    return False
+PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+POLL_INTERVAL = 0.016      # ~60 snapshots per second
+NEARBY = 10                # tiles (Chebyshev) around the player that count as nearby
+FORGET_AFTER = 0.5         # keep a creature this long after it drops out of a snapshot
+SILENCE_LIMIT = 30         # seconds without any snapshot before the DLL is reloaded
+HEALTHY_WAIT = 3.0         # an already-loaded DLL must answer within this time
+PIPE_WAIT = 9.0            # time for a freshly loaded DLL to open its pipe
+FIRST_DATA_WAIT = 20.0     # time for that DLL to publish its first snapshot
+CREATURE_IDS = range(0x10000000, 0x80000000)
+COMBAT_ACTIONS = frozenset({"adaptive_cavebot", "auto_combat", "auto_targeting"})
 
 
 def _make_bridge():
     from dbv.client_bridge.passive_map_win32 import ReadOnlyClient
-    source = ReadOnlyClient()
+    client = ReadOnlyClient()
     try:
-        return DllBridge(read_only=source.profile.observer, profile=source.profile)
+        return ObserverPipe(client.profile)
     finally:
-        source.close()
+        client.close()
+
+
+def _load_fresh_copy(profile):
+    """Load a uniquely named copy: Windows ignores a second LoadLibrary of the same name."""
+    source = os.path.join(PROJECT_ROOT, "dll", profile.observer_dll)
+    if not os.path.isfile(source):
+        raise FileNotFoundError(f"Missing observer DLL: {profile.observer_dll}")
+    copy = os.path.join(os.path.dirname(source), f"dbvobserver_live_{time.time_ns()}.dll")
+    shutil.copy2(source, copy)
+    log.info("loading %s", os.path.basename(copy))
+    injector.inject(copy)
+    return copy
+
+
+async def _first_snapshot(bot, bridge, within):
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        await bot.sleep(0.25)
+        if bridge.poll() is not None:
+            return True
+    return False
+
+
+async def _attach(bot, bridge):
+    """Connect to the observer pipe, loading the DLL when needed. True on success."""
+    await bot.sleep(0.2)  # let a just-started DLL thread create its pipe
+    if bridge.open():
+        if await _first_snapshot(bot, bridge, HEALTHY_WAIT):
+            return True
+        log.info("observer pipe is silent; loading a fresh DLL")
+        bridge.close()
+    try:
+        _load_fresh_copy(bridge.profile)
+    except Exception as exc:
+        log.warning("observer DLL could not be loaded: %s", exc)
+        bot.log(f"[DLL] Nie udało się załadować DLL: {exc}")
+        return False
+    deadline = time.monotonic() + PIPE_WAIT
+    while time.monotonic() < deadline:
+        await bot.sleep(0.3)  # poll; a fresh DLL opens its pipe within a second or two
+        if bridge.open():
+            if not await _first_snapshot(bot, bridge, FIRST_DATA_WAIT):
+                log.info("observer DLL loaded but has not published data yet")
+            return True
+    return False
 
 
 def _marker_active(state, gs, proxy):
-    combat_actions={'adaptive_cavebot','auto_combat','auto_targeting'}
-    tasks=getattr(state,'_action_tasks',{})
-    sample=getattr(gs,'client_snapshot',None)
-    return bool(proxy and state.game_proxy is proxy and proxy.logged_in and not state.automation_paused
-        and any(name in combat_actions and not task.done() for name,task in tasks.items())
-        and sample and sample.get('hp',0)>0 and 0<=time.monotonic()-sample.get('monotonic',-100)<.5)
+    """The marker may show only while a combat action runs on a live, healthy session."""
+    if not proxy or state.game_proxy is not proxy or not proxy.logged_in or state.automation_paused:
+        return False
+    tasks = getattr(state, "_action_tasks", {})
+    if not any(name in COMBAT_ACTIONS and not task.done() for name, task in tasks.items()):
+        return False
+    sample = getattr(gs, "client_snapshot", None)
+    return bool(sample) and sample.get("hp", 0) > 0 and 0 <= time.monotonic() - sample.get("monotonic", -100) < 0.5
+
+
+def nearby_monsters(creatures, player_ids, position, now):
+    """Turn one DLL snapshot into ``game_state.creatures`` entries.
+
+    Returns ``(player_name, monsters)``. Monsters are alive creatures on the
+    player's floor within ``NEARBY`` tiles. When the snapshot contains the
+    player, distances are measured from that entry and positions are shifted
+    into the client's own coordinates, so both always use one frame.
+    """
+    px, py, pz = position
+    me = next((c for c in creatures if c.get("id") in player_ids), None)
+    name = str(me.get("name", ""))[:64] if me else None
+    ref = (me.get("x", 0), me.get("y", 0), me.get("z", 0)) if me and me.get("x", 0) > 0 else None
+    rx, ry, rz = ref or (px, py, pz)
+    dx, dy = (px - rx, py - ry) if ref and px > 0 else (0, 0)
+    found = {}
+    for c in creatures:
+        cid, x, y, z = c.get("id", 0), c.get("x", 0), c.get("y", 0), c.get("z", 0)
+        if cid not in CREATURE_IDS or cid in player_ids or c.get("hp", 0) <= 0:
+            continue
+        if (x, y) == (0, 0) or x > 65535 or z > 15:
+            continue
+        if rx > 0 and ry > 0 and (z != rz or max(abs(x - rx), abs(y - ry)) > NEARBY):
+            continue
+        found[cid] = {"health": c.get("hp", 0), "name": c.get("name", "?"),
+                      "x": x + dx, "y": y + dy, "z": pz, "t": now, "source": "dll"}
+    return name, found
+
+
+def _merge(gs, monsters, now):
+    gs.creatures.update(monsters)
+    for cid in [cid for cid, info in gs.creatures.items()
+                if info.get("source") == "dll" and cid not in monsters
+                and now - info.get("t", 0) > FORGET_AFTER]:
+        del gs.creatures[cid]
+
+
+async def _follow(bot, state, gs, bridge, proxy, player_id):
+    last_data = time.monotonic()
+    while bot.is_connected and state.game_state is gs:
+        if gs.client_snapshot and not gs.client_state_error:
+            history = getattr(gs, "movement_history", None)
+            if history:
+                history.player_position(gs.client_snapshot["position"])
+        creatures = bridge.poll()
+        bridge.renew_marker(active=_marker_active(state, gs, proxy))
+        now = time.time()
+        if creatures is not None:
+            last_data = time.monotonic()
+            name, monsters = nearby_monsters(creatures, {player_id, gs.player_id}, gs.position, now)
+            if name is not None:
+                gs.player_name = name
+            _merge(gs, monsters, now)
+        elif time.monotonic() - last_data > SILENCE_LIMIT:
+            bot.log(f"[DLL] Brak danych przez {SILENCE_LIMIT}s, ponowne ładowanie DLL")
+            bridge.close()
+            if await _attach(bot, bridge):
+                bot.log("[DLL] DLL połączony ponownie")
+            else:
+                bot.log("[DLL] Ponowne ładowanie nie powiodło się; może być potrzebny restart gry")
+            last_data = time.monotonic()
+        await bot.sleep(POLL_INTERVAL)  # next snapshot
 
 
 async def run(bot):
+    state = bot.state
     bridge = _make_bridge()
-    t_start = time.time()
-    with open(DEBUG_LOG, "w") as f:
-        f.write(f"=== dll_bridge started at {time.strftime('%H:%M:%S')} ===\n")
-
-    _dbg(f"[TIMING] run() START — waiting for connection & player_id")
-
-    # Wait for bot connection and player_id
-    while not bot.is_connected or (not bridge.read_only and bot.player_id == 0):
+    while not bot.is_connected:
         await bot.sleep(1)
-
-    _dbg(f"[TIMING] connected, player_id={bot.player_id:#010x} t={time.time()-t_start:.1f}s")
-
     try:
-        connected = await _connect_with_inject(bridge, bot)
+        attached = await _attach(bot, bridge)
     except BaseException:
-        bridge.disconnect()
+        bridge.close()
         raise
-    if not connected:
-        bridge.disconnect()
-        _dbg(f"[TIMING] connect_with_inject FAILED t={time.time()-t_start:.1f}s")
+    if not attached:
+        bridge.close()
         return
 
-    _dbg(f"[TIMING] DLL READY — total startup t={time.time()-t_start:.1f}s")
-
-    # Access game_state directly for authoritative updates
-    state = sys.modules["__main__"].state
+    from dbv.client_bridge.passive_map_win32 import ReadOnlyClient
+    from dbv.client_bridge.client_player_state import ClientPlayerReader, bind_local_player, poll_bound_vitals
     gs = state.game_state
-
-    player_reader = None
-    player_source = None
-    if bridge.read_only:
-        from dbv.client_bridge.passive_map_win32 import ReadOnlyClient
-        from dbv.client_bridge.client_player_state import ClientPlayerReader, bind_local_player
-        player_source = ReadOnlyClient()
-        player_reader = ClientPlayerReader(player_source, 0)
-        try:
-            bound = await bind_local_player(bot, state, gs, player_reader)
-        except BaseException:
-            player_source.close()
-            bridge.disconnect()
-            raise
-        if not bound:
-            bot.log("[DLL] Brak potwierdzonej postaci dla bieżącego logowania.")
-            player_source.close()
-            bridge.disconnect()
-            return
-
-    # Expose bridge on game_state so other actions (auto_targeting) can send commands
-    gs.dll_bridge = bridge
-    marker_proxy=state.game_proxy if bridge.read_only else None
-    marker_callback=bridge.set_target_marker if bridge.read_only else None
-    if marker_callback is not None:marker_proxy.client_target_marker=marker_callback
-
-    # Save player_id locally — gs.player_id can get corrupted mid-session
-    # by mis-parsed packets (byte that looks like LOGIN_OR_PENDING opcode).
-    my_player_id = bot.player_id
-    _dbg(f"saved player_id=0x{my_player_id:08X} (will NOT re-read from gs)")
-
-    # Wait for a valid position from packets before probing, then send probe_pos
-    # to discover the correct creature struct position offset
-    probe_sent = False
-    probe_result = None
-    global_pos_scanned = False
-
-    poll_count = 0
-    last_data_time = time.time()  # when we last got actual data
-    last_heartbeat = time.time()  # for periodic status logging
-    STALE_TIMEOUT = 30  # seconds without data before considering pipe dead
-    HEARTBEAT_INTERVAL = 1  # seconds between heartbeat logs
-    pipe_was_connected = True  # track transitions for disconnect alert
-    dump_creature_sent = set()  # creature IDs we've already dumped (one-shot diagnostic)
-    dump_creature_pending = False  # waiting for dump_creature response
-
-    vitals_task = None
+    client = ReadOnlyClient()
+    proxy = state.game_proxy
+    vitals = None
     try:
-        if player_reader is not None:
-            from dbv.client_bridge.client_player_state import poll_bound_vitals
-            vitals_task = asyncio.create_task(poll_bound_vitals(bot, state, gs, player_reader, POLL_INTERVAL))
-        while bot.is_connected and state.game_state is gs:
-            if player_reader is not None and gs.client_snapshot and not gs.client_state_error:
-                history = getattr(gs, "movement_history", None)
-                if history:
-                    history.player_position(gs.client_snapshot["position"])
-            creatures = bridge.read_creatures()
-            if bridge.read_only:
-                bridge.refresh_target_marker(active=_marker_active(state,gs,marker_proxy))
-            poll_count += 1
-
-            if creatures is not None:
-                last_data_time = time.time()
-
-            # Detect pipe disconnect transition
-            pipe_ok = bridge.connected
-            if pipe_was_connected and not pipe_ok:
-                age = time.time() - last_data_time
-                _dbg(f"PIPE DISCONNECTED at poll#{poll_count} — last data {age:.1f}s ago")
-                bot.log(f"[DLL] PIPE LOST at poll#{poll_count} — last data {age:.1f}s ago")
-            pipe_was_connected = pipe_ok
-
-            # Heartbeat every 3 seconds
-            now_hb = time.time()
-            if now_hb - last_heartbeat >= HEARTBEAT_INTERVAL:
-                last_heartbeat = now_hb
-                data_age = now_hb - last_data_time
-                status = "OK" if pipe_ok else "DISCONNECTED"
-                _dbg(f"HEARTBEAT pipe={status} creatures={len(gs.creatures)} "
-                     f"data_age={data_age:.1f}s poll#{poll_count}")
-                if not pipe_ok:
-                    bot.log(f"[DLL] heartbeat: pipe={status} creatures={len(gs.creatures)} "
-                            f"data_age={data_age:.0f}s")
-
-            # Only consider pipe dead after long silence
-            if time.time() - last_data_time > STALE_TIMEOUT:
-                _dbg(f"pipe dead — no data for {STALE_TIMEOUT}s — re-injecting DLL")
-                bot.log(f"[DLL] STALE {STALE_TIMEOUT}s — attempting re-inject")
-                bridge.disconnect()
-                if await _connect_with_inject(bridge, bot):
-                    last_data_time = time.time()
-                    pipe_was_connected = True
-                    bot.log("[DLL] re-inject SUCCESS — pipe reconnected")
-                else:
-                    _dbg("re-injection failed — will keep trying")
-                    bot.log("[DLL] re-inject FAILED — game restart needed")
-
-            now = time.time()
-            if creatures is not None and len(creatures) > 0:
-                # Updated read-only profile has authoritative LocalPlayer coordinates.
-                pkt = gs.packet_position
-                px, py, pz = gs.position if bridge.read_only else pkt if pkt[0] > 0 else gs.position if gs.position[0] > 0 else (0, 0, 0)
-
-                # Send packet-derived position to DLL for attack distance/floor check.
-                if not bridge.read_only and px > 0 and py > 0 and poll_count % 6 == 0:
-                    bridge.send_command({"cmd": "set_player_pos", "x": px, "y": py, "z": pz})
-
-                # Probe position offset: send once using packet_position (clean reference).
-                # Temporarily override set_player_pos with packet values so probe searches correctly.
-                pkt_pos = gs.position if bridge.read_only else gs.packet_position if gs.packet_position[0] > 0 else gs.position
-                if not bridge.read_only and not probe_sent and pkt_pos[0] > 0 and pkt_pos[1] > 0 and poll_count > 30:
-                    # Send packet pos so probe searches for the correct values
-                    bridge.send_command({"cmd": "set_player_pos",
-                                         "x": pkt_pos[0], "y": pkt_pos[1], "z": pkt_pos[2]})
-                    bridge.send_command({"cmd": "probe_pos"})
-                    # Restore DLL position immediately after
-                    bridge.send_command({"cmd": "set_player_pos", "x": px, "y": py, "z": pz})
-                    probe_sent = True
-                    _dbg(f"PROBE_POS sent — looking for pkt=({pkt_pos[0]},{pkt_pos[1]},{pkt_pos[2]}) "
-                         f"dll=({px},{py},{pz}) in player creature struct")
-                    bot.log(f"[DLL] probe_pos sent — scanning for ({pkt_pos[0]},{pkt_pos[1]},{pkt_pos[2]})")
-
-                # Check for probe_pos results in extras
-                if probe_sent and probe_result is None:
-                    extras = bridge.pop_extras()
-                    for ex in extras:
-                        if "probe_pos" in ex:
-                            probe_result = ex["probe_pos"]
-                            _dbg(f"PROBE_POS result: {json.dumps(probe_result)}")
-                            matches = probe_result.get("matches", [])
-                            bot.log(f"[DLL] probe_pos: {len(matches)} position matches found")
-                            for m in matches:
-                                _dbg(f"  MATCH: off_from_id={m['off_from_id']} "
-                                     f"off_from_base={m['off_from_base']} "
-                                     f"hex_base={m.get('hex_base','?')} "
-                                     f"fmt={m.get('fmt','u32u32u32')}")
-                                bot.log(f"[DLL]   offset from base: {m.get('hex_base','?')} "
-                                        f"(from id: {m['off_from_id']}) fmt={m.get('fmt','u32u32u32')}")
-
-                # Send scan_global_pos once after we have a valid position
-                if not global_pos_scanned and probe_sent and pkt_pos[0] > 100:
-                    bridge.send_command({"cmd": "scan_global_pos"})
-                    global_pos_scanned = True
-                    _dbg(f"SCAN_GLOBAL_POS sent — searching for ({pkt_pos[0]},{pkt_pos[1]},{pkt_pos[2]})")
-                    bot.log(f"[DLL] scan_global_pos — searching writable sections for position")
-
-                # Check for scan_global_pos result in extras
-                if global_pos_scanned:
-                    extras = bridge.pop_extras()
-                    for ex in extras:
-                        if "scan_global_pos" in ex:
-                            sgp = ex["scan_global_pos"]
-                            _dbg(f"SCAN_GLOBAL_POS result: {json.dumps(sgp)}")
-                            bot.log(f"[DLL] scan_global_pos: {sgp.get('matches',0)} matches, "
-                                    f"addr={sgp.get('rva','?')}")
-
-                # DLL px/py/pz may simply echo a previous set_player_pos
-                # command. Never feed that delayed value back into the packet
-                # tracker: it can undo newer server movement updates.
-
-                dll_creatures = {}
-                raw_count = 0
-                player_found = False
-
-                # First pass: find player creature's DLL position for proximity
-                # reference.  DLL struct positions are in a different coordinate
-                # space than packet positions (off by ~10 tiles + z offset).
-                # We must compare creatures against the PLAYER's DLL position
-                # so the distance calc stays in the same coordinate system.
-                dll_px, dll_py, dll_pz = 0, 0, 0
-                for c in creatures:
-                    cid = c.get("id", 0)
-                    if cid == my_player_id or cid == gs.player_id:
-                        dll_px = c.get("x", 0)
-                        dll_py = c.get("y", 0)
-                        dll_pz = c.get("z", 0)
-                        break
-
-                for c in creatures:
-                    cid = c.get("id", 0)
-                    if cid == 0:
-                        continue
-                    # Only accept valid OT creature IDs
-                    if not (0x10000000 <= cid < 0x80000000):
-                        continue
-                    raw_count += 1
-                    cx, cy, cz = c.get("x", 0), c.get("y", 0), c.get("z", 0)
-                    # Player creature: use DLL memory as authoritative position source.
-                    # Check both saved ID and current gs.player_id (can change mid-session)
-                    if cid == my_player_id or cid == gs.player_id:
-                        player_found = True
-                        gs.player_name = str(c.get("name", ""))[:64]
-                        # Log player creature (position is stale — Fix 19)
-                        if poll_count % 300 == 1:
-                            _dbg(f"PLAYER FOUND: cid=0x{cid:08X} my_pid=0x{my_player_id:08X} "
-                                 f"gs.pid=0x{gs.player_id:08X} dll=({cx},{cy},{cz}) pkt=({px},{py},{pz})")
-                        # Creature health is a rounded percentage and may be stale.
-                        # Exact HP comes from PLAYER_STATS; never overwrite it
-                        # with this independently polled cache.
-                        continue
-                    # Skip dead creatures (0% HP)
-                    if c.get("hp", 0) <= 0:
-                        continue
-                    # Skip invalid positions
-                    if (cx == 0 and cy == 0) or cx > 65535 or cz > 15:
-                        continue
-                    # Proximity filter using DLL coordinate space (same system
-                    # as creature positions — avoids mixed-coordinate bugs).
-                    # Exact z match: ±1 caused false positives on multi-floor
-                    # dungeons (creatures one floor up/down passed through).
-                    # Fall back to packet position if player not found in DLL.
-                    ref_x = dll_px if dll_px > 0 else px
-                    ref_y = dll_py if dll_py > 0 else py
-                    ref_z = dll_pz if dll_px > 0 else pz
-                    if ref_x > 0 and ref_y > 0:
-                        if cz != ref_z:
-                            continue
-                        if max(abs(cx - ref_x), abs(cy - ref_y)) > PROXIMITY_RANGE:
-                            continue
-                    # Translate DLL positions to packet coordinate space so
-                    # consumers (auto_combat) using gs.position
-                    # get consistent distance calculations.
-                    if dll_px > 0 and px > 0:
-                        tx = cx - dll_px + px
-                        ty = cy - dll_py + py
-                    else:
-                        tx, ty = cx, cy
-                    dll_creatures[cid] = {
-                        "health": c.get("hp", 0),
-                        "name": c.get("name", "?"),
-                        "x": tx, "y": ty, "z": pz,
-                        "t": now,
-                        "source": "dll",
-                    }
-
-                # Diagnostic: dump raw bytes for POS_ZERO creatures (high refs = on-screen)
-                # Prioritize (0,0,0) creatures with refs >= 5, then valid-pos for comparison
-                if not bridge.read_only and px > 0 and py > 0 and not dump_creature_pending and len(dump_creature_sent) < 8:
-                    # Sort: POS_ZERO with high refs first, then valid pos
-                    candidates = []
-                    for c in creatures:
-                        cid_d = c.get("id", 0)
-                        if cid_d == 0 or cid_d == my_player_id or cid_d == gs.player_id:
-                            continue
-                        if cid_d in dump_creature_sent:
-                            continue
-                        if not (0x40000000 <= cid_d < 0x80000000):
-                            continue
-                        if c.get("hp", 0) <= 0:
-                            continue
-                        dcx, dcy = c.get("x", 0), c.get("y", 0)
-                        refs = c.get("refs", 0)
-                        is_zero = dcx == 0 and dcy == 0
-                        # Priority: POS_ZERO with high refs first
-                        priority = 0 if (is_zero and refs >= 5) else 1
-                        candidates.append((priority, -refs, c))
-                    candidates.sort(key=lambda t: (t[0], t[1]))
-                    for _, _, c in candidates:
-                        cid_d = c.get("id", 0)
-                        dcx, dcy = c.get("x", 0), c.get("y", 0)
-                        has_pos = dcx > 0 and dcy > 0
-                        tag = "VALID_POS" if has_pos else "ZERO_POS"
-                        refs = c.get("refs", 0)
-                        _dbg(f"DUMP_CREATURE: sending for 0x{cid_d:08X} ({c.get('name','?')}) "
-                             f"hp={c.get('hp',0)} pos=({dcx},{dcy},{c.get('z',0)}) refs={refs} [{tag}]")
-                        bot.log(f"[DLL] dump_creature 0x{cid_d:08X} ({c.get('name','?')}) refs={refs} [{tag}]")
-                        bridge.send_command({"cmd": "dump_creature", "creature_id": cid_d})
-                        dump_creature_sent.add(cid_d)
-                        dump_creature_pending = True
-                        break  # one at a time
-
-                # Check for dump_creature results
-                if dump_creature_pending:
-                    extras = bridge.pop_extras()
-                    for ex in extras:
-                        if "dump_creature" in ex:
-                            dc = ex["dump_creature"]
-                            matches = dc.get("matches", [])
-                            _dbg(f"DUMP_CREATURE result: id={dc.get('id','?')} addr={dc.get('addr','?')} "
-                                 f"player={dc.get('player','?')} matches={len(matches)}")
-                            bot.log(f"[DLL] dump_creature {dc.get('id','?')}: {len(matches)} position matches")
-                            for m in matches:
-                                _dbg(f"  MATCH: offset={m.get('off','?')} fmt={m.get('fmt','?')} "
-                                     f"pos={m.get('pos','?')} dx={m.get('dx',0)} dy={m.get('dy',0)} dz={m.get('dz',0)}")
-                                bot.log(f"[DLL]   offset={m.get('off','?')} fmt={m.get('fmt','?')} "
-                                        f"pos={m.get('pos','?')} delta=({m.get('dx',0)},{m.get('dy',0)},{m.get('dz',0)})")
-                            dump_creature_pending = False
-
-                # Warn if player creature not found in DLL data
-                if not player_found and poll_count % 60 == 1:
-                    all_ids = [f"0x{c.get('id',0):08X}" for c in creatures if c.get("id", 0)]
-                    ids_str = ",".join(all_ids[:8])
-                    _dbg(f"PLAYER NOT FOUND! my_pid=0x{my_player_id:08X} "
-                         f"gs.pid=0x{gs.player_id:08X} creature_ids=[{ids_str}]")
-
-                if poll_count % 30 == 1:
-                    refs_info = ", ".join(f"0x{c.get('id',0):X}(r={c.get('refs',0)})" for c in creatures[:5] if c.get("id",0) != my_player_id)
-                    _dbg(f"filter: raw={raw_count} nearby={len(dll_creatures)} "
-                         f"pkt=({px},{py},{pz}) dll_ref=({dll_px},{dll_py},{dll_pz}) refs=[{refs_info}]")
-                # Detailed creature dump: every 5 seconds, show ALL creatures with filter reasons
-                if poll_count % 300 == 1 and raw_count > 0:
-                    r_x = dll_px if dll_px > 0 else px
-                    r_y = dll_py if dll_py > 0 else py
-                    r_z = dll_pz if dll_px > 0 else pz
-                    _dbg(f"=== CREATURE DUMP (pkt=({px},{py},{pz}) dll_ref=({dll_px},{dll_py},{dll_pz})) "
-                         f"my_pid=0x{my_player_id:08X} gs.pid=0x{gs.player_id:08X} raw={len(creatures)} ===")
-                    for c in creatures:
-                        cid = c.get("id", 0)
-                        if cid == 0 or cid == my_player_id or cid == gs.player_id:
-                            continue
-                        name = c.get("name", "?")[:12]
-                        hp = c.get("hp", 0)
-                        ccx, ccy, ccz = c.get("x", 0), c.get("y", 0), c.get("z", 0)
-                        refs = c.get("refs", 0)
-                        # Determine filter reason (using DLL reference position)
-                        if not (0x10000000 <= cid < 0x80000000):
-                            reason = "BAD_ID"
-                        elif hp <= 0:
-                            reason = "DEAD"
-                        elif ccx == 0 and ccy == 0:
-                            reason = "POS_ZERO"
-                        elif ccx > 65535 or ccz > 15:
-                            reason = "POS_INVALID"
-                        elif ccz != r_z:
-                            reason = f"WRONG_Z({ccz}!={r_z})"
-                        else:
-                            dist = max(abs(ccx - r_x), abs(ccy - r_y))
-                            if dist > PROXIMITY_RANGE:
-                                reason = f"FAR(d={dist})"
-                            else:
-                                reason = f"OK(d={dist})"
-                        is_monster = "MON" if cid >= 0x40000000 else "PLR"
-                        _dbg(f"  {is_monster} 0x{cid:08X} {name:12s} hp={hp:3d} pos=({ccx},{ccy},{ccz}) refs={refs} -> {reason}")
-                    _dbg(f"=== END DUMP ===")
-                # Position diagnostic: every 300 polls (~30s), show z-dist and closest
-                if poll_count % 300 == 1 and raw_count > 0 and px > 0:
-                    z_dist = {}
-                    closest = 9999
-                    closest_info = ""
-                    for c in creatures:
-                        cid = c.get("id", 0)
-                        if cid == my_player_id or c.get("hp", 0) <= 0:
-                            continue
-                        cx, cy, cz = c.get("x", 0), c.get("y", 0), c.get("z", 0)
-                        if cx == 0 and cy == 0:
-                            continue
-                        z_dist[cz] = z_dist.get(cz, 0) + 1
-                        if cz == pz:
-                            d = max(abs(cx - px), abs(cy - py))
-                            if d < closest:
-                                closest = d
-                                closest_info = f"0x{cid:X} ({cx},{cy},{cz}) d={d} hp={c.get('hp',0)}"
-                    _dbg(f"DIAG: z-dist={dict(sorted(z_dist.items()))} closest_same_z={closest_info or 'none'}")
-
-                if dll_creatures:
-                    for cid, info in dll_creatures.items():
-                        gs.creatures[cid] = info
-
-                # Remove DLL creatures no longer in filtered set, but with
-                # a grace period to survive brief tree-walk race conditions.
-                # The DLL tree walk can miss a creature for 1-2 cycles when
-                # the game thread is modifying the red-black tree concurrently.
-                CREATURE_RETAIN = 0.5  # seconds to keep creature after last seen
-                stale = [
-                    cid for cid, info in gs.creatures.items()
-                    if info.get("source") == "dll" and cid not in dll_creatures
-                    and now - info.get("t", 0) > CREATURE_RETAIN
-                ]
-                for cid in stale:
-                    del gs.creatures[cid]
-            elif creatures is not None:
-                # Empty list — still apply grace period before clearing
-                stale = [cid for cid, info in gs.creatures.items()
-                         if info.get("source") == "dll"
-                         and now - info.get("t", 0) > 0.5]
-                for cid in stale:
-                    del gs.creatures[cid]
-
-            await bot.sleep(POLL_INTERVAL)
-    except Exception:
-        if vitals_task is None:
-            raise
-        log.exception("Creature diagnostics stopped; continuing the bound vitals sampler")
-        await vitals_task
+        reader = ClientPlayerReader(client, 0)
+        if not await bind_local_player(bot, state, gs, reader):
+            bot.log("[DLL] Brak potwierdzonej postaci dla bieżącego logowania.")
+            return
+        gs.dll_bridge = bridge  # status, panel and target selection look here
+        if proxy is not None:
+            proxy.client_target_marker = bridge.request_marker
+        vitals = asyncio.create_task(poll_bound_vitals(bot, state, gs, reader, POLL_INTERVAL))
+        try:
+            await _follow(bot, state, gs, bridge, proxy, bot.player_id)
+        except Exception:
+            # Creature data is a convenience; the vitals sampler keeps healing alive.
+            log.exception("creature feed stopped; vitals sampling continues")
+            await vitals
     finally:
-        if vitals_task is not None:
-            vitals_task.cancel()
-            await asyncio.gather(vitals_task, return_exceptions=True)
-        if marker_callback is not None and getattr(marker_proxy,'client_target_marker',None) is marker_callback:marker_proxy.client_target_marker=None
-        if player_source is not None:
-            player_source.close()
-        bridge.disconnect()
-        _dbg("stopped (pipe thread kept alive)")
+        if vitals is not None:
+            vitals.cancel()
+            await asyncio.gather(vitals, return_exceptions=True)
+        if getattr(proxy, "client_target_marker", None) == bridge.request_marker:
+            proxy.client_target_marker = None
+        client.close()
+        bridge.close()

@@ -101,15 +101,15 @@ client-update path; an update need only change the ones its evidence requires.
 | [dll/observer_layout.h](../dll/observer_layout.h) | Build-specific C++ map/Game/vtable addresses, marker fields/functions, PeekMessageA locations and pipe. Must agree with the Python profile. |
 | [dll/marker_observer.cpp](../dll/marker_observer.cpp) | Current observer source: bounded creature/map reads and pipe service. Also contains structural offsets outside the layout header. |
 | [dll/target_marker.h](../dll/target_marker.h) | Visual square only, full setter signatures, reviewed game-thread hook, ownership/expiry/manual-selection checks. Review ABI and entire function bodies before changing. |
-| [build_dll.ps1](../build_dll.ps1) | Selects the source, compile definition and output filename. Extend its `ValidateSet` and branches for a new build. The default builds the legacy DLL. |
+| [build_dll.ps1](../build_dll.ps1) | Selects the source, compile definition and output filename. Add a new build to its `ValidateSet` and `$builds` table. The default builds the newest client. |
 | `dll/dbvobserver_marker_20261126.dll` | Generated x86 artifact for the working build. DLLs are Git-ignored: a source commit/clone does not include this binary. Build, hash and deliver it separately. |
-| [dbv/client_bridge/inject.py](../inject.py) | Windows DLL loading and target bitness checks; normally unchanged by an address relocation. |
+| [dbv/client_bridge/injector.py](../dbv/client_bridge/injector.py) | Loads the DLL into the 32-bit client (WoW64-aware `LoadLibraryW`); normally unchanged by an address relocation. |
 | [actions/dll_bridge.py](../actions/dll_bridge.py) | Selects the profile's DLL for injection and starts the bridge. Preserve profile selection through retries. |
-| [dbv/client_bridge/dll_bridge.py](../dll_bridge.py) | Selects the profile's named pipe and handles the protocol. A DLL/pipe mismatch can leave the bridge inactive even if the DLL loaded. |
+| [dbv/client_bridge/observer_pipe.py](../dbv/client_bridge/observer_pipe.py) | Selects the profile's named pipe and handles the protocol. A DLL/pipe mismatch can leave the bridge inactive even if the DLL loaded. |
 
-`dll/dbvbot.cpp`, `dll/observer.cpp`, `dll/target_observer.cpp` and
+`dll/observer.cpp`, `dll/target_observer.cpp` and
 `dll/target_sync.h` are older/alternate implementations, not the November 26
-marker build. `offsets.json` still has legacy/parser settings but is **not**
+marker build. `offsets.json` only holds server packet layouts and is **not**
 the authoritative profile for the current native memory readers. Editing only one of these
 older files will not adapt the current connection path.
 
@@ -277,10 +277,10 @@ Get-FileHash -Algorithm SHA256 '.\dll\dbvobserver_marker_20261126.dll'
 ```
 
 For a future build, first implement the new build selector and test file, then
-substitute their names. The script currently accepts only `legacy`, `20261116`
+substitute their names. The script currently accepts only `20261116`
 and `20261126`; inventing a date argument will not build new support.
 `20261116` selects the older `dbvobserver_marker_20261117.dll`; the default
-`legacy` selects `dbvbot.dll`. Use an x86 compiler, even with 64-bit Windows/Python.
+is `20261126`. Use an x86 compiler, even with 64-bit Windows/Python.
 
 Compile and execute the two synthetic native tests using the matching define;
 see [the exact November 26 commands](CLIENT_UPDATE.md#repeatable-offline-checks).

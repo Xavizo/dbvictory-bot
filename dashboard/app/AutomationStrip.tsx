@@ -4,7 +4,7 @@ import {toggleAction, type BotState} from "@/lib/api";
 import {authenticatedFetch} from "@/lib/auth";
 export const actionTitles:Record<string,string> = {
   auto_hunter_knife:"Hunter Knife",auto_barrier_band:"Barrier Band",barrier_spell:"Barrier",auto_potions:"Leczenie · HP / Ki",auto_combat:"Automatyczna walka",
-  auto_targeting:"Wybór celu",adaptive_cavebot:"Cavebot",eat_food:"Jedzenie",full_light:"Pełne oświetlenie",
+  auto_targeting:"Wybór celu",adaptive_cavebot:"Cavebot",eat_food:"Jedzenie",
   packet_sniffer:"Diagnostyka pakietów",speed_up:"Przyspieszenie",
 };
 export default function AutomationStrip({state,connected,onRefresh,onSettings,onPause,busy}:{state:BotState|null;connected:boolean;onRefresh:()=>void;onSettings:()=>void;onPause:()=>void;busy:boolean}) {
