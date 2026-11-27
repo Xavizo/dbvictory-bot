@@ -1,6 +1,6 @@
 [
   {
-    "version":"v1.40.0",
+    "version":"v2.0.5",
     "changes":[
       {"title":"Paczka do pobrania","detail":"Bota można pobrać z GitHuba jako gotowy plik zip z launcherem, panelem, Pythonem i Node.js. Nie trzeba niczego instalować ani używać Gita."},
       {"title":"Aktualizacje z GitHuba","detail":"Launcher sprawdza nowe wydania przy starcie. Możesz je zainstalować albo odłożyć. Ustawienia, trasy i mapa zostają bez zmian."},
