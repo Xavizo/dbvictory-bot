@@ -100,7 +100,7 @@ def main():
     stage = args.stage.resolve()
     if stage.name != PACKAGE_ROOT or not stage.is_dir():
         raise SystemExit(f"Stage folder must be named {PACKAGE_ROOT}")
-    if not re.fullmatch(r"v\d+\.\d+\.\d+", args.version) or not re.fullmatch(r"[0-9a-f]{40}", args.revision):
+    if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-test\.[0-9a-f]{7})?", args.version) or not re.fullmatch(r"[0-9a-f]{40}", args.revision):
         raise SystemExit("Bad version or revision")
     if os.name == "nt":
         stage = Path("\\\\?\\" + str(stage))  # long paths can pass 260 characters
