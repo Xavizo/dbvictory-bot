@@ -381,7 +381,12 @@ def _aside(path, tx):
 
 
 def _apply(root, stage, write, remove, tx):
-    """Swap files, recording each step so that a crash can be rolled back."""
+    """Swap files, recording each step so that a crash can be rolled back.
+
+    Returns the removed files that stayed because Windows refused to move them
+    (a file held open without delete sharing, such as a running app's data).
+    The new release does not use them, so they are deleted at a later start.
+    """
     feed = _feed(root)
     ops = [{"path": p, "write": True} for p in write] + [{"path": p, "write": False} for p in remove]
     ops.append({"path": MANIFEST_FILE, "write": True})
@@ -389,13 +394,61 @@ def _apply(root, stage, write, remove, tx):
         op["existed"] = (root / op["path"]).exists()
     journal = {"tx": tx, "ops": ops}
     _write_json(feed / "transaction.json", journal)
+    stuck = []
     for op in ops:
         target = root / op["path"]
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
-            os.replace(target, _aside(target, tx))
+            try:
+                os.replace(target, _aside(target, tx))
+            except OSError:
+                if op["write"]:
+                    raise
+                stuck.append(op["path"])
+                continue
         if op["write"]:
             os.replace(stage / op["path"], target)
+    return stuck
+
+
+def _remember_obsolete(root, paths):
+    if not paths:
+        return
+    path = _feed(root) / "obsolete.json"
+    try:
+        known = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        known = []
+    _write_json(path, sorted(set(known if isinstance(known, list) else []) | set(paths)))
+
+
+def _delete_obsolete(root):
+    """Delete program files an update could not remove, unless a later release ships them again."""
+    path = _feed(root) / "obsolete.json"
+    try:
+        items = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    shipped = {_key(p) for p in _installed_manifest(root)}
+    remaining, deleted = [], False
+    for item in items if isinstance(items, list) else []:
+        try:
+            name = _clean_path(item)
+        except ValueError:
+            continue
+        if _key(name) in shipped or _protected(name) or _seed(name):
+            continue
+        try:
+            (root / name).unlink(missing_ok=True)
+            deleted = True
+        except OSError:
+            remaining.append(name)
+    if deleted:
+        (_feed(root) / "pruned.json").unlink(missing_ok=True)  # their folders may be empty now
+    if remaining:
+        _write_json(path, remaining)
+    else:
+        path.unlink(missing_ok=True)
 
 
 def recover(root):
@@ -471,6 +524,7 @@ def _prune_empty_folders(root):
 def cleanup(root):
     """Delete old copies left by a previous update. Files still in use stay listed."""
     root = _long(root)
+    _delete_obsolete(root)
     path = _feed(root) / "cleanup.json"
     try:
         items = json.loads(path.read_text(encoding="utf-8"))
@@ -549,7 +603,7 @@ def install(root, revision, *, fetch=fetch_latest, opener=_open):
         tx, stage, package, write, remove = _prepare(root, feed, latest, opener)
         try:
             try:
-                _apply(root, stage, write, remove, tx)
+                stuck = _apply(root, stage, write, remove, tx)
             except BaseException:
                 if (feed / "transaction.json").exists():
                     recover(root)
@@ -558,6 +612,7 @@ def install(root, revision, *, fetch=fetch_latest, opener=_open):
             leftovers = [_aside(root / p, tx).relative_to(root).as_posix() for p in [*write, *remove, MANIFEST_FILE]
                          if _aside(root / p, tx).exists()]
             _remember_leftovers(root, leftovers)
+            _remember_obsolete(root, stuck)
         finally:
             shutil.rmtree(stage, ignore_errors=True)
         package.unlink(missing_ok=True)

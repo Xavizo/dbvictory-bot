@@ -281,3 +281,46 @@ def test_bad_patch_metadata_only_means_a_full_download():
     assert "patch" not in gr.fetch_latest(gr.DEFAULT_REPO, get)
     meta["patch"]["asset"] = "../evil.zip"
     assert "patch" not in gr.fetch_latest(gr.DEFAULT_REPO, get)
+
+
+def test_a_removed_file_held_open_does_not_roll_back_the_update(root, monkeypatch):
+    pak = "dashboard/node_modules/electron/dist/resources.pak"
+    install_old(root, {"bot.py": b"old", pak: b"pak"})
+    latest, data = package({"bot.py": b"new"})
+    real_replace = gr.os.replace
+
+    def replace(src, dst):
+        if str(src).endswith("resources.pak"):
+            raise PermissionError("in use by the running launcher")
+        return real_replace(src, dst)
+    real_unlink = type(root).unlink
+
+    def unlink(path, missing_ok=False):
+        if path.name == "resources.pak":
+            raise PermissionError("in use by the running launcher")
+        return real_unlink(path, missing_ok=missing_ok)
+    with monkeypatch.context() as patch:
+        patch.setattr(gr.os, "replace", replace)
+        patch.setattr(type(root), "unlink", unlink)
+        assert gr.install(root, NEW, fetch=lambda repo: latest, opener=lambda req, timeout: Response(data))["updated"]
+    assert (root / "bot.py").read_bytes() == b"new"
+    assert (root / pak).exists()  # still open: stays for now
+    assert pak not in json.loads((root / gr.MANIFEST_FILE).read_text())["files"]
+    gr.status(root, fetch=lambda repo: (_ for _ in ()).throw(OSError("offline")))
+    assert not (root / "dashboard" / "node_modules" / "electron").exists()  # deleted at the next start, folders pruned
+    assert not (gr._feed(root) / "obsolete.json").exists()
+
+
+def test_a_changed_file_held_open_still_rolls_back(root, monkeypatch):
+    install_old(root, {"bot.py": b"old", "app.pak": b"pak"})
+    latest, data = package({"bot.py": b"new", "app.pak": b"pak2"})
+    real_replace = gr.os.replace
+
+    def replace(src, dst):
+        if str(src).endswith("app.pak") and "stage-" not in str(src):
+            raise PermissionError("in use")
+        return real_replace(src, dst)
+    monkeypatch.setattr(gr.os, "replace", replace)
+    with pytest.raises(PermissionError):
+        gr.install(root, NEW, fetch=lambda repo: latest, opener=lambda req, timeout: Response(data))
+    assert (root / "bot.py").read_bytes() == b"old" and (root / "app.pak").read_bytes() == b"pak"
