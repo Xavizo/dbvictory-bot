@@ -85,7 +85,8 @@ from source on Windows.
 
 ### Steps
 
-Run these in **Windows PowerShell** in the folder where you cloned the repository:
+Clone or download the repository into any folder (for example
+`C:\DBVictoryBot`). Then run these in **Windows PowerShell** in that folder:
 
 ```powershell
 # 1. Python environment
@@ -138,8 +139,8 @@ call.
 
 - Codex: run `.\scripts\setup-codex.ps1`, then `.\scripts\start-codex.ps1`.
   See [Codex on Windows](docs/CODEX.md).
-- Claude Code: edit `.mcp.json` so the paths point at your own `venv` and
-  `run_mcp.py`.
+- Claude Code: open Claude Code in the bot folder. The included `.mcp.json`
+  starts `run_mcp.py` with the folder's own `venv`.
 
 A second agent can also attach read-only to a session the launcher started
 (`attach_status`, `session_activity`, `packet_journal`).
@@ -192,5 +193,8 @@ cd dashboard; npm test; npm run typecheck; npm run build
 
 ## Credits
 
-This project started from the DBVictory proxy bot by **patrykjanik** and has
-since been largely rewritten.
+This project is a fork of the original DBVictory proxy bot by
+**patrykjanik**, which provided the first proxy, packet parser, DLL and
+cavebot. It has since been almost completely rewritten: the launcher and
+updater, client profiles, native observer, atlas, combat, healing, Hunter Knife
+and most of the panel are new.

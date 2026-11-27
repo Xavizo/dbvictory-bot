@@ -1,8 +1,8 @@
 # Updating the bot after a DBVictory client update
 
-This is the maintenance procedure for the Windows installation at
-`D:\Projekty\tibia-ots-mcp-bot` and the client at `D:\Gry\DBVClient_v5`.
-Run the commands in **Windows PowerShell**. Adjust the paths if either folder moves.
+This is the maintenance procedure for a Windows installation of the bot
+(examples use `C:\DBVictoryBot`) and the client (examples use `C:\DBVClient_v5`).
+Run the commands in **Windows PowerShell**. Replace both with your own folders.
 
 **Working baseline:** v1.38.3, commit
 `a9901185dabc1967cfbaa14e95af0fade4221869`. On 2026-11-26 the operator confirmed
@@ -145,9 +145,9 @@ older files will not adapt the current connection path.
 These commands only inspect files; the game can remain open for this step.
 
 ```powershell
-$bot = 'D:\Projekty\tibia-ots-mcp-bot'
-$client = 'D:\Gry\DBVClient_v5\dbvStart.exe'
-$dat = 'D:\Gry\DBVClient_v5\bytes\things\file.dat'
+$bot = 'C:\DBVictoryBot'
+$client = 'C:\DBVClient_v5\dbvStart.exe'
+$dat = 'C:\DBVClient_v5\bytes\things\file.dat'
 git -C $bot rev-parse HEAD
 git -C $bot status --short
 Get-FileHash -Algorithm SHA256 $client, $dat
@@ -178,14 +178,14 @@ Review overlapping local changes rather than deleting/stashing them blindly.
 
 Create a local clone/worktree on a `codex/` branch from the installed revision.
 Use a Windows-accessible directory such as
-`D:\Projekty\DBVictory-work\client-YYYYMMDD`; keep its dependency environment
+`C:\DBVictory-work\client-YYYYMMDD`; keep its dependency environment
 separate from the running installation. Read [AGENTS.md](../AGENTS.md) first.
 
 For example, with `$bot` set as in step 3 and a working installed Python:
 
 ```powershell
 $stamp = Get-Date -Format 'yyyyMMdd'
-$work = "D:\Projekty\DBVictory-work\client-$stamp"
+$work = "C:\DBVictory-work\client-$stamp"
 git clone --no-hardlinks $bot $work
 if ($LASTEXITCODE -ne 0) { throw 'Candidate directory was not created; inspect before continuing' }
 git -C $work switch -c "codex/client-$stamp"
@@ -269,7 +269,7 @@ From the candidate root, these are the working November 26 commands:
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\build_dll.ps1 -ClientVersion 20261126
-.\venv\Scripts\python.exe check_client_build.py 'D:\Gry\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_20261126.dll'
+.\venv\Scripts\python.exe check_client_build.py 'C:\DBVClient_v5\dbvStart.exe' --dll '.\dll\dbvobserver_marker_20261126.dll'
 .\venv\Scripts\python.exe -m pytest -q tests/test_client_profiles.py tests/test_client_november_26.py tests/test_client_protocol.py tests/test_client_player_state.py tests/test_passive_map.py tests/test_dll_pipe.py tests/test_native_target_sync.py tests/test_packet_observer.py tests/test_relogin_identity.py tests/test_automation_safety.py
 .\venv\Scripts\python.exe -m pytest -q
 node --test tests/desktop_launcher.test.cjs
@@ -311,8 +311,8 @@ Use the existing publisher from **native Windows Python**, including when
 orchestrating from WSL. Windows and Linux file locks are not interchangeable.
 
 ```powershell
-$bot = 'D:\Projekty\tibia-ots-mcp-bot'
-$work = 'D:\Projekty\DBVictory-work\client-YYYYMMDD' # replace with the real candidate
+$bot = 'C:\DBVictoryBot'
+$work = 'C:\DBVictory-work\client-YYYYMMDD' # replace with the real candidate
 $revision = git -C $work rev-parse HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify candidate' }
 & "$bot\venv\Scripts\python.exe" "$bot\dbv_release.py" --installation $bot publish $work $revision
@@ -341,8 +341,8 @@ an explicit maintenance window with client, engine and launcher closed.
    candidate clone, the source-only operation is:
 
    ```powershell
-   $bot = 'D:\Projekty\tibia-ots-mcp-bot'
-   $work = 'D:\Projekty\DBVictory-work\client-YYYYMMDD' # replace with the real candidate
+   $bot = 'C:\DBVictoryBot'
+   $work = 'C:\DBVictory-work\client-YYYYMMDD' # replace with the real candidate
    $revision = git -C $work rev-parse HEAD
    if ($LASTEXITCODE -ne 0) { throw 'Cannot identify candidate' }
    git -C $bot fetch --no-tags $work $revision
@@ -432,8 +432,8 @@ A completed update record contains:
 
 For the next assisted update, a useful task brief is:
 
-> Adapt the bot in `D:\Projekty\tibia-ots-mcp-bot` to the new client in
-> `D:\Gry\DBVClient_v5`. Follow `docs/CLIENT_UPDATE_GUIDE.md` and `AGENTS.md`.
+> Adapt the bot in `C:\DBVictoryBot` to the new client in
+> `C:\DBVClient_v5`. Follow `docs/CLIENT_UPDATE_GUIDE.md` and `AGENTS.md`.
 > Preserve old profiles and private data, derive new layouts from evidence,
 > add tests and prepare the matching artifacts in a separate checkout. Keep
 > character-list confirmation manual. Prepare offline checks and a concrete
