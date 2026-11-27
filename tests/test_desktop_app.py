@@ -379,6 +379,38 @@ def test_tidy_hides_only_the_releases_own_internals(tmp_path):
     assert desktop_app.tidy(tmp_path, hide=hidden.append) == []  # a source checkout is left alone
 
 
+def test_unblock_clears_the_download_mark_from_the_releases_own_files(tmp_path):
+    files = {"DBVictory.exe": ["x", 1], "run_bot.py": ["x", 1], "venv/Scripts/Lib/site-packages/pythonnet/runtime/Python.Runtime.dll": ["x", 1]}
+    (tmp_path / "release-manifest.json").write_text(json.dumps({"format": 1, "files": files}), encoding="utf-8")
+    removed = []
+
+    def remove(path):
+        if path.startswith(str(tmp_path / "DBVictory.exe")):
+            raise FileNotFoundError(path)  # not marked
+        removed.append(path)
+
+    dll = tmp_path / "venv" / "Scripts" / "Lib" / "site-packages" / "pythonnet" / "runtime" / "Python.Runtime.dll"
+    assert desktop_app.unblock(tmp_path, remove=remove) == [dll]
+    assert removed == [f"{dll}:Zone.Identifier"]
+    (tmp_path / "release-manifest.json").unlink()
+    assert desktop_app.unblock(tmp_path, remove=remove) == []  # a source checkout is left alone
+
+
+@pytest.mark.skipif(os.name != "nt", reason="alternate data streams are an NTFS feature")
+def test_unblock_removes_a_real_zone_identifier_stream(tmp_path):
+    (tmp_path / "release-manifest.json").write_text(json.dumps({"format": 1, "files": {"a.dll": ["x", 1]}}),
+                                                    encoding="utf-8")
+    dll = tmp_path / "a.dll"
+    dll.write_bytes(b"MZ")
+    try:
+        Path(f"{dll}:Zone.Identifier").write_text("[ZoneTransfer]\nZoneId=3\n", encoding="ascii")
+    except OSError:
+        pytest.skip("this drive keeps no alternate data streams")
+    assert desktop_app.unblock(tmp_path) == [dll]
+    assert not os.path.exists(f"{dll}:Zone.Identifier")
+    assert dll.read_bytes() == b"MZ"
+
+
 def test_the_bot_runs_under_its_own_executables_when_the_release_ships_them(tmp_path):
     scripts = tmp_path / "venv" / "Scripts"
     scripts.mkdir(parents=True)
