@@ -142,6 +142,8 @@ class BotState:
         self.potion_diagnostics = PotionDiagnostics()
         from dbv.brain.combat.hunter_knife import CorpseSuggestions
         self.knife_suggestions = CorpseSuggestions()
+        from dbv.brain.state.item_identification import ItemIdentification
+        self.item_identification = ItemIdentification(self.settings.get("item_identification", True) is not False)
         self._action_tasks: dict[str, asyncio.Task] = {}
         self._action_completed: set[str] = set()
         self._adaptive_prepare_token = None
@@ -710,6 +712,19 @@ async def _async_potion_diagnostics(enabled: bool) -> dict:
     return state.potion_diagnostics.snapshot()
 
 
+async def _async_item_identification(enabled: bool) -> dict:
+    """Show or hide the ID of looked-at items; the choice persists."""
+    previous = state.settings.get("item_identification", True)
+    state.settings["item_identification"] = enabled
+    try:
+        save_settings(state.settings)
+    except OSError:
+        state.settings["item_identification"] = previous
+        raise
+    state.item_identification.enabled = enabled
+    return state.item_identification.snapshot()
+
+
 async def _async_adaptive_preview(config=None) -> dict:
     from dbv.brain.cavebot.cavebot_combat import validate_combat,eligible_monsters,choose_target,target_policy,attack_distance_ok
     from dbv.brain.combat.combat_spell_conditions import evaluate_spells
@@ -868,8 +883,9 @@ def _panel_window_command() -> list[str] | None:
     if importlib.util.find_spec("webview") is None:
         return None
     python = Path(sys.executable)
-    windowed = python.with_name("pythonw.exe")
-    return [str(windowed if windowed.is_file() else python), "-B", "-m", "dbv.mcp_server.panel_window"]
+    # pythonw, as DBVictory.exe (the bot's name and icon) when the release ships it.
+    windowed = next((p for p in (python.with_name("DBVictory.exe"), python.with_name("pythonw.exe")) if p.is_file()), python)
+    return [str(windowed), "-B", "-m", "dbv.mcp_server.panel_window"]
 
 
 atexit.register(_stop_dashboard)
@@ -1525,6 +1541,14 @@ async def start_bot() -> str:
         if monitor:
             monitor.record_client_packet(opcode, reader)
     state.game_proxy.register_client_packet_callback(observe_navigation_command)
+
+    def identify_looked_item(opcode, reader):
+        item_id = state.item_identification.record_client_packet(opcode, reader)
+        if item_id is not None and state.game_proxy:
+            from dbv.brain.state.item_identification import status_message
+            log.info("Item Id: %s", item_id)
+            asyncio.get_running_loop().create_task(state.game_proxy.inject_to_client(status_message(item_id)))
+    state.game_proxy.register_client_packet_callback(identify_looked_item)
 
     def journal_client_packet(opcode, reader):
         if getattr(state, "packet_journal", None) and state.packet_journal.enabled:

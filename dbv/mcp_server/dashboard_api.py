@@ -183,6 +183,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json_response(result)
         if self.path == "/api/map/drafts":
             return self._handle_map_drafts()
+        if urlsplit(self.path).path == "/api/map/drafts/export":
+            return self._handle_route_export()
         # GET /api/cavebot/actions_map/<name>
         parts = self.path.strip("/").split("/")
         if (len(parts) == 4 and parts[0] == "api" and parts[1] == "cavebot"
@@ -246,6 +248,11 @@ class _Handler(BaseHTTPRequestHandler):
             if type(body.get("enabled")) is not bool:
                 return self._json_response({"error": "enabled must be boolean"}, 400)
             return self._run_control("_async_potion_diagnostics", body["enabled"])
+        if self.path == "/api/diagnostics/item-identification":
+            body = self._read_body()
+            if not isinstance(body, dict) or type(body.get("enabled")) is not bool:
+                return self._json_response({"error": "enabled must be boolean"}, 400)
+            return self._run_control("_async_item_identification", body["enabled"])
         if self.path == "/api/map/pet":
             try:
                 from dbv.brain.navigation.transition_learning import position
@@ -283,6 +290,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_map_plan()
         if self.path == "/api/map/drafts":
             return self._handle_map_drafts(save=True)
+        if self.path == "/api/map/drafts/import":
+            return self._handle_route_import()
         # POST /api/actions/{name}/toggle
         # POST /api/actions/{name}/restart
         parts = self.path.strip("/").split("/")
@@ -483,6 +492,48 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json_response({"error":"Nie udało się odczytać lub zapisać szkiców."},500)
         except (ValueError,TypeError,KeyError) as exc:return self._json_response({"error":str(exc)},400)
         except Exception:return self._json_response({"error":"Nie udało się odczytać lub zapisać szkiców."},500)
+
+    def _handle_route_export(self):
+        """GET /api/map/drafts/export?id=<route>: the route as a shareable route pack."""
+        from dbv.brain.navigation import route_pack
+        monitor=getattr(_state,"passive_map_monitor",None)
+        atlas=getattr(monitor,"atlas",None)
+        if atlas is None or not getattr(monitor,"server",None):
+            return self._json_response({"error":"Atlas nie jest jeszcze dostępny."},503)
+        try:
+            draft_id=parse_qs(urlsplit(self.path).query).get("id",[""])[0]
+            observations=list(monitor.learner.records.values()) if getattr(monitor,"learner",None) else []
+            pack=route_pack.export(atlas,observations,draft_id,monitor.server)
+            return self._json_response({"file_name":route_pack.file_name(pack["drafts"][0]["name"]),"pack":pack})
+        except (BlockingIOError, sqlite3.OperationalError):
+            return self._json_response({"error":"Baza atlasu jest chwilowo zajęta. Spróbuj ponownie."},503)
+        except ValueError as exc:return self._json_response({"error":str(exc)},400)
+        except Exception:
+            log.warning("Route export failed", exc_info=True)
+            return self._json_response({"error":"Nie udało się wyeksportować trasy."},500)
+
+    def _handle_route_import(self):
+        """POST /api/map/drafts/import {scope, pack}: add a shared route as a new route."""
+        from dbv.brain.navigation import route_pack
+        monitor=getattr(_state,"passive_map_monitor",None)
+        atlas=getattr(monitor,"atlas",None)
+        if atlas is None or not getattr(monitor,"server",None):
+            return self._json_response({"error":"Zaloguj się do gry, aby zaimportować trasę."},503)
+        try:
+            if not 0<int(self.headers.get("Content-Length",0))<=route_pack.MAX_FILE:
+                raise ValueError("Plik trasy jest zbyt duży.")
+            body=self._read_body()
+            if not isinstance(body,dict) or body.get("scope")!=atlas.scope:
+                raise ValueError("Profil atlasu się zmienił. Odśwież widok.")
+            created=route_pack.import_pack(atlas,getattr(monitor,"learner",None),body.get("pack"),monitor.server)
+            return self._json_response({"scope":atlas.scope,"drafts":atlas.drafts(),"trash":atlas.drafts(deleted=True),
+                                        "imported":created})
+        except (BlockingIOError, sqlite3.OperationalError):
+            return self._json_response({"error":"Baza atlasu jest chwilowo zajęta. Spróbuj ponownie."},503)
+        except (ValueError,TypeError) as exc:return self._json_response({"error":str(exc)},400)
+        except Exception:
+            log.warning("Route import failed", exc_info=True)
+            return self._json_response({"error":"Nie udało się zaimportować trasy."},500)
 
     def _handle_map_plan(self):
         monitor=getattr(_state,"passive_map_monitor",None)
@@ -926,6 +977,7 @@ def _build_state_json() -> str:
         "automation_paused": st.automation_paused,
         "automation_pause_kind": st.automation_pause_kind,
         "potion_diagnostics": st.potion_diagnostics.snapshot(),
+        "item_identification": st.item_identification.snapshot() if getattr(st, "item_identification", None) else None,
         "senzu_usage": gs.senzu_usage.snapshot() if getattr(gs, "senzu_usage", None) else None,
         "hunter_knife": {
             "status": knife.panel_status() if knife else "Wyłączony",

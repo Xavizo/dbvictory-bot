@@ -109,5 +109,7 @@ def test_the_panel_window_runs_on_the_bundled_windowed_python(monkeypatch, tmp_p
     monkeypatch.setattr(server.sys, "executable", str(python))
     monkeypatch.setattr(server.importlib.util, "find_spec", lambda name: object())
     assert server._panel_window_command() == [str(tmp_path / "pythonw.exe"), "-B", "-m", "dbv.mcp_server.panel_window"]
+    (tmp_path / "DBVictory.exe").write_text("")  # the release's pythonw under the bot's name and icon
+    assert server._panel_window_command()[0] == str(tmp_path / "DBVictory.exe")
     monkeypatch.setattr(server.importlib.util, "find_spec", lambda name: None)
     assert server._panel_window_command() is None

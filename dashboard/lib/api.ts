@@ -278,6 +278,7 @@ export interface BotState {
   automation_paused?: boolean;
   automation_pause_kind?: "manual"|"emergency"|null;
   potion_diagnostics?: PotionDiagnosticState;
+  item_identification?: ItemIdentificationState | null;
   hunter_knife?: {last_issue?:{position:[number,number,number];reason:string;action:"skin"|"uncover";spell?:string;since_spell_ms?:number}|null;unassigned_bodies?:number;status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number;monsters?:KnifeMonster[];default_monsters?:KnifeMonster[];ignored_suggestions?:number[];suggestions?:KnifeSuggestion[]};
   barrier_band?: {status:string;equipped_id:number|null;stock:number|null;attempts:number};
   actions: ActionInfo[];
@@ -291,6 +292,8 @@ export interface BotState {
   proxy_sequence?: ProxySequence;
 }
 
+export interface IdentifiedItem {item_id:number;where:"map"|"inventory";position:[number,number,number]|null;time:number}
+export interface ItemIdentificationState {enabled:boolean;recent:IdentifiedItem[]}
 export interface PotionDiagnosticState {
   active: boolean;
   capacity?: number;
@@ -321,6 +324,7 @@ export async function movementHistory(save=false,signal?:AbortSignal):Promise<Mo
   return data;
 }
 export const setPotionDiagnostics = (enabled: boolean) => control("/api/potions/diagnostics", { enabled });
+export const setItemIdentification = (enabled: boolean) => control("/api/diagnostics/item-identification", { enabled });
 export interface MapAnnotationInput {
   scope:string; operation:"save" | "remove"; position:[number,number,number]; item_id:number;
   kind:string; required_level:number|null; activation_hint:string|null; note:string;

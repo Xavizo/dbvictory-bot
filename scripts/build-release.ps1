@@ -3,7 +3,7 @@
 #
 # The package bundles a relocatable Python in venv\Scripts (so every existing
 # venv\Scripts\python.exe path keeps working), the prebuilt panel, the
-# observer DLLs and DBVictory Launcher.exe. The engine serves the panel itself
+# observer DLLs and DBVictory.exe. The engine serves the panel itself
 # and the launcher and panel windows are pywebview (Windows' own WebView2), so
 # Node.js is only used here, to build the panel. tools\release_trim.py then
 # drops what only the build needed (node_modules, pip, Tk), so players
@@ -97,9 +97,17 @@ foreach ($client in "legacy", "20261116", "20261126") {
 Set-Location $Root
 
 # 5. Launcher.
-& (Join-Path $Stage "launcher\build_desktop.ps1") -OutputFile (Join-Path $Stage "DBVictory Launcher.exe") 2>&1 | ForEach-Object { "$_" }
+# DBVictory.exe is what players start; DBVictory Launcher.exe (its old name) stays for shortcuts and
+# for older launchers, which restart under that name after installing an update.
+foreach ($exe in "DBVictory.exe", "DBVictory Launcher.exe") {
+    & (Join-Path $Stage "launcher\build_desktop.ps1") -OutputFile (Join-Path $Stage $exe) 2>&1 | ForEach-Object { "$_" }
+}
 $ErrorActionPreference = "Stop"
-foreach ($built in "dll\dbvbot.dll", "dll\dbvobserver_marker_20261117.dll", "dll\dbvobserver_marker_20261126.dll", "DBVictory Launcher.exe") {
+# The bot's processes: Python's own executables under the bot's name and icon.
+$icon = Join-Path $Stage "launcher\desktop.ico"
+Invoke-Checked $Python @("-I", (Join-Path $Root "tools\brand_exe.py"), (Join-Path $Scripts "pythonw.exe"), (Join-Path $Scripts "DBVictory.exe"), $icon)
+Invoke-Checked $Python @("-I", (Join-Path $Root "tools\brand_exe.py"), $Python, (Join-Path $Scripts "DBVictory Engine.exe"), $icon)
+foreach ($built in "dll\dbvbot.dll", "dll\dbvobserver_marker_20261117.dll", "dll\dbvobserver_marker_20261126.dll", "DBVictory.exe", "DBVictory Launcher.exe", "venv\Scripts\DBVictory.exe", "venv\Scripts\DBVictory Engine.exe") {
     if (-not (Test-Path (Join-Path $Stage $built))) { throw "Build did not produce $built" }
 }
 
@@ -108,7 +116,11 @@ Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_trim.py"), $S
 Invoke-Checked $Python @("-c", "import mcp, Crypto, websockets, pymem, ssl, sqlite3, ctypes, win32api, win32job, win32gui, win32process, win32ts, win32clipboard, jwt, mcp.server.fastmcp, mcp.server.stdio, mcp.client.stdio; from Crypto.PublicKey import RSA; RSA.generate(1024); from mcp.os.win32 import utilities; print('Trimmed Python OK')")
 # The windows: pywebview drives WebView2 through pythonnet; the tray is a WinForms NotifyIcon.
 Push-Location $Stage  # imports the staged launcher and panel modules
-try { Invoke-Checked $Python @("-c", "import clr, webview, win32clipboard, pathlib; clr.AddReference('System.Windows.Forms'); assert (pathlib.Path(webview.__file__).parent / 'lib' / 'Microsoft.Web.WebView2.Core.dll').is_file(); import webview.platforms.edgechromium, launcher.desktop_app, dbv.mcp_server.panel_window, dbv.mcp_server.server; print('Windows OK')") } finally { Pop-Location }
+try { Invoke-Checked (Join-Path $Scripts "DBVictory Engine.exe") @("-c", "import clr, webview, win32clipboard, pathlib; clr.AddReference('System.Windows.Forms'); assert (pathlib.Path(webview.__file__).parent / 'lib' / 'Microsoft.Web.WebView2.Core.dll').is_file(); import webview.platforms.edgechromium, launcher.desktop_app, dbv.mcp_server.panel_window, dbv.mcp_server.server; print('Windows OK')") } finally { Pop-Location }
+# The windowed DBVictory.exe has no console: judge it by its exit code.
+$windowed = Start-Process -FilePath (Join-Path $Scripts "DBVictory.exe") -ArgumentList "-B", "-c", "`"import webview.platforms.edgechromium, launcher.desktop_app, dbv.mcp_server.panel_window`"" -WorkingDirectory $Stage -Wait -PassThru -WindowStyle Hidden
+if ($windowed.ExitCode -ne 0) { throw "DBVictory.exe cannot start the windows (exit code $($windowed.ExitCode))" }
+Write-Host "DBVictory.exe OK"
 # The engine serves the panel with dbv.mcp_server.panel_server; it only reads .next.
 $panel = Start-Process -FilePath $Python -ArgumentList "-m", "dbv.mcp_server.panel_server", (Join-Path $Stage "dashboard") -WorkingDirectory $Stage -PassThru -WindowStyle Hidden
 try {

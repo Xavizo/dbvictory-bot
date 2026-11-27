@@ -29,6 +29,7 @@ import TransitionLearningPanel from "./TransitionLearningPanel";
 import DashboardChrome, { type WorkspaceView } from "./DashboardChrome";
 import BarrierBandPanel from "./BarrierBandPanel";
 import BarrierSpellPanel from "./BarrierSpellPanel";
+import ItemIdentificationPanel from "./ItemIdentificationPanel";
 
 function ActionCard({action,onRefresh}:{action:ActionInfo;onRefresh:()=>void}) {
   const [confirmDelete,setConfirmDelete]=useState(false);
@@ -266,6 +267,7 @@ export default function Dashboard() {
       </details>
     </section>
     <section hidden={view!=="diagnostics"} aria-label="Widok diagnostyki" className="space-y-5">
+      <ItemIdentificationPanel state={state} online={mcpConnected} onRefresh={refresh}/>
       {state?.packet_observer && <details className="learned-drawer"><summary>Analiza pakietów · {state.packet_observer.status==="active"?"aktywna":state.packet_observer.status==="degraded"?"luki w odczycie":state.packet_observer.status==="closed"?"zakończona":"niedostępna"}</summary><div className="p-3 text-xs space-y-1">
         <p>Kolejka {state.packet_observer.pending}/{state.packet_observer.capacity} · opóźnienie {state.packet_observer.lag_ms} ms · maksimum {state.packet_observer.max_lag_ms} ms</p>
         <p>Przetworzone {state.packet_observer.applied} · pominięte obserwacje {state.packet_observer.dropped} · błędy {state.packet_observer.failures}</p>

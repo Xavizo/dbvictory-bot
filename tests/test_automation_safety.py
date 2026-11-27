@@ -103,7 +103,7 @@ def test_dashboard_control_endpoints_change_real_state_without_game(state, monke
     async def exercise():
         monkeypatch.setattr(api, "_state", state)
         monkeypatch.setattr(api, "_main_loop", asyncio.get_running_loop())
-        for name in ("_async_emergency_stop", "_async_unlock_automation", "_async_pause_automation", "_async_resume_automation", "_async_update_action_config", "_async_potion_diagnostics"):
+        for name in ("_async_emergency_stop", "_async_unlock_automation", "_async_pause_automation", "_async_resume_automation", "_async_update_action_config", "_async_potion_diagnostics", "_async_item_identification"):
             monkeypatch.setattr(sys.modules["__main__"], name, getattr(server, name), raising=False)
         http = HTTPServer(("127.0.0.1", 0), api._Handler)
         thread = threading.Thread(target=http.serve_forever, daemon=True); thread.start()
@@ -135,6 +135,12 @@ def test_dashboard_control_endpoints_change_real_state_without_game(state, monke
             assert not state.settings["actions"]["auto_potions"].get("enabled")
             status, _ = await asyncio.to_thread(request, "/api/potions/diagnostics", {"enabled": True})
             assert status == 200 and state.potion_diagnostics.snapshot()["active"]
+            assert state.item_identification.enabled
+            status, _ = await asyncio.to_thread(request, "/api/diagnostics/item-identification", {"enabled": "no"})
+            assert status == 400 and state.item_identification.enabled
+            status, _ = await asyncio.to_thread(request, "/api/diagnostics/item-identification", {"enabled": False})
+            assert status == 200 and not state.item_identification.enabled
+            assert state.settings["item_identification"] is False
         finally:
             await asyncio.to_thread(http.shutdown)
             http.server_close(); thread.join(timeout=2)

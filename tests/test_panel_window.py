@@ -240,3 +240,43 @@ def test_sound_operations_are_bounded_and_need_the_trusted_frame():
     main.url = "https://evil.example/"
     with pytest.raises(PermissionError):
         main.api.panel_pause(False)
+
+
+def route_pack_text():
+    return json.dumps({"format": "dbvictory-route", "version": 1, "server": "x:1", "drafts": [], "tiles": []})
+
+
+def test_a_route_pack_is_saved_only_where_the_player_chose(tmp_path):
+    import gzip
+    app, main, _, _ = panel()
+    target = tmp_path / "Garlic"
+    dialogs = []
+    app.file_dialog = lambda kind, mode, name="": dialogs.append((kind, mode, name)) or (str(target),)
+    assert main.api.save_route("Garlic castle.dbvroute", route_pack_text()) == "Garlic.dbvroute"
+    assert dialogs == [("main", "save", "Garlic castle.dbvroute")]
+    assert json.loads(gzip.decompress((tmp_path / "Garlic.dbvroute").read_bytes()))["format"] == "dbvictory-route"
+    app.file_dialog = lambda *args: None
+    assert main.api.save_route("Garlic castle.dbvroute", route_pack_text()) is False
+    for name, text in (("../x.dbvroute", route_pack_text()), ("x.exe", route_pack_text()), ("x.dbvroute", "{}")):
+        with pytest.raises(ValueError):
+            main.api.save_route(name, text)
+    main.url = "https://evil.example/"
+    with pytest.raises(PermissionError):
+        main.api.save_route("x.dbvroute", route_pack_text())
+
+
+def test_opening_a_route_pack_returns_only_a_valid_pack(tmp_path):
+    import gzip
+    app, main, _, _ = panel()
+    good, plain, other = tmp_path / "a.dbvroute", tmp_path / "b.dbvroute", tmp_path / "c.dbvroute"
+    good.write_bytes(gzip.compress(route_pack_text().encode()))
+    plain.write_text(route_pack_text(), encoding="utf-8")
+    other.write_text('{"token": "secret"}', encoding="utf-8")
+    for path in (good, plain):
+        app.file_dialog = lambda *args, path=path: [str(path)]
+        assert json.loads(main.api.open_route())["version"] == 1
+    app.file_dialog = lambda *args: [str(other)]
+    with pytest.raises(ValueError):
+        main.api.open_route()
+    app.file_dialog = lambda *args: None
+    assert main.api.open_route() is None
