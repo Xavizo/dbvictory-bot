@@ -85,8 +85,28 @@ function drawSteps(s) {
   }
 }
 
+let channelBusy=false;
+function drawChannel(s) {
+  const box=$("#testChannel");
+  $("#channelRow").hidden=s.channel==null;
+  if(!channelBusy) box.checked=s.channel==="test";
+  box.disabled=channelBusy||!!s.readOnly;
+}
+async function changeChannel() {
+  const box=$("#testChannel");
+  if(channelBusy) return;
+  channelBusy=true;box.disabled=true;
+  $("#channelMessage").textContent="Zapisywanie…";
+  try {
+    await window.desktop.channel(box.checked?"test":"stable");
+    $("#channelMessage").textContent=box.checked?"Wersje testowe włączone. Sprawdzanie aktualizacji…":"Wersje testowe wyłączone.";
+  } catch (error) { box.checked=!box.checked; $("#channelMessage").textContent=error.message; }
+  finally { channelBusy=false; window.desktop.state().then(drawChannel); }
+}
+
 function update(s) {
   const stage=s.phase, idle=stage==="ready"||stage==="clientError";
+  drawChannel(s);
   $("#version").textContent=s.version||"Sprawdzanie wersji…";
   $("#heading").textContent=headings[stage]||"Launcher";
   drawHistory(s.changes);
@@ -169,8 +189,9 @@ async function changeAi(operation,target) {
   catch (error) { $("#aiMessage").textContent=error.message; }
   finally { aiBusy=false; refreshAi(); }
 }
-$("#aiOpen").onclick=()=>{$("#aiMessage").textContent="";aiDialog.showModal();refreshAi();};
+$("#aiOpen").onclick=()=>{$("#aiMessage").textContent="";$("#channelMessage").textContent="";aiDialog.showModal();refreshAi();};
 $("#closeAi").onclick=()=>aiDialog.close();
+$("#testChannel").onchange=changeChannel;
 for (const dialog of [historyDialog,aiDialog]) dialog.addEventListener("click",event=>{
   if(event.target!==dialog)return;
   const rect=dialog.getBoundingClientRect();

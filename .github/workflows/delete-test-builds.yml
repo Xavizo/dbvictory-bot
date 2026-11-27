@@ -1,0 +1,41 @@
+# Removes test builds (pre-releases vX.Y.Z-test.<commit> made by "Release" on a branch).
+#
+# Manually: Actions -> "Delete test builds" -> Run workflow, with a branch name or empty for all.
+# Automatically: when a pull request closes (merged or not), its branch's test builds go.
+# Regular releases are never touched.
+name: Delete test builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Only this branch's test builds (empty = all test builds)"
+        type: string
+        default: ""
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    # A fork's pull request gets a read-only token and cannot have test builds here anyway.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Delete test pre-releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || inputs.branch }}
+        run: |
+          deleted=0
+          while IFS=$'\t' read -r tag name; do
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test\.[0-9a-f]{7}$ ]] || continue
+            if [[ -n "$BRANCH" && "$name" != *" ($BRANCH)" ]]; then continue; fi
+            echo "Deleting $tag ($name)"
+            gh release delete "$tag" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            deleted=$((deleted + 1))
+          done < <(gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName,name,isPrerelease \
+                     --jq '.[] | select(.isPrerelease) | [.tagName, .name] | @tsv')
+          echo "Deleted $deleted test build(s)."

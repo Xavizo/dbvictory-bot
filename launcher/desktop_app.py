@@ -190,7 +190,7 @@ class Launcher:
         self.recheck_on_close = False
         self.view = {"phase": "checking", "text": "Sprawdzanie lokalnej kolejki wydań…", "version": "",
                      "changes": [], "folder": "", "installed": False, "clientOpen": False, "canDefer": False,
-                     "readOnly": read_only}
+                     "readOnly": read_only, "channel": None}
 
     # ── helpers ───────────────────────────────────────────────────────
     def _every(self, seconds, callback):
@@ -285,7 +285,9 @@ class Launcher:
                  "canDefer": bool(report.get("can_defer") and self.old_pending),
                  "canInstall": (github and report["state"] == "available" and bool(self.old_pending)
                                 and not self.read_only),
-                 "pendingLabel": report.get("pending_label") or ""}
+                 "pendingLabel": report.get("pending_label") or "",
+                 # Only downloaded packages have channels; an error report keeps the last known one.
+                 "channel": report.get("channel", self.view.get("channel")) if github else None}
         if report["state"] in ("updated", "current"):
             if self.read_only:
                 self.set("ready", "Sprawdzenie zakończone.", **extra)
@@ -493,6 +495,19 @@ class Launcher:
         finally:
             self.locked = False
 
+    async def set_channel(self, channel):
+        """Switch test builds on or off, then look for releases again when nothing else is running."""
+        if self.read_only or self.view.get("channel") is None:
+            raise PermissionError("Kanał aktualizacji można zmienić tylko w instalacji z paczki wydania.")
+        await self.host.set_channel(self.root, channel)
+        self.view = {**self.view, "channel": channel}
+        self.window.send(self.view)
+        if self.child and self.awaiting_start and self.view["phase"] in ("ready", "clientError"):
+            await self.action("recheck")
+        elif not self.child and self.view["phase"] in ("ready", "problem", "available", "closed", "busy", "recovery"):
+            await self.action("retry")
+        return {"channel": channel}
+
     async def _start(self):
         proc = self.child
         try:
@@ -636,6 +651,12 @@ class LauncherApi:
             raise ValueError("Nieznana akcja.")
         self._run(self._launcher.action(name))
         return None
+
+    def channel(self, channel):
+        self._trusted()
+        if channel not in ("stable", "test"):
+            raise ValueError("Nieznany kanał aktualizacji.")
+        return self._run(self._launcher.set_channel(channel), 120)
 
     def mcp(self, operation, target=None):
         self._trusted()
