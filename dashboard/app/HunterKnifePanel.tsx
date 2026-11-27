@@ -27,14 +27,14 @@ export default function HunterKnifePanel({ state, onRefresh }: {
     }
   }
   return <section className="barrier-band-panel" aria-label="Hunter Knife">
-    <div><strong>Hunter Knife</strong><small>5908 · {info?.corpses ? `${info.corpses.length} ID ciał · ${info.species?.length ?? 0} potworów` : "elementale ognia, Mutant Wolf, Roco i Gunso (także Chibi i Fury)"}</small></div>
+    <div><strong>Hunter Knife</strong><small>5908 · {info?.monsters ? `${info.monsters.length} potworów na liście` : "elementale ognia, Mutant Wolf, Roco i Gunso (także Chibi i Fury)"}</small></div>
     <span className="barrier-band-status">{enabled ? info?.status ?? "Oczekiwanie" : "Wyłączony"}</span>
     <button className={`action-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled}
       aria-label="Automatyczny Hunter Knife" disabled={busy || !!state?.automation_paused} onClick={toggle}><span/></button>
-    <button type="button" className="secondary-button" aria-haspopup="dialog" disabled={!info?.corpses}
-      onClick={() => setConfiguring(true)}>Konfiguruj</button>
-    {configuring && info?.corpses && <HunterKnifeConfig corpses={info.corpses} species={info.species ?? []}
-      defaults={{ corpses: info.default_corpses ?? [], species: info.default_species ?? [] }}
+    <button type="button" className="secondary-button" aria-haspopup="dialog" disabled={!info?.monsters}
+      onClick={() => setConfiguring(true)}>Konfiguruj{!!info?.suggestions?.length && ` · nowe ciało (${info.suggestions.length})`}</button>
+    {configuring && info?.monsters && <HunterKnifeConfig monsters={info.monsters} defaults={info.default_monsters ?? []}
+      suggestions={info.suggestions ?? []} ignored={info.ignored_suggestions ?? []}
       onClose={() => setConfiguring(false)} onSaved={onRefresh}/>}
     {info && <small className="barrier-band-help">Z walki i XP {info.from_combat ?? 0} · Wpisy Loot {info.personal_loot} · Obrobione {info.processed} · Odmowy właściciela {info.denied??0}
       {!!info.unassigned_bodies && ` · Ciała bez ustalonego właściciela ${info.unassigned_bodies}`}

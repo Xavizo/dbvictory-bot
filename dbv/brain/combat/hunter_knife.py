@@ -3,6 +3,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 import logging
 import re
+import threading
 
 from dbv.brain.hunts.farming_telemetry import experience_for_level
 from dbv.brain.hunts.hunt_sightings import fresh_monster_name
@@ -13,18 +14,21 @@ ROCO = 8548
 GUNSO = 910
 MUTANT_WOLF = 8550
 SPENT = 8141
-DEFAULT_CORPSES = tuple({"id": body_id, "skinned": SPENT} for body_id in (FRESH, ROCO, GUNSO, MUTANT_WOLF))
-DEFAULT_SPECIES = ("fire elemental", "fire elementalis", "mutant fire elemental",
-                   "fury mutant fire", "fury mutant fire elemental",
-                   "roco", "chibi roco", "fury roco",
-                   "gunso", "chibi gunso", "fury gunso", "mutant wolf")
-MAX_CORPSES = 64
-MAX_SPECIES = 128
+FIRE = ("fire elemental", "fire elementalis", "mutant fire elemental", "fury mutant fire",
+        "fury mutant fire elemental")
+DEFAULT_MONSTERS = tuple(
+    {"name": name, "corpses": ({"id": body_id, "skinned": SPENT},)}
+    for names, body_id in ((FIRE, FRESH), (("roco", "chibi roco", "fury roco"), ROCO),
+                           (("gunso", "chibi gunso", "fury gunso"), GUNSO), (("mutant wolf",), MUTANT_WOLF))
+    for name in names)
+MAX_MONSTERS = 128
+MAX_CORPSES_PER_MONSTER = 8
+MAX_IGNORED = 256
 # Updated in place by apply_config, so modules that imported them see the player's list.
-FRESH_BODIES = {entry["id"] for entry in DEFAULT_CORPSES}
-SKINNED_BY = {entry["id"]: entry["skinned"] for entry in DEFAULT_CORPSES}
+FRESH_BODIES = {c["id"] for m in DEFAULT_MONSTERS for c in m["corpses"]}
+SKINNED_BY = {c["id"]: c["skinned"] for m in DEFAULT_MONSTERS for c in m["corpses"]}
 SPENT_BODIES = set(SKINNED_BY.values())
-SKINNABLE_SPECIES = set(DEFAULT_SPECIES)
+SKINNABLE_SPECIES = {m["name"] for m in DEFAULT_MONSTERS}
 
 
 def _item_id(value, label):
@@ -35,38 +39,51 @@ def _item_id(value, label):
     return value
 
 
+def monster_name(name):
+    if type(name) is not str or not 1 <= len(name.strip()) <= 64 or "[" in name or "]" in name:
+        raise ValueError("Nazwa potwora musi mieć od 1 do 64 znaków, bez nawiasów kwadratowych.")
+    return " ".join(name.split()).casefold()
+
+
 def validate_config(cfg):
-    """Normalise the corpse IDs and monster names the knife may be used on."""
+    """Normalise the monsters, and their corpse IDs, the knife may be used on."""
     cfg = dict(cfg)
-    corpses = cfg.get("corpses", DEFAULT_CORPSES)
-    species = cfg.get("species", DEFAULT_SPECIES)
-    if not isinstance(corpses, (list, tuple)) or not 1 <= len(corpses) <= MAX_CORPSES:
-        raise ValueError(f"Podaj od 1 do {MAX_CORPSES} ID ciał.")
-    clean = []
-    for entry in corpses:
-        if not isinstance(entry, dict):
-            entry = {"id": entry}
-        body_id = _item_id(entry.get("id"), "ID ciała")
-        after = _item_id(entry.get("skinned", SPENT), "ID ciała po oskórowaniu")
-        if body_id in (KNIFE, after):
-            raise ValueError(f"ID {body_id} nie może być ciałem do skórowania.")
-        if any(body_id == e["id"] for e in clean):
-            raise ValueError(f"ID ciała {body_id} jest na liście dwa razy.")
-        clean.append({"id": body_id, "skinned": after})
-    fresh = {e["id"] for e in clean}
-    overlap = fresh & {e["skinned"] for e in clean}
+    cfg.pop("corpses", None)
+    cfg.pop("species", None)
+    monsters = cfg.get("monsters", DEFAULT_MONSTERS)
+    if not isinstance(monsters, (list, tuple)) or not 1 <= len(monsters) <= MAX_MONSTERS:
+        raise ValueError(f"Podaj od 1 do {MAX_MONSTERS} potworów.")
+    clean, skinned_by = [], {}
+    for monster in monsters:
+        if not isinstance(monster, dict):
+            raise ValueError("Każdy potwór musi mieć nazwę i listę ciał.")
+        name = monster_name(monster.get("name"))
+        if any(m["name"] == name for m in clean):
+            raise ValueError(f"Potwór {name} jest na liście dwa razy.")
+        corpses = monster.get("corpses", [])
+        if not isinstance(corpses, (list, tuple)) or len(corpses) > MAX_CORPSES_PER_MONSTER:
+            raise ValueError(f"Potwór {name} może mieć najwyżej {MAX_CORPSES_PER_MONSTER} ID ciał.")
+        entries = []
+        for entry in corpses:
+            if not isinstance(entry, dict):
+                entry = {"id": entry}
+            body_id = _item_id(entry.get("id"), "ID ciała")
+            after = _item_id(entry.get("skinned", SPENT), "ID ciała po oskórowaniu")
+            if body_id in (KNIFE, after):
+                raise ValueError(f"ID {body_id} nie może być ciałem do skórowania.")
+            if skinned_by.setdefault(body_id, after) != after:
+                raise ValueError(f"Ciało {body_id} ma dwa różne ID po oskórowaniu.")
+            if all(e["id"] != body_id for e in entries):
+                entries.append({"id": body_id, "skinned": after})
+        clean.append({"name": name, "corpses": entries})
+    overlap = set(skinned_by) & set(skinned_by.values())
     if overlap:
         raise ValueError(f"ID {min(overlap)} nie może być jednocześnie świeżym i oskórowanym ciałem.")
-    if not isinstance(species, (list, tuple)) or not 1 <= len(species) <= MAX_SPECIES:
-        raise ValueError(f"Podaj od 1 do {MAX_SPECIES} nazw potworów.")
-    names = []
-    for name in species:
-        if type(name) is not str or not 1 <= len(name.strip()) <= 64 or "[" in name or "]" in name:
-            raise ValueError("Nazwa potwora musi mieć od 1 do 64 znaków, bez nawiasów kwadratowych.")
-        name = " ".join(name.split()).casefold()
-        if name not in names:
-            names.append(name)
-    cfg["corpses"], cfg["species"] = clean, names
+    ignored = cfg.get("ignored_suggestions", [])
+    if not isinstance(ignored, (list, tuple)):
+        raise ValueError("Lista odrzuconych propozycji jest nieprawidłowa.")
+    cfg["ignored_suggestions"] = sorted({_item_id(i, "ID ciała") for i in ignored})[-MAX_IGNORED:]
+    cfg["monsters"] = clean
     return cfg
 
 
@@ -79,18 +96,50 @@ def effective_config(cfg):
 
 
 def apply_config(cfg):
-    """Make the knife recognise the configured corpses and monsters; return what was applied."""
-    cfg = effective_config(cfg)
-    skinned_by = {e["id"]: e["skinned"] for e in cfg["corpses"]}
+    """Make the knife recognise the configured monsters and corpses; return what was applied."""
+    monsters = effective_config(cfg)["monsters"]
+    skinned_by = {c["id"]: c["skinned"] for m in monsters for c in m["corpses"]}
     FRESH_BODIES.clear()
     FRESH_BODIES.update(skinned_by)
     SKINNED_BY.clear()
     SKINNED_BY.update(skinned_by)
     SPENT_BODIES.clear()
-    SPENT_BODIES.update(skinned_by.values())
+    SPENT_BODIES.update(skinned_by.values() or (SPENT,))
     SKINNABLE_SPECIES.clear()
-    SKINNABLE_SPECIES.update(cfg["species"])
-    return tuple(sorted(skinned_by.items())), tuple(cfg["species"])
+    SKINNABLE_SPECIES.update(m["name"] for m in monsters)
+    return tuple(sorted(skinned_by.items())), tuple(m["name"] for m in monsters)
+
+
+class CorpseSuggestions:
+    """Corpses the player skinned by hand, offered for the Hunter Knife list."""
+
+    def __init__(self, limit=20):
+        self.limit = limit
+        self.rows = {}
+        self.lock = threading.Lock()
+
+    def record(self, body_id, skinned, name, at):
+        if body_id in (KNIFE, skinned):
+            return
+        with self.lock:
+            row = self.rows.pop(body_id, None) or {"id": body_id, "skinned": skinned, "name": None, "seen": 0}
+            row.update(skinned=skinned, seen=row["seen"] + 1, at=at)
+            if name:
+                row["name"] = " ".join(name.split()).casefold()
+            self.rows[body_id] = row
+            while len(self.rows) > self.limit:
+                self.rows.pop(next(iter(self.rows)))
+
+    def pending(self, cfg):
+        """What is not on the list yet and was not ignored."""
+        cfg = effective_config(cfg)
+        known = {(m["name"], c["id"]) for m in cfg["monsters"] for c in m["corpses"]}
+        ids = {body_id for _, body_id in known}
+        ignored = set(cfg["ignored_suggestions"])
+        with self.lock:
+            rows = [dict(r) for r in self.rows.values()]
+        return [r for r in reversed(rows) if r["id"] not in ignored
+                and (r["id"] not in ids if not r["name"] else (r["name"], r["id"]) not in known)]
 
 
 LOOT_LINE = re.compile(
@@ -157,6 +206,14 @@ def manual_corpse_ids(frame, position):
     if tile is None or tile.get("kind") == "no_ground":
         return None
     return [(item["stack"], item["id"]) for item in tile["items"] if "container" in item.get("flags", ())]
+
+
+def killed_on(game, position, before, window=900.0):
+    """Name of the latest logged kill on this tile, if one is recent enough to own the corpse."""
+    for kill in reversed(list(getattr(game, "kill_log", ()))):
+        if (kill.get("x"), kill.get("y"), kill.get("z")) == tuple(position) and 0 <= before - kill.get("t", 0) <= window:
+            return kill.get("name") or None
+    return None
 
 
 def body_counts(items):

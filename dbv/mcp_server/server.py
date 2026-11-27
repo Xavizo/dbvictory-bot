@@ -140,6 +140,8 @@ class BotState:
         self.speed_scheduler = SpeedScheduler()
         self.potion_scheduler = PotionScheduler()
         self.potion_diagnostics = PotionDiagnostics()
+        from dbv.brain.combat.hunter_knife import CorpseSuggestions
+        self.knife_suggestions = CorpseSuggestions()
         self._action_tasks: dict[str, asyncio.Task] = {}
         self._action_completed: set[str] = set()
         self._adaptive_prepare_token = None

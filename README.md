@@ -196,18 +196,23 @@ loot that drops. Out of the box it recognises the corpses of these monsters:
 - Gunso, Chibi Gunso, Fury Gunso
 - Mutant Wolf
 
-Other corpses are left alone. To add or remove one, click **Konfiguruj**
-(Configure) next to the Hunter Knife switch. The window has two lists:
+Other corpses are left alone. To change the list, click **Konfiguruj**
+(Configure) next to the Hunter Knife switch. The window lists monsters by name,
+as the game shows them, and each monster has its corpse IDs: the fresh corpse
+and the ID it turns into once skinned (8141 for the monsters above). The knife
+is used only on corpses of monsters on the list, so removing a monster stops
+the knife on its corpses. A monster added without a corpse ID is skipped until
+it gets one.
 
-- **ID ciał** (corpse IDs): the item ID of the fresh corpse and the ID it turns
-  into once skinned (8141 for the monsters above).
-- **Potwory** (monsters): the monster names as the game shows them. The knife
-  only claims a corpse after a kill of a listed monster.
+You rarely need to type IDs. When you skin a corpse that isn't on the list with
+the knife yourself, the bot notices the corpse change and the button shows
+**nowe ciało** (new corpse). The window then lists that corpse, with the name of
+the monster you last killed on that tile, and you can **Dodaj** (add) or
+**Ignoruj** (ignore) it. You can also look IDs up with **Identyfikacja
+przedmiotów** (item identification) in the **Diagnostyka** tab.
 
-To find an ID, use **Identyfikacja przedmiotów** (item identification) in the
-**Diagnostyka** tab and Look at the corpse before and after skinning. The list is
-saved in `bot_settings.json`, takes effect without restarting the knife, and
-**Przywróć domyślne** brings back the list above.
+The list is saved in `bot_settings.json`, takes effect without restarting the
+knife, and **Przywróć domyślne** brings back the list above.
 
 ### Diagnostics
 
