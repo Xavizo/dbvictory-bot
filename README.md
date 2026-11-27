@@ -463,22 +463,10 @@ cd dashboard; npm test; npm run typecheck; npm run build
 - Your settings (`bot_settings.json`), learned data (`local_data/`) and logs are
   excluded from Git.
 
-## Credits
-
-This project is a fork of the original DBVictory proxy bot by
-**patrykjanik** ([@pumanitro](https://github.com/pumanitro)), which provided the first proxy, packet parser, DLL and
-cavebot. That original code has since been rewritten: his DLL and the legacy
-client support were removed, and the proxy, packet parser, protocol, cavebot
-recorder, MCP server and panel were reimplemented from their behaviour and
-tests. Only interface names, protocol constants and a few one-line idioms of
-his remain. The launcher and updater, client profiles, native observer, atlas,
-combat, healing, Hunter Knife and the rest of the panel are new.
-
 ## License
 
-The bot's own code is released under the [MIT License](LICENSE), including the
-remaining parts of the original code by patrykjanik, who agreed to it. Some
-pieces keep their own terms and are not covered by it:
+The bot's own code is released under the [MIT License](LICENSE). Some pieces
+keep their own terms and are not covered by it:
 
 - **Python runtime and Python packages** bundled in release builds
   (`venv\`) are under their own licenses (the PSF License for CPython, and each
