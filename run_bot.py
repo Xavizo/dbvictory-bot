@@ -31,7 +31,7 @@ from pathlib import Path
 import socket
 from dbv.mcp_server.tray_exit import EXIT_FILE_ENV, tray_input
 from launcher_lock import launcher_lock
-from dbv.paths import INSTALL_ROOT
+from dbv.paths import INSTALL_ROOT, state_dir
 
 ROOT = INSTALL_ROOT
 # These actions must always require an explicit choice in the panel after start.
@@ -120,7 +120,7 @@ async def run_console(args, env, lines, *, on_confirm=None):
     if on_confirm is not None:
         on_confirm()
     params = StdioServerParameters(command=sys.executable,args=[str(ROOT/'run_mcp.py')],cwd=str(ROOT),env=env)
-    log_path = ROOT/'.codex/standalone-stderr.log'
+    log_path = state_dir(ROOT)/'standalone-stderr.log'
     with log_path.open('a',encoding='utf-8') as log:
         async with stdio_client(params,errlog=log) as (read,write):
             async with ClientSession(read,write) as session:
@@ -257,7 +257,7 @@ def main(*, session_lock_held=False):
         parser.error('This launcher requires Windows.')
     os.chdir(ROOT)
     try:
-        with (nullcontext() if session_lock_held else launcher_lock(ROOT/'.codex/standalone.lock')):
+        with (nullcontext() if session_lock_held else launcher_lock(state_dir(ROOT)/'standalone.lock')):
             asyncio.run(run(args,prepare_environment(args.game_port)))
     except KeyboardInterrupt:
         print('\nBot zakończony. Ponowny start: z listy postaci.')

@@ -208,12 +208,12 @@ def test_a_failed_exit_keeps_the_panel_available(tmp_path):
 
 def test_the_launcher_hears_once_that_the_panel_is_ready(tmp_path, monkeypatch):
     monkeypatch.setattr(panel_window.paths, "INSTALL_ROOT", tmp_path)
-    (tmp_path / ".codex" / "launcher-events").mkdir(parents=True)
+    (tmp_path / ".dbvictory" / "launcher-events").mkdir(parents=True)
     launcher_id = "f" * 32
     app, main, _, _ = panel({"DBV_LAUNCHER_ID": launcher_id, panel_window.EXIT_FILE_ENV: str(tmp_path / "exit")})
     main.url = "data:text/html,"
     main.events.loaded.fire()
-    marker = tmp_path / ".codex" / "launcher-events" / f"{launcher_id}.ready"
+    marker = tmp_path / ".dbvictory" / "launcher-events" / f"{launcher_id}.ready"
     assert not marker.exists()  # the loading screen is not the panel
     main.url = "http://127.0.0.1:4747/"
     main.events.loaded.fire()

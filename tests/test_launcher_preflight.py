@@ -38,7 +38,7 @@ def test_check_only_does_not_apply(monkeypatch):
 def test_file_handoff_rechecks_queue_and_holds_lock(tmp_path, monkeypatch):
     from launcher_lock import launcher_lock
 
-    feed = tmp_path / ".codex/updates"
+    feed = tmp_path / ".dbvictory/updates"
     feed.mkdir(parents=True)
     pending = feed / "pending.json"
     calls = []
@@ -54,7 +54,7 @@ def test_file_handoff_rechecks_queue_and_holds_lock(tmp_path, monkeypatch):
     if sys.platform != "win32":
         pytest.skip("Windows desktop handoff")
     monkeypatch.setattr(launcher_files, "show_window", close_window)
-    lock = tmp_path / ".codex/standalone.lock"
+    lock = tmp_path / ".dbvictory/standalone.lock"
     with launcher_files.desktop_files(tmp_path) as ready:
         assert ready and len(calls) == 2
         with pytest.raises(RuntimeError), launcher_lock(lock):

@@ -1748,7 +1748,7 @@ async def packet_journal(action: str = "status", include_chat: bool = False) -> 
     """Opt-in packet metadata journal for the current game session (no payloads or keys).
 
     action: status | start | stop | dump. start switches it on until logout or reconnect and
-    writes .codex/journal/journal-*.jsonl; dump writes the in-memory rings to a JSON file and
+    writes .dbvictory/journal/journal-*.jsonl; dump writes the in-memory rings to a JSON file and
     returns its path. Other players' chat text is kept only with include_chat=true.
     """
     from dbv.client_bridge import session_bridge
