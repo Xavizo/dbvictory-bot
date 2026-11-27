@@ -112,3 +112,15 @@ def test_the_repository_ships_a_valid_spell_catalogue():
     words = {row["words"] for row in rows}
     assert len(words) == len(rows) and "darkness blaster" in words
     assert all(row["icon"] is None or row["icon"].startswith("/local-spells/icons/") for row in rows)
+    shipped = paths.SHIPPED_SPELL_CATALOG.parent / "icons"
+    for icon in {row["icon"] for row in rows if row["icon"]}:  # every icon the catalogue names ships with it
+        assert (shipped / icon.rsplit("/", 1)[1]).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_shipped_spell_icons_stand_in_for_a_missing_local_export(dashboard):
+    (dashboard / "spells" / "icons").mkdir(parents=True)
+    (dashboard / "spells" / "icons" / "7.png").write_text("png")
+    assert panel_server.resolve(dashboard, "/local-spells/icons/7.png")[0] == (dashboard / "spells" / "icons" / "7.png").resolve()
+    assert panel_server.resolve(dashboard, "/local-spells/icons/../catalog.json") is None
+    assert panel_server.resolve(dashboard, "/local-spells/icons/85.png")[0] == (
+        dashboard / "public" / "local-spells" / "icons" / "85.png").resolve()  # the player's own export wins

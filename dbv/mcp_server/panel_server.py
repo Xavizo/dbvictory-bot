@@ -70,6 +70,8 @@ def resolve(dashboard, path, rsc=False):
     if target is None and path == "/local-spells/catalog.json":
         # No catalogue exported from this player's client: serve the one shipped with the bot.
         target = _inside(Path(dashboard) / "spells", "catalog.json")
+    elif target is None and path.startswith("/local-spells/icons/"):
+        target = _inside(Path(dashboard) / "spells" / "icons", path[len("/local-spells/icons/"):])
     return target and (target, 200, {"Cache-Control": "no-cache"})
 
 

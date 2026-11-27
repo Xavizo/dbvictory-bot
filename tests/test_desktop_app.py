@@ -335,3 +335,30 @@ async def test_installing_shows_the_installers_progress_until_it_finishes(tmp_pa
     host.valid_sha = lambda value: True
     await launcher.check(install=sha)
     assert launcher.view["progress"] is None
+
+
+def test_quitting_never_waits_for_the_window_it_closes():
+    import threading
+    released, destroyed = threading.Event(), threading.Event()
+
+    class Blocking:
+        def destroy(self):  # like WinForms: waits for the UI thread, which waits for the closing handler
+            released.wait(5)
+            destroyed.set()
+    frame = desktop_app.WebviewWindow()
+    frame.window = Blocking()
+    frame.quit()  # returns at once, so the loop can answer the closing handler
+    assert not destroyed.is_set()
+    released.set()
+    assert destroyed.wait(5)
+
+
+def test_the_launcher_and_panel_windows_use_the_bots_icon():
+    import struct
+    from dbv.mcp_server import panel_window
+    assert desktop_app.use_app_icon(desktop_app.APP_ID) == str(desktop_app.ICON)
+    assert Path(panel_window.use_app_icon()) == desktop_app.ICON
+    data = desktop_app.ICON.read_bytes()
+    reserved, kind, count = struct.unpack_from("<HHH", data)
+    sizes = {data[6 + 16 * i] or 256 for i in range(count)}
+    assert (reserved, kind) == (0, 1) and {16, 32, 48, 256} <= sizes

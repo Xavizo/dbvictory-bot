@@ -24,6 +24,19 @@ WAITING_FOR_LIST = ("Zaloguj się na konto i pozostaw otwartą listę postaci. G
                     "„Połącz z grą”. Nie wchodź jeszcze na postać.")
 ACTIVE_PHASES = ("running", "prepared", "connecting", "starting", "panel", "waiting")
 TITLE = "DBVictory Launcher"
+ICON = Path(__file__).resolve().parent / "desktop.ico"
+APP_ID = "DBVictory.Launcher"
+
+
+def use_app_icon(app_id):
+    """Group our windows under our own taskbar button and icon instead of pythonw's."""
+    if os.name == "nt":
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        except (AttributeError, OSError):
+            pass
+    return str(ICON) if ICON.is_file() else None
 
 
 def settings_file():
@@ -623,8 +636,11 @@ class WebviewWindow:
         self.quit()
 
     def quit(self):
+        # Called on the launcher loop. destroy() waits for the UI thread, which runs the closing
+        # handler, which waits for this loop: run it aside, or the close times out and is cancelled
+        # (an updated launcher then left the old window open next to the new one).
         if self.window is not None:
-            self.window.destroy()
+            threading.Thread(target=self.window.destroy, daemon=True).start()
 
 
 def _single_instance():
@@ -688,6 +704,8 @@ def main(argv=None):
     frame.window = window
 
     def closing():
+        if launcher.quitting:
+            return True  # decided already; never wait for a loop that may be closing this window
         try:
             return asyncio.run_coroutine_threadsafe(_on_close(launcher), loop).result(5)
         except Exception:
@@ -703,7 +721,7 @@ def main(argv=None):
 
     window.events.closing += closing
     window.events.loaded += loaded
-    webview.start(gui="edgechromium" if os.name == "nt" else None, private_mode=True)
+    webview.start(gui="edgechromium" if os.name == "nt" else None, private_mode=True, icon=use_app_icon(APP_ID))
     loop.call_soon_threadsafe(loop.stop)
     return 0
 
