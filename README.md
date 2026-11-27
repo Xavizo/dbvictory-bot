@@ -272,7 +272,7 @@ Launcher ──► run_bot.py ──► MCP engine (dbv/mcp_server/server.py)
 
 1. Open [Releases](../../releases/latest) and download
    `DBVictory-Bot-vX.Y.Z.zip`. It contains everything: the launcher, the panel,
-   Python, Node.js and the observer DLLs. No Git, Python or Node install needed.
+   Python and the observer DLLs. No Git, Python or Node install needed.
 2. Extract it to a short path you can write to, for example `C:\DBVictory-Bot`
    (not `Program Files`; very long paths can break the extraction).
 3. Run **`DBVictory Launcher.exe`**. Windows SmartScreen may warn about an
@@ -297,7 +297,7 @@ published.
 - The DBVictory client, in a supported build
 - [Git for Windows](https://git-scm.com/download/win)
 - [Python 3.12](https://www.python.org/downloads/windows/) (3.11+ works)
-- [Node.js 22.12+](https://nodejs.org/)
+- [Node.js 22.12+](https://nodejs.org/) (only to build the panel; the bot serves the built panel itself)
 - [MinGW-w64, 32-bit](https://winlibs.com/) installed in `C:\mingw32` (to build the observer DLL)
 - .NET Framework 4 (built into Windows; used to build the launcher)
 

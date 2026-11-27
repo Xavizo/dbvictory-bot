@@ -819,6 +819,7 @@ async def _async_restart_action(name: str) -> str:
 
 _dashboard_launched = False
 _dashboard_processes: dict[str, subprocess.Popen] = {}
+_panel_server = None  # serves dashboard/.next on DASHBOARD_PORT in this process
 DASHBOARD_PORT = 4747
 
 
@@ -845,7 +846,20 @@ def _stop_dashboard() -> None:
         except (OSError, subprocess.TimeoutExpired):
             log.warning("Could not stop dashboard child PID %s", process.pid)
     _dashboard_processes.clear()
+    _stop_panel_server()
     _dashboard_launched = False
+
+
+def _stop_panel_server() -> None:
+    global _panel_server
+    server, _panel_server = _panel_server, None
+    if server is not None:
+        server.shutdown()
+        server.server_close()
+
+
+def _electron_exe(dashboard_dir: Path) -> Path:
+    return dashboard_dir / "node_modules" / "electron" / "dist" / "electron.exe"
 
 
 atexit.register(_stop_dashboard)
@@ -977,9 +991,9 @@ def _activate_staged_dashboard(directory):
 
 
 def _launch_dashboard() -> None:
-    """Launch the built, loopback-only dashboard and its authenticated Electron UI."""
-    global _dashboard_launched
-    import shutil
+    """Serve the prebuilt, loopback-only panel and open its authenticated Electron window."""
+    global _dashboard_launched, _panel_server
+    from dbv.mcp_server import panel_server
     dashboard_dir = paths.DASHBOARD_DIR
     if os.name != "nt":
         log.warning("The game dashboard requires Windows.")
@@ -987,34 +1001,27 @@ def _launch_dashboard() -> None:
     if not (dashboard_dir / ".next" / "BUILD_ID").exists():
         log.warning("Build the dashboard first: cd dashboard && npm ci && npm run build")
         return
-    npm = shutil.which("npm.cmd")
-    bundled = paths.BUNDLED_NODE_DIR
-    if npm is None and (bundled / "npm.cmd").is_file() and (bundled / "node.exe").is_file():
-        # A downloaded release ships Node.js; Codex or Claude may start MCP without it on PATH.
-        npm = str(bundled / "npm.cmd")
-        os.environ["PATH"] = str(bundled) + os.pathsep + os.environ.get("PATH", "")
-    if npm is None:
-        log.warning("npm.cmd not found on PATH — cannot launch dashboard.")
+    electron = _electron_exe(dashboard_dir)
+    if not electron.is_file():
+        log.warning("Electron is missing — run: cd dashboard && npm ci")
         return
-    if not _dashboard_running("next") and _check_port_listening(DASHBOARD_PORT):
+    if _panel_server is None and _check_port_listening(DASHBOARD_PORT):
         log.error("Dashboard port %s is occupied by another process; refusing to reuse it.", DASHBOARD_PORT)
         return
     try:
-        for name, script in (("next", "start"), ("electron", "electron:only")):
-            if _dashboard_running(name):
-                continue
-            if name == "next":
-                _activate_staged_dashboard(dashboard_dir)
+        if _panel_server is None:
+            _activate_staged_dashboard(dashboard_dir)
+            _panel_server = panel_server.start(dashboard_dir, DASHBOARD_PORT)
+        if not _dashboard_running("electron"):
             env = os.environ.copy()
-            env.pop("DBV_DASHBOARD_TOKEN", None)
-            env.pop(EXIT_FILE_ENV, None)
-            if name == "electron":
-                if getattr(state, "tray_exit_file", None):
-                    env[EXIT_FILE_ENV] = str(state.tray_exit_file)
-                env["DBV_DASHBOARD_TOKEN"] = SESSION_TOKEN
-                env["DBV_ENGINE_LABEL"] = ENGINE_LABEL
-            _dashboard_processes[name] = subprocess.Popen(
-                f'"{npm}" run {script}', cwd=str(dashboard_dir), shell=True,
+            for name in ("DBV_DASHBOARD_TOKEN", EXIT_FILE_ENV, "ELECTRON_RUN_AS_NODE", "NODE_OPTIONS"):
+                env.pop(name, None)
+            if getattr(state, "tray_exit_file", None):
+                env[EXIT_FILE_ENV] = str(state.tray_exit_file)
+            env["DBV_DASHBOARD_TOKEN"] = SESSION_TOKEN
+            env["DBV_ENGINE_LABEL"] = ENGINE_LABEL
+            _dashboard_processes["electron"] = subprocess.Popen(
+                [str(electron), str(dashboard_dir)], cwd=str(dashboard_dir),
                 env=env, creationflags=subprocess.CREATE_NO_WINDOW,
             )
         _dashboard_launched = True
@@ -2116,7 +2123,7 @@ async def open_dashboard(standalone: bool = False) -> str:
     _launch_dashboard()
     if _dashboard_running('electron'):
         return "Panel opened. Game connection and actions unchanged."
-    return "ERROR: Could not open panel. Check the installed dashboard and Node.js."
+    return "ERROR: Could not open panel. Check the installed dashboard and Electron."
 
 
 @mcp.tool()

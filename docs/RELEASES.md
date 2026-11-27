@@ -40,8 +40,8 @@ committed `HEAD`:
 |---|---|
 | program files | `git archive HEAD` (without `.github`, `.claude`, `.mcp.json`) |
 | `venv\Scripts\` | relocatable CPython 3.12 with `requirements.txt` installed (laid out where a venv's interpreter would be, so every existing path works) |
-| `runtime\node\` | Node.js (checksum checked against nodejs.org) |
-| `dashboard\node_modules`, `dashboard\.next` | panel and Electron, built in the package |
+| `dashboard\.next` | the panel, prebuilt; the engine serves it on `127.0.0.1:4747` with [`dbv/mcp_server/panel_server.py`](../dbv/mcp_server/panel_server.py) |
+| `dashboard\node_modules\electron` | Electron, the launcher's and the panel's window (the only panel package shipped) |
 | `dll\*.dll` | observer DLLs for every reviewed client build (32-bit MinGW) |
 | `DBVictory Launcher.exe` | the launcher |
 | `release.json` | version, commit, repository |
@@ -53,17 +53,18 @@ Local build (Windows, a clean commit):
 .\scripts\build-release.ps1 -MinGwBin C:\mingw32\bin
 ```
 
-Before sealing, [`tools/release_trim.py`](../tools/release_trim.py) removes what
-only the build needs: panel packages outside the run-time dependencies of
-`npm run start` / `npm run electron:only` (the Next.js SWC compiler, sharp,
-TypeScript, Tailwind…), source maps, type declarations and package docs, pip,
-Tk/IDLE and the C headers from Python, npm's docs, and `tests\`. The build then
+The build needs Node.js on `PATH` to run `npm ci` and `next build`; the package
+does not ship it. Every panel page is prerendered, so players need neither
+Node.js nor the Next.js server. Before sealing,
+[`tools/release_trim.py`](../tools/release_trim.py) removes what only the build
+needs: every panel package except Electron (Next.js, React, the compilers…),
+pip, Tk/IDLE and the C headers from Python, and `tests\`. The build then
 imports the bot's modules with the trimmed Python and serves the panel with
-`next start` before it zips anything. Electron's own files stay whole: the
+`panel_server` before it zips anything. Electron's own files stay whole: the
 running launcher holds them open while it installs an update.
 
-Optional `-PythonDir` / `-NodeDir` reuse existing runtimes instead of
-`uv python install` and a nodejs.org download.
+Optional `-PythonDir` reuses an existing relocatable Python instead of
+`uv python install`.
 
 ## How a package updates
 

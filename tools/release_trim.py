@@ -3,9 +3,10 @@
 Usage: python -I tools/release_trim.py STAGE
 
 Runs after the panel is built and before tools/release_package.py seals the
-stage. Players only run the built panel (`npm run start` and
-`npm run electron:only`), so the compilers and type checkers that `next build`
-needs are left out, along with Python's installer and GUI toolkit.
+stage. The engine serves the built panel (dashboard/.next) itself and opens
+it in Electron, so of the panel's packages only Electron is shipped: Next.js,
+React and the compilers were needed only by `next build`. Python's installer
+and GUI toolkit are left out too.
 
 Existing installations lose these files on update for free: the updater
 removes every program file listed in the old manifest but not in the new one.
@@ -21,9 +22,9 @@ from pathlib import Path
 import shutil
 import stat
 
-# Panel packages needed at run time besides package.json "dependencies":
-# the scripts players run call `wait-on` and `electron`.
-RUNTIME_TOOLS = ("electron", "wait-on")
+# Panel packages needed at run time: only the window. Everything the pages
+# import is already compiled into dashboard/.next/static.
+RUNTIME_PACKAGES = ("electron",)
 # Electron's own dependencies only download its binary on install.
 LEAF_PACKAGES = {"electron"}
 # Optional native helpers of `next`: the SWC compiler (build only) and sharp
@@ -42,10 +43,8 @@ PYTHON_DROPPED = (
     "DLLs/_tkinter.pyd", "DLLs/tcl86t.dll", "DLLs/tk86t.dll", "tcl", "include", "libs",
 )
 # Program files from `git archive` that only developers use. docs/vbot stays: MCP serves it.
-SOURCE_DROPPED = ("tests", "docs/screenshots", "requirements-dev.txt")
-NODE_RUNTIME_DROPPED = ("node_modules/npm/docs", "node_modules/npm/man", "node_modules/corepack",
-                        "corepack", "corepack.cmd", "install_tools.bat", "CHANGELOG.md", "README.md")
-
+SOURCE_DROPPED = ("tests", "docs/screenshots", "requirements-dev.txt", "dashboard/electron/*.test.js",
+                  "dashboard/electron/*.test.cjs", "dashboard/electron/layout-regression.cjs")
 
 def _remove(path):
     if path.is_dir() and not path.is_symlink():
@@ -70,8 +69,7 @@ def _name(key):
 def runtime_packages(lock):
     """Lockfile keys of the panel packages players need, resolved like Node does."""
     packages = lock.get("packages", {})
-    root = packages.get("", {})
-    wanted = [*root.get("dependencies", {}), *RUNTIME_TOOLS]
+    wanted = list(RUNTIME_PACKAGES)
 
     def dropped(name):
         return any(fnmatch.fnmatchcase(name, pattern) for pattern in DROPPED_PACKAGES)
@@ -106,8 +104,8 @@ def runtime_packages(lock):
 def trim_panel(dashboard):
     lock = json.loads((dashboard / "package-lock.json").read_text(encoding="utf-8"))
     keep = runtime_packages(lock)
-    if "node_modules/next" not in keep or "node_modules/electron" not in keep:
-        raise SystemExit("package-lock.json no longer lists next and electron")
+    if "node_modules/electron" not in keep:
+        raise SystemExit("package-lock.json no longer lists electron")
     for key in sorted(lock.get("packages", {}), key=len, reverse=True):
         if key and key not in keep:
             _remove(dashboard / key)
@@ -147,9 +145,7 @@ def trim(stage):
         _remove(path)
     for path in _globbed(stage, SOURCE_DROPPED):
         _remove(path)
-    node = stage / "runtime" / "node"
-    for path in _globbed(node, NODE_RUNTIME_DROPPED):
-        _remove(path)
+    _remove(stage / "runtime")  # Node.js only builds the panel; nothing ships it now
 
 
 def main():

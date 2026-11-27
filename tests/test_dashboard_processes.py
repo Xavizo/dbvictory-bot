@@ -63,30 +63,41 @@ def test_launch_refuses_unowned_port_and_passes_token_only_to_electron(monkeypat
     build_dir = tmp_path / "dashboard" / ".next"
     build_dir.mkdir(parents=True)
     (build_dir / "BUILD_ID").write_text("test-build")
+    electron = tmp_path / "dashboard" / "node_modules" / "electron" / "dist" / "electron.exe"
+    electron.parent.mkdir(parents=True)
+    electron.write_text("")
+    from dbv.mcp_server import panel_server
+    served = []
+    fake_server = Mock()
+    monkeypatch.setattr(panel_server, "start", lambda directory, port: served.append((directory, port)) or fake_server)
     monkeypatch.setattr(server.paths, "DASHBOARD_DIR", tmp_path / "dashboard")
-    monkeypatch.setattr(server.paths, "BUNDLED_NODE_DIR", tmp_path / "runtime" / "node")
-    monkeypatch.setattr(server, "os", SimpleNamespace(name="nt", environ={server.EXIT_FILE_ENV: "stale"}))
+    monkeypatch.setattr(server, "os", SimpleNamespace(name="nt", environ={
+        server.EXIT_FILE_ENV: "stale", "ELECTRON_RUN_AS_NODE": "1", "DBV_DASHBOARD_TOKEN": "old"}))
     monkeypatch.setattr(server.state, "tray_exit_file", tmp_path / "quit", raising=False)
     monkeypatch.setattr(server.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
-    monkeypatch.setattr("shutil.which", lambda _: r"C:\Program Files\nodejs\npm.cmd")
     monkeypatch.setattr(server, "_dashboard_processes", {})
+    monkeypatch.setattr(server, "_panel_server", None)
     monkeypatch.setattr(server, "_engine_label", Mock(side_effect=AssertionError("must reuse startup identity")))
-    popen = Mock(side_effect=[Mock(), Mock()])
+    popen = Mock(side_effect=[Mock()])
     monkeypatch.setattr(server.subprocess, "Popen", popen)
     monkeypatch.setattr(server, "_check_port_listening", lambda _: True)
     server._launch_dashboard()
     popen.assert_not_called()
+    assert not served
     monkeypatch.setattr(server, "_check_port_listening", lambda _: False)
     server._launch_dashboard()
-    assert popen.call_count == 2
-    next_call, electron_call = popen.call_args_list
-    assert next_call.args[0].endswith('run start')
-    assert "DBV_DASHBOARD_TOKEN" not in next_call.kwargs["env"]
-    assert server.EXIT_FILE_ENV not in next_call.kwargs["env"]
-    assert electron_call.kwargs["env"][server.EXIT_FILE_ENV] == str(tmp_path / "quit")
-    assert electron_call.kwargs["env"]["DBV_DASHBOARD_TOKEN"] == SESSION_TOKEN
-    assert electron_call.kwargs["env"]["DBV_ENGINE_LABEL"] == server.ENGINE_LABEL
-    assert next_call.kwargs['creationflags'] == 0x08000000
+    # The panel is served from this process; no Node.js, only Electron is started.
+    assert served == [(tmp_path / "dashboard", server.DASHBOARD_PORT)]
+    assert popen.call_count == 1
+    electron_call = popen.call_args
+    assert electron_call.args[0] == [str(electron), str(tmp_path / "dashboard")]
+    env = electron_call.kwargs["env"]
+    assert env[server.EXIT_FILE_ENV] == str(tmp_path / "quit")
+    assert env["DBV_DASHBOARD_TOKEN"] == SESSION_TOKEN
+    assert env["DBV_ENGINE_LABEL"] == server.ENGINE_LABEL
+    assert "ELECTRON_RUN_AS_NODE" not in env
     assert electron_call.kwargs['creationflags'] == 0x08000000
     # Prevent atexit from touching mocked processes after monkeypatch teardown.
     server._dashboard_processes.clear()
+    server._stop_panel_server()
+    fake_server.shutdown.assert_called_once_with()
