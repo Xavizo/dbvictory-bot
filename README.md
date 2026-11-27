@@ -458,7 +458,8 @@ and most of the panel are new.
 
 ## License
 
-The bot's own code is released under the [MIT License](LICENSE). Some pieces
+The bot's own code is released under the [MIT License](LICENSE), including the
+original code by patrykjanik, who agreed to it. Some pieces
 keep their own terms and are not covered by it:
 
 - **Python runtime and Python packages** bundled in release builds
