@@ -1,7 +1,7 @@
 import { t, type TextKey } from "@/lib/i18n";
 import type {MapNavigationFeature,PassiveMapCell} from "./api";
 // A style whose label is read in the current language each time it is shown.
-const named=<T extends object>(key:TextKey,rest:T)=>Object.defineProperty({...rest},"label",{get:()=>t(key),enumerable:true}) as T&{label:string};
+export const named=<T extends object>(key:TextKey,rest:T)=>Object.defineProperty({...rest},"label",{get:()=>t(key),enumerable:true}) as T&{label:string};
 export const petStyle = named("map.pet",{symbol:"P",color:"#5eead4"});
 export const unidentifiedStyle = named("map.unidentified",{symbol:"?",color:"#c084fc"});
 export function displayOccupants(cell: PassiveMapCell) {

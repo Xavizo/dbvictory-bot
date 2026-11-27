@@ -1,5 +1,6 @@
 "use client";
 
+import { t, labels } from "@/lib/i18n";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LiveMovementPreview, PassiveMapState, PassiveMapCell, MapNavigationFeature } from "@/lib/api";
@@ -7,17 +8,13 @@ import { labelVisiblePet, saveMapAnnotation } from "@/lib/api";
 import {type Activation,activationLabel,activations,defaultActivation} from "@/lib/mapInteractions";
 import { transitionActions } from "./TransitionLearningPanel";
 
-import {tileStyles as styles,navigationStyles,petStyle,cutWebStyle,petDescription,displayOccupants,unidentifiedStyle} from "@/lib/mapVisuals";
-const flags: Record<string, string> = {
-  ground: "podłoże", on_top: "górna warstwa", container: "kontener", force_use: "używalny", multi_use: "użycie na celu",
-  not_walkable: "blokuje chodzenie", not_moveable: "nieruchomy", blocks_projectiles: "blokuje pociski",
-  not_pathable: "omijany w trasie", pickupable: "do podniesienia", floor_change: "flaga zmiany piętra",
-};
+import {tileStyles as styles,navigationStyles,petStyle,cutWebStyle,petDescription,displayOccupants,unidentifiedStyle,named} from "@/lib/mapVisuals";
+const flags: Readonly<Record<string, string>> = labels("map.flag", ["ground", "on_top", "container", "force_use", "multi_use", "not_walkable", "not_moveable", "blocks_projectiles", "not_pathable", "pickupable", "floor_change"] as const);
 
 const creatureStyles = {
-  player: {label:"Gracz",symbol:"G",color:"#38bdf8"},
-  npc: {label:"NPC",symbol:"N",color:"#facc15"},
-  monster: {label:"Potwór",symbol:"M",color:"#fb7185"},
+  player: named("map.creature.player",{symbol:"G",color:"#38bdf8"}),
+  npc: named("map.creature.npc",{symbol:"N",color:"#facc15"}),
+  monster: named("map.creature.monster",{symbol:"M",color:"#fb7185"}),
   pet: petStyle,
   unknown: unidentifiedStyle,
 };
@@ -31,67 +28,67 @@ function creatureCounts(cell: PassiveMapCell) {
 }
 export function copyCellText(cell: PassiveMapCell) {
   return [
-    `Pole (${cell.x}, ${cell.y}, ${cell.z}) — ${styles[cell.kind]?.label ?? cell.kind}`,
+    t("map.copy.tile",{place:`${cell.x}, ${cell.y}, ${cell.z}`,kind:styles[cell.kind]?.label ?? cell.kind}),
     ...(cell.web_cut?[cutWebStyle.label+" · ID 189"]:[]),
-    `Blokada przekazana przez serwer: ${cell.server_blocking === undefined ? "nieustalona" : cell.server_blocking ? `tak (${cell.server_blocking})` : "nie"}`,
-    ...cell.items.map(i => `ID ${i.id} · warstwa ${i.stack} · ${i.flags.map(f=>flags[f] ?? f).join(", ") || "brak flag"}${i.lens_help !== undefined ? ` · kod pomocy ${i.lens_help}` : ""}${i.minimap_color !== undefined ? ` · kolor minimapy ${i.minimap_color}` : ""}`),
-    ...(cell.navigation ?? []).map(f=>`${navigationStyles[f.kind].label} · ID ${f.item_id} · ${f.source === "observed" ? `zaobserwowano ${f.observation_count ?? 1}×` : f.source === "client_hint" ? "wskazówka klienta" : f.source === "user_annotation" ? "własny opis pola" : "potwierdzone"}${f.required_level ? ` · wymagany poziom ${f.required_level} (zgłoszenie użytkownika dla tego pola)` : ""}${f.activation_hint ? ` · ${activationLabel(f.activation_hint)}` : ""}${f.door_state_hint ? ` · stan: ${f.door_state_hint === "open" ? "otwarte" : f.door_state_hint === "closed" ? "zamknięte" : "nieznany"}` : ""}${f.note ? ` · ${f.note}` : ""}`),
+    `${t("map.serverBlocking")}: ${cell.server_blocking === undefined ? t("map.undetermined") : cell.server_blocking ? `${t("map.yes")} (${cell.server_blocking})` : t("map.no")}`,
+    ...cell.items.map(i => `ID ${i.id} · ${t("map.layer",{n:i.stack})} · ${i.flags.map(f=>flags[f] ?? f).join(", ") || t("map.noFlags")}${i.lens_help !== undefined ? ` · ${t("map.helpCode",{n:i.lens_help})}` : ""}${i.minimap_color !== undefined ? ` · ${t("map.minimapColor",{n:i.minimap_color})}` : ""}`),
+    ...(cell.navigation ?? []).map(f=>`${navigationStyles[f.kind].label} · ID ${f.item_id} · ${f.source === "observed" ? t("map.observedTimes",{n:f.observation_count ?? 1}) : f.source === "client_hint" ? t("map.clientHint") : f.source === "user_annotation" ? t("map.ownNote") : t("map.confirmed")}${f.required_level ? ` · ${t("map.requiredLevelCopy",{n:f.required_level})}` : ""}${f.activation_hint ? ` · ${activationLabel(f.activation_hint)}` : ""}${f.door_state_hint ? ` · ${t("map.state")}: ${t(f.door_state_hint === "open" ? "map.open" : f.door_state_hint === "closed" ? "map.closed" : "map.unknownState")}` : ""}${f.note ? ` · ${f.note}` : ""}`),
     ...creatureCounts(cell).map(c=>`${c.label}: ${c.count}${c.kind==="pet" && cell.pet_names?.length ? " · "+petDescription(cell) : ""}`),
-    ...(cell.transitions ?? []).map(t=>`Zaobserwowane przejście → (${t.exit.join(", ")}) · ${transitionActions[t.action]} · ${t.count} razy`),
+    ...(cell.transitions ?? []).map(link=>t("map.observedTransition",{exit:link.exit.join(", "),action:transitionActions[link.action],n:link.count})),
   ].join("\n");
 }
 
 export function NavigationDetails({ feature, historical=false }: { feature: MapNavigationFeature; historical?:boolean }) {
   return <div className="mt-2 rounded border border-gray-600 bg-gray-800 px-2 py-1 text-xs">
     <strong style={{ color: navigationStyles[feature.kind].color }}>{navigationStyles[feature.kind].label}</strong>
-    <span className="text-gray-400"> · ID {feature.item_id} · {feature.source === "observed" ? `zaobserwowano ${feature.observation_count ?? 1}×` : feature.source === "client_hint" ? "wskazówka klienta — do sprawdzenia" : feature.source === "user_annotation" ? "Twój opis tego pola" : feature.source === "confirmed_location" ? "potwierdzone dla tego pola" : "typ potwierdzony"}</span>
+    <span className="text-gray-400"> · ID {feature.item_id} · {feature.source === "observed" ? t("map.observedTimes",{n:feature.observation_count ?? 1}) : t(feature.source === "client_hint" ? "map.clientHintCheck" : feature.source === "user_annotation" ? "map.yourNote" : feature.source === "confirmed_location" ? "map.confirmedHere" : "map.typeConfirmed")}</span>
     {feature.note && <p className="mt-1 text-gray-300">{feature.note}</p>}
-    {feature.required_level && <p className="mt-1 text-amber-200">Wymagany poziom: {feature.required_level}. Źródło: zgłoszony przez Ciebie opis tej bramki.</p>}
-    {(feature.activation_hint || feature.direction_hint) && <p className="mt-1 text-gray-300">{feature.source === "user_annotation" ? "Według Twojego opisu:" : "Według metadanych:"}
+    {feature.required_level && <p className="mt-1 text-amber-200">{t("map.requiredLevel",{n:feature.required_level})}</p>}
+    {(feature.activation_hint || feature.direction_hint) && <p className="mt-1 text-gray-300">{t(feature.source === "user_annotation" ? "map.byYourNote" : "map.byMetadata")}
       {feature.activation_hint ? ` ${activationLabel(feature.activation_hint)}` : ""}
-      {feature.direction_hint ? ` · ${feature.direction_hint === "up" ? "w górę" : "w dół"}` : ""}. Działanie na serwerze wymaga sprawdzenia.
+      {feature.direction_hint ? ` · ${t(feature.direction_hint === "up" ? "map.up" : "map.down")}` : ""}. {t("map.serverCheck")}
     </p>}
     {(feature.kind === "door" || feature.kind === "level_gate" || feature.door_state_hint) && <p className="mt-1 text-gray-300">
-      {historical ? "Ostatnio widziany stan obiektu:" : "Bieżący stan obiektu:"} {feature.door_state_hint === "closed" ? "zamknięte" : feature.door_state_hint === "open" ? "otwarte" : "nieznany"}.
-      {feature.lock_hint ? " Metadane sugerują zamek; nie określają wymaganego levelu." : ""}
-      {feature.closing_policy === "automatic" || feature.closing_policy === "after_exit" ? " Zaobserwowano zamknięcie po wyjściu." : feature.closing_policy === "observed_open" ? " Pozostały otwarte przez co najmniej 2 s po przejściu." : feature.closing_policy === "manual" ? " Zaobserwowano ręczne zamknięcie." : " Sposób zamykania: nieustalony."}
+      {t(historical ? "map.lastState" : "map.currentState")} {t(feature.door_state_hint === "closed" ? "map.closed" : feature.door_state_hint === "open" ? "map.open" : "map.unknownState")}.
+      {feature.lock_hint ? " "+t("map.lock") : ""}
+      {" "+t(feature.closing_policy === "automatic" || feature.closing_policy === "after_exit" ? "map.closesAfter" : feature.closing_policy === "observed_open" ? "map.staysOpen" : feature.closing_policy === "manual" ? "map.closedByHand" : "map.closingUnknown")}
     </p>}
-    {feature.behavior_hint && feature.behavior_hint!=="unknown" && <p className="mt-1 text-teal-200">Zaobserwowana czynność: {feature.behavior_hint==="use_enters" ? "użycie przenosi postać na pole obiektu" : "użycie otwiera przejście; otwarcie bez przemieszczenia postaci"}. {feature.observation_count ?? 1}×</p>}
-    {feature.kind === "web" && <p className="mt-1 text-violet-200">AiO 8899 lub 8900 przecina pajęczynę. Ruch po zwolnieniu pola.</p>}
-    {feature.kind === "rope_spot" && <p className="mt-1 text-sky-200">Rope 3003 · AiO 8899 · czar fly up. Cel i skuteczną metodę zapisze ręczne przejście.</p>}
-    {feature.kind === "covered_hole" && <p className="mt-1 text-amber-200">Shovel 3457 lub AiO 8899 → otwarcie dziury → wejście na pole.</p>}
-    {feature.kind === "teleport" && <p className="mt-1 text-gray-300">Cel wymaga obserwacji przejścia. Blokada pola nie wyklucza teleportu.</p>}
-    {feature.kind === "passage" && feature.source!=="observed" && <p className="mt-1 text-gray-300">Oznaczenie minimapy i flagi sugerują przejście. Rodzaj, kierunek i działanie niepotwierdzone.</p>}
+    {feature.behavior_hint && feature.behavior_hint!=="unknown" && <p className="mt-1 text-teal-200">{t("map.observedAction")}: {t(feature.behavior_hint==="use_enters" ? "map.useEnters" : "map.useOpens")}. {feature.observation_count ?? 1}×</p>}
+    {feature.kind === "web" && <p className="mt-1 text-violet-200">{t("map.webHint")}</p>}
+    {feature.kind === "rope_spot" && <p className="mt-1 text-sky-200">{t("map.ropeHint")}</p>}
+    {feature.kind === "covered_hole" && <p className="mt-1 text-amber-200">{t("map.holeHint")}</p>}
+    {feature.kind === "teleport" && <p className="mt-1 text-gray-300">{t("map.teleportHint")}</p>}
+    {feature.kind === "passage" && feature.source!=="observed" && <p className="mt-1 text-gray-300">{t("map.passageHint")}</p>}
   </div>;
 }
 
 function CellDetails({ cell }: { cell: PassiveMapCell | undefined }) {
-  if (!cell) return <div className="inspector-empty"><span aria-hidden="true">⌖</span><h3>Wybierz pole na mapie</h3><p>Kliknij kafelek, aby przypiąć jego szczegóły, skopiować dane lub oznaczyć obiekt.</p></div>;
+  if (!cell) return <div className="inspector-empty"><span aria-hidden="true">⌖</span><h3>{t("map.chooseTile")}</h3><p>{t("map.chooseTileNote")}</p></div>;
   return <>
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
       <strong className="font-mono">({cell.x}, {cell.y}, {cell.z})</strong>
-      <span>{styles[cell.kind]?.label ?? "Nieznane"}</span>
+      <span>{styles[cell.kind]?.label ?? t("map.tile.unknown")}</span>
       {creatureCounts(cell).map(c=><span key={c.kind} style={{color:c.color}}>{c.label}: {c.count}{c.kind==="pet" && cell.pet_names?.length ? " · "+petDescription(cell) : ""}</span>)}
-      {!!cell.occupant_types?.self && <span>Twoja postać</span>}
+      {!!cell.occupant_types?.self && <span>{t("worldMap.you")}</span>}
     </div>
     {cell.reason && <p className="mt-1 text-xs text-gray-400">{cell.reason}</p>}
     {cell.web_cut&&<p>{cutWebStyle.label} · ID 189</p>}
     {cell.navigation?.map((feature) => <NavigationDetails key={`${feature.stack}-${feature.item_id}`} feature={feature} />)}
-    {cell.transitions?.map(t => <div key={t.id} className="mt-2 rounded border border-teal-700 bg-gray-800 p-2 text-xs text-teal-200">
-      Zaobserwowane przejście → ({t.exit.join(", ")}) · {transitionActions[t.action]} · {t.count} razy
+    {cell.transitions?.map(link => <div key={link.id} className="mt-2 rounded border border-teal-700 bg-gray-800 p-2 text-xs text-teal-200">
+      {t("map.observedTransition",{exit:link.exit.join(", "),action:transitionActions[link.action],n:link.count})}
     </div>)}
     {!cell.navigation?.length && cell.stairs && <p className="mt-1 text-xs text-sky-300">{cell.stairs === "confirmed_id"
-      ? "Schody: ID 4560 potwierdzone ręcznie. Kierunek i cel przejścia nie są jeszcze znane."
-      : "Definicja zawiera flagę zmiany piętra; przejście wymaga sprawdzenia."}</p>}
+      ? t("map.stairsConfirmed")
+      : t("map.floorFlag")}</p>}
     {cell.server_blocking !== undefined && <p className="mt-1 text-xs text-gray-400">
-      Blokada przekazana przez serwer: {cell.server_blocking ? `tak (${cell.server_blocking})` : "nie"}
+      {t("map.serverBlocking")}: {cell.server_blocking ? `${t("map.yes")} (${cell.server_blocking})` : t("map.no")}
     </p>}
     <div className="mt-2 max-h-28 overflow-y-auto space-y-1">
       {cell.items.map((item) => <div key={`${item.stack}-${item.id}`} className="text-xs text-gray-300">
         <span className="font-mono text-white">ID {item.id}</span>
-        <span className="text-gray-500"> · warstwa {item.stack} · </span>
-        {item.flags.map((f) => flags[f] ?? f).join(", ") || "brak flag nawigacyjnych"}
-        {item.lens_help !== undefined && <span className="text-gray-500"> · kod pomocy {item.lens_help}</span>}
+        <span className="text-gray-500"> · {t("map.layer",{n:item.stack})} · </span>
+        {item.flags.map((f) => flags[f] ?? f).join(", ") || t("map.noNavFlags")}
+        {item.lens_help !== undefined && <span className="text-gray-500"> · {t("map.helpCode",{n:item.lens_help})}</span>}
       </div>)}
     </div>
   </>;
@@ -115,35 +112,35 @@ function AnnotationEditor({cell,scope,enabled,initialKind,onClose}:{cell:Passive
     try {
       await saveMapAnnotation({scope,operation,position:[cell.x,cell.y,cell.z],item_id:itemId,kind,
         required_level:kind==="level_gate" && level ? Number(level) : null,activation_hint:activation || null,note});
-      setMessage(operation==="save" ? "Zapisano Twój opis. Mapa zaktualizuje oznaczenie." : "Usunięto własny opis. Pozostają metadane i obserwacje.");
-    } catch(e) {setMessage(e instanceof Error ? e.message : "Nie udało się zapisać opisu.");}
+      setMessage(t(operation==="save" ? "map.noteSaved" : "map.noteRemoved"));
+    } catch(e) {setMessage(e instanceof Error ? e.message : t("map.noteFailed"));}
     finally {setBusy(false);}
   }
   return <div className="map-annotation-form text-xs">
-    <h3>{initialKind ? navigationStyles[initialKind].label : "Opis obiektu"}</h3>
-    <p className="mt-2 text-gray-400">Opis dotyczy tego pola i wybranego ID. Nie potwierdza udanego przejścia i nie steruje postacią.</p>
-    {!enabled && <p className="mt-2 text-amber-300">Zapisywanie wymaga bieżącej mapy na żywo.</p>}
+    <h3>{initialKind ? navigationStyles[initialKind].label : t("map.objectNote")}</h3>
+    <p className="mt-2 text-gray-400">{t("map.noteScope")}</p>
+    {!enabled && <p className="mt-2 text-amber-300">{t("map.needsLive")}</p>}
     <fieldset disabled={!enabled || busy} className="mt-3 grid grid-cols-1 gap-3 disabled:opacity-50 sm:grid-cols-2">
-      <label>Obiekt / warstwa<select className={fieldClass} value={itemId} onChange={e=>{
+      <label>{t("map.objectLayer")}<select className={fieldClass} value={itemId} onChange={e=>{
         const id=Number(e.target.value), f=cell.navigation?.find(v=>v.item_id===id);setItemId(id);
         setKind(initialKind || (f && annotationKinds.some(k=>k===f.kind) ? f.kind : ""));setLevel(f?.required_level?.toString() ?? "");
         setActivation(defaultActivation(initialKind || f?.kind || "",f?.activation_hint));setNote(f?.note ?? "");setMessage("");
-      }}>{cell.items.filter((v,i,a)=>a.findIndex(o=>o.id===v.id)===i).map(i=><option key={i.id} value={i.id}>ID {i.id} · warstwa {i.stack}</option>)}</select></label>
-      <label>Typ obiektu<select className={fieldClass} value={kind} onChange={e=>{setKind(e.target.value);setActivation(defaultActivation(e.target.value));}}>
-        <option value="">Wybierz typ…</option>{annotationKinds.map(k=><option key={k} value={k}>{navigationStyles[k].label}</option>)}
+      }}>{cell.items.filter((v,i,a)=>a.findIndex(o=>o.id===v.id)===i).map(i=><option key={i.id} value={i.id}>ID {i.id} · {t("map.layer",{n:i.stack})}</option>)}</select></label>
+      <label>{t("map.objectType")}<select className={fieldClass} value={kind} onChange={e=>{setKind(e.target.value);setActivation(defaultActivation(e.target.value));}}>
+        <option value="">{t("map.chooseType")}</option>{annotationKinds.map(k=><option key={k} value={k}>{navigationStyles[k].label}</option>)}
       </select></label>
-      {kind && <label>Czynność
+      {kind && <label>{t("transition.col.action")}
         {(activations[kind]?.length ?? 0)>1 ? <select className={fieldClass} value={activation} onChange={e=>setActivation(e.target.value)}>
           {(activations[kind] ?? []).map(k=><option key={k} value={k}>{activationLabel(k)}</option>)}
         </select> : <p className="annotation-default">{activationLabel(defaultActivation(kind) as Activation)}</p>}
       </label>}
-      {["door","level_gate"].includes(kind) && <p className="annotation-default">Stan teraz: {feature?.door_state_hint==="open" ? "otwarte — wystarczy wejść" : feature?.door_state_hint==="closed" ? "zamknięte — najpierw otwarcie" : "do sprawdzenia"}. Stan trzeba sprawdzić ponownie przed przejściem.</p>}
-      {kind==="level_gate" && <label>Wymagany poziom (opcjonalnie)<input className={fieldClass} type="number" min={1} max={100000} step={1} value={level} onChange={e=>setLevel(e.target.value)}/></label>}
-      <label className="sm:col-span-2">Notatka (opcjonalnie)<input className={fieldClass} maxLength={240} value={note} onChange={e=>setNote(e.target.value)}/></label>
+      {["door","level_gate"].includes(kind) && <p className="annotation-default">{t("map.stateNow")}: {t(feature?.door_state_hint==="open" ? "map.openWalk" : feature?.door_state_hint==="closed" ? "map.closedOpen" : "map.toCheck")}. {t("map.recheckState")}</p>}
+      {kind==="level_gate" && <label>{t("map.levelOptional")}<input className={fieldClass} type="number" min={1} max={100000} step={1} value={level} onChange={e=>setLevel(e.target.value)}/></label>}
+      <label className="sm:col-span-2">{t("map.noteOptional")}<input className={fieldClass} maxLength={240} value={note} onChange={e=>setNote(e.target.value)}/></label>
       <div className="flex flex-wrap gap-3 sm:col-span-2">
-        <button disabled={!kind || !itemId} onClick={()=>save("save")} className="rounded bg-sky-800 px-3 py-2 disabled:opacity-40">Zapisz opis pola</button>
-        <button onClick={onClose} className="secondary-button">Zamknij</button>
-        {feature?.source==="user_annotation" && <button onClick={()=>save("remove")} className="rounded border border-gray-600 px-3 py-2">Usuń własny opis</button>}
+        <button disabled={!kind || !itemId} onClick={()=>save("save")} className="rounded bg-sky-800 px-3 py-2 disabled:opacity-40">{t("map.saveNote")}</button>
+        <button onClick={onClose} className="secondary-button">{t("common.close")}</button>
+        {feature?.source==="user_annotation" && <button onClick={()=>save("remove")} className="rounded border border-gray-600 px-3 py-2">{t("map.removeNote")}</button>}
       </div>
     </fieldset>
     <p role="status" className="mt-2 text-gray-300">{message}</p>
@@ -165,7 +162,7 @@ export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,way
       await labelVisiblePet([cell.x,cell.y,cell.z],position.petRef,name);
       onClose();
     } catch(error) {
-      setPetError(error instanceof Error ? error.message : "Nie udało się zmienić oznaczenia peta.");
+      setPetError(error instanceof Error ? error.message : t("map.petFailed"));
     } finally {setSavingPet(false);}
   }
   const [point,setPoint]=useState({x:position.x,y:position.y});
@@ -201,23 +198,23 @@ export function TileContextMenu({position,cell,scope,editable,onClose,onCopy,way
         nodes[next]?.focus();
       }
     }}>
-    <div className="tile-menu-heading"><strong>({cell.x}, {cell.y}, {cell.z})</strong><button aria-label="Zamknij menu pola" onClick={onClose}>×</button></div>
+    <div className="tile-menu-heading"><strong>({cell.x}, {cell.y}, {cell.z})</strong><button aria-label={t("map.closeMenu")} onClick={onClose}>×</button></div>
     {editing===null ? <>
-      {onTransition && <button role="menuitem" disabled={routeLocked} onClick={()=>{onTransition();onClose();}}>Dodaj przejście do trasy…</button>}
-      {!onTransition && onInsertWaypoint && <button role="menuitem" disabled={routeLocked} onClick={()=>{onInsertWaypoint();onClose();}}>Wstaw waypoint…</button>}
-      {onRemoveWaypoint && waypoints.map(index=><button role="menuitem" className="tile-menu-delete" key={index} disabled={routeLocked} onClick={()=>{onRemoveWaypoint(index);onClose();}}>Usuń waypoint {index+1}</button>)}
-      <button role="menuitem" onClick={()=>{onCopy();onClose();}}>Kopiuj dane pola</button>
+      {onTransition && <button role="menuitem" disabled={routeLocked} onClick={()=>{onTransition();onClose();}}>{t("map.addTransition")}</button>}
+      {!onTransition && onInsertWaypoint && <button role="menuitem" disabled={routeLocked} onClick={()=>{onInsertWaypoint();onClose();}}>{t("map.insertWaypoint")}</button>}
+      {onRemoveWaypoint && waypoints.map(index=><button role="menuitem" className="tile-menu-delete" key={index} disabled={routeLocked} onClick={()=>{onRemoveWaypoint(index);onClose();}}>{t("map.removeWaypoint",{n:index+1})}</button>)}
+      <button role="menuitem" onClick={()=>{onCopy();onClose();}}>{t("map.copyTile")}</button>
       {sameCreature && (cell.pet_manual ?
-        <button role="menuitem" disabled={savingPet} onClick={()=>savePet(null)}>Usuń oznaczenie peta</button> :
-        <button role="menuitem" onClick={()=>{setPetName(cell.pet_candidate_name??"");setEditing("pet");}}>Oznacz to stworzenie jako peta…</button>)}
+        <button role="menuitem" disabled={savingPet} onClick={()=>savePet(null)}>{t("map.unmarkPet")}</button> :
+        <button role="menuitem" onClick={()=>{setPetName(cell.pet_candidate_name??"");setEditing("pet");}}>{t("map.markPet")}</button>)}
       <div className="tile-menu-caption">OZNACZ OBIEKT NA TYM POLU</div>
       {annotationKinds.map(kind=><button role="menuitem" key={kind} disabled={!editable || !cell.items.length} onClick={()=>setEditing(kind)}><span style={{color:navigationStyles[kind].color}}>{navigationStyles[kind].symbol}</span>{navigationStyles[kind].label}<span className="tile-menu-chevron">›</span></button>)}
-      <button role="menuitem" disabled={!editable || !cell.items.length} onClick={()=>setEditing("")}>Edytuj opis / warstwę…</button>
-      {!editable && <p className="tile-menu-help">Oznaczanie wymaga bieżącej mapy na żywo.</p>}
+      <button role="menuitem" disabled={!editable || !cell.items.length} onClick={()=>setEditing("")}>{t("map.editNote")}</button>
+      {!editable && <p className="tile-menu-help">{t("map.markNeedsLive")}</p>}
     </> : editing==="pet" ? <form className="map-annotation-form" onSubmit={e=>{e.preventDefault();savePet(petName.trim() || "Pet");}}>
-      <label>Nazwa peta (opcjonalnie)<input className="mt-1 w-full rounded border border-gray-600 p-2" value={petName} maxLength={80} onChange={e=>setPetName(e.target.value)}/></label>
-      <button className="secondary-button mt-2" disabled={!sameCreature || savingPet}>Oznacz jako peta</button>
-      {!sameCreature && <p role="status">Wybierz ponownie pole stworzenia na mapie na żywo.</p>}
+      <label>{t("map.petName")}<input className="mt-1 w-full rounded border border-gray-600 p-2" value={petName} maxLength={80} onChange={e=>setPetName(e.target.value)}/></label>
+      <button className="secondary-button mt-2" disabled={!sameCreature || savingPet}>{t("map.markAsPet")}</button>
+      {!sameCreature && <p role="status">{t("map.reselect")}</p>}
     </form> : <AnnotationEditor cell={cell} scope={scope} enabled={editable} initialKind={editing} onClose={onClose}/>}
     {petError && <p role="alert">{petError}</p>}
   </div>,document.body);
@@ -253,25 +250,25 @@ export default function PassiveMapPanel({ map, preview, focusPosition }: { map?:
     const key=keyOf(target);
     try {
       if(!window.dbvMap) throw new Error("Clipboard bridge unavailable");
-      await window.dbvMap.copyCell(copyCellText(target));setCopyResult({key,message:"Skopiowano dane pola"});
-    } catch {setCopyResult({key,message:"Nie udało się skopiować. Zaznacz tekst i użyj Ctrl+C."});}
+      await window.dbvMap.copyCell(copyCellText(target));setCopyResult({key,message:t("map.copied")});
+    } catch {setCopyResult({key,message:t("map.copyFailed")});}
   }
   const ready = !!shown?.cells.length && shown.center && shown.origin;
   const plan = showPlan && !frozen && !shown?.stale && shown?.status === "ready" &&
     preview?.path[0]?.every((v,i)=>v===shown.center?.[i]) ? preview : null;
   const axis = (value:number, i:number) => (value - shown!.origin![i]) * 22 + 11;
-  return <section ref={sectionRef} aria-label="Pasywna mapa" className="map-panel">
+  return <section ref={sectionRef} aria-label={t("map.passive")} className="map-panel">
     <div className="map-panel-header">
       <div>
-        <h2>Mapa otoczenia <span>Pasywna</span></h2>
-        <p>Kliknięcie wybiera pole. Postać pozostaje pod Twoją kontrolą.</p>
+        <h2>{t("map.title")} <span>{t("map.passiveBadge")}</span></h2>
+        <p>{t("map.lead")}</p>
       </div>
       <div className="flex items-center gap-2">
-      <button className="secondary-button" aria-pressed={showPlan} onClick={()=>setShowPlan(!showPlan)}>Plan ruchu {showPlan?"✓":""}</button>
-      <button className="secondary-button" aria-expanded={legendOpen} onClick={()=>setLegendOpen(!legendOpen)}>Legenda</button>
+      <button className="secondary-button" aria-pressed={showPlan} onClick={()=>setShowPlan(!showPlan)}>{t("map.plan")} {showPlan?"✓":""}</button>
+      <button className="secondary-button" aria-expanded={legendOpen} onClick={()=>setLegendOpen(!legendOpen)}>{t("map.legend")}</button>
       <button disabled={!ready} onClick={() => { setFrozen(frozen ? null : structuredClone(map!)); setSelected(null); }}
         className="secondary-button">
-        {frozen ? "Wznów podgląd" : "Zatrzymaj obraz"}
+        {t(frozen ? "map.resume" : "map.freeze")}
       </button>
       </div>
     </div>
@@ -280,34 +277,34 @@ export default function PassiveMapPanel({ map, preview, focusPosition }: { map?:
       {Object.entries(styles).map(([kind, style]) => <span key={kind} className="inline-flex items-center gap-1.5">
         <span className="inline-block h-3 w-3 rounded-sm border border-gray-500" style={{ backgroundColor: style.fill }} />{style.label}
       </span>)}
-      {creatureKinds.map(k=><span key={k} style={{color:creatureStyles[k].color}}>{creatureStyles[k].symbol} {creatureStyles[k].label}</span>)}<span>◎ Ty</span>
+      {creatureKinds.map(k=><span key={k} style={{color:creatureStyles[k].color}}>{creatureStyles[k].symbol} {creatureStyles[k].label}</span>)}<span>◎ {t("map.you")}</span>
     </div>
     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
       {(["stairs", "ladder", "hole", "rope_spot", "web", "door", "level_gate", "teleport"] as const).map((kind) =>
         <span key={kind} style={{ color: navigationStyles[kind].color }}><b>{navigationStyles[kind].symbol}</b> {navigationStyles[kind].label}</span>)}
-      <span className="text-gray-400">? = wskazówka klienta</span>
-      <span className="text-teal-300">↗ = zaobserwowane przejście</span>
+      <span className="text-gray-400">? = {t("map.clientHint")}</span>
+      <span className="text-teal-300">↗ = {t("map.observedLower")}</span>
     </div>
     </div>
     {ready ? <div className="map-grid-layout"><div className="map-canvas-column">
       <div className="map-coordinates">
-        <span>({shown.center![0]}, {shown.center![1]}, {shown.center![2]}) · północ ↑</span>
+        <span>({shown.center![0]}, {shown.center![1]}, {shown.center![2]}) · {t("map.north")} ↑</span>
         <span className={frozen || shown.stale ? "text-amber-300" : "text-emerald-300"}>
-          {frozen ? "OBRAZ ZATRZYMANY" : shown.stale ? "AKTUALIZACJA · OSTATNI OBRAZ" : "● NA ŻYWO"}
+          {frozen ? t("map.frozen") : shown.stale ? t("map.updating") : "● "+t("map.live")}
         </span>
       </div>
-      <div className="map-stage"><svg role="group" aria-label="Siatka pól mapy, północ u góry" viewBox={`0 0 ${shown.width! * 22} ${shown.height! * 22}`}
+      <div className="map-stage"><svg role="group" aria-label={t("map.gridAria")} viewBox={`0 0 ${shown.width! * 22} ${shown.height! * 22}`}
         className={`map-canvas ${shown.stale && !frozen ? "opacity-90" : ""}`}>
         {shown.cells.map((c) => {
           const key = keyOf(c), px = (c.x - shown.origin![0]) * 22, py = (c.y - shown.origin![1]) * 22;
           const player = c.x === shown.center![0] && c.y === shown.center![1];
           const feature = c.navigation?.find((f) => f.source === "user_annotation") ?? c.navigation?.find((f) => f.source === "confirmed_location") ?? c.navigation?.find((f) => f.source === "confirmed_id") ?? c.navigation?.[0];
-          const baseNav = feature ? navigationStyles[feature.kind] : c.web_cut ? cutWebStyle : c.transitions?.length ? {label:"Zaobserwowane przejście",symbol:"↗",color:"#5eead4"} : undefined;
+          const baseNav = feature ? navigationStyles[feature.kind] : c.web_cut ? cutWebStyle : c.transitions?.length ? named("map.observed",{symbol:"↗",color:"#5eead4"}) : undefined;
           const nav = baseNav && feature?.door_state_hint ? {...baseNav,
-            label:`${baseNav.label} · ${feature.door_state_hint==="open" ? "otwarte" : feature.door_state_hint==="closed" ? "zamknięte" : "stan nieustalony"}`,
+            label:`${baseNav.label} · ${t(feature.door_state_hint==="open" ? "map.open" : feature.door_state_hint==="closed" ? "map.closed" : "map.stateUnknown")}`,
             color:feature.door_state_hint==="open" ? "#6ee7b7" : feature.door_state_hint==="closed" ? "#fda4af" : baseNav.color} : baseNav;
           const occupants = creatureCounts(c);
-          const label = `${c.x}, ${c.y}, ${c.z}: ${nav ? `${nav.label}${feature?.source === "client_hint" ? "?" : ""}; ` : ""}${styles[c.kind]?.label ?? "Nieznane"}${occupants.length ? `; ${occupants.map(o=>`${o.label}: ${o.count}`).join(", ")}` : ""}`;
+          const label = `${c.x}, ${c.y}, ${c.z}: ${nav ? `${nav.label}${feature?.source === "client_hint" ? "?" : ""}; ` : ""}${styles[c.kind]?.label ?? t("map.tile.unknown")}${occupants.length ? `; ${occupants.map(o=>`${o.label}: ${o.count}`).join(", ")}` : ""}`;
           return <g key={key} data-cell={key} role="button" aria-label={label} aria-haspopup="menu" tabIndex={0}
             onMouseEnter={() => setHovered(key)} onMouseLeave={() => setHovered(null)}
             onFocus={() => setHovered(key)} onClick={() => setSelected(selected === key ? null : key)}
@@ -336,36 +333,36 @@ export default function PassiveMapPanel({ map, preview, focusPosition }: { map?:
             {player && <><circle cx={px + (nav ? 18 : 11)} cy={py + (nav ? 18 : 11)} r={nav ? 3 : 6} fill="#fff" stroke="#111827" strokeWidth={1.5} />{!nav && <circle cx={px + 11} cy={py + 11} r={2} fill="#111827" />}</>}
           </g>;
         })}
-        {plan && <g pointerEvents="none" aria-label="Plan Cavebota">
+        {plan && <g pointerEvents="none" aria-label={t("map.planAria")}>
           {plan.path.length>1 && <polyline points={plan.path.map(([x,y])=>[axis(x,0),axis(y,1)].join(",")).join(" ")}
             fill="none" stroke="#78ecd3" strokeWidth="1.4" strokeDasharray="3 2" strokeLinecap="round"/>}
           {plan.stop && plan.stop[2]===shown.center![2] && <rect x={axis(plan.stop[0],0)-8} y={axis(plan.stop[1],1)-8}
             width="16" height="16" rx="4" fill="none" stroke="#ffd375" strokeWidth="1.6"/>}
         </g>}
       </svg></div>
-      <div className="map-quick-legend"><span>◎ Twoja postać</span>{creatureKinds.map(k=><span key={k} style={{color:creatureStyles[k].color}}><b>{creatureStyles[k].symbol}</b> {creatureStyles[k].label}</span>)}
-        {showPlan && <><span style={{color:"#78ecd3"}}>┄ Plan ruchu</span>
-          <span style={{color:"#ffd375"}}>{plan?.stop ? "▢ Postój "+plan.stop.join(", ") : "▢ Postój —"}</span></>}
+      <div className="map-quick-legend"><span>◎ {t("worldMap.you")}</span>{creatureKinds.map(k=><span key={k} style={{color:creatureStyles[k].color}}><b>{creatureStyles[k].symbol}</b> {creatureStyles[k].label}</span>)}
+        {showPlan && <><span style={{color:"#78ecd3"}}>┄ {t("map.plan")}</span>
+          <span style={{color:"#ffd375"}}>{"▢ "+t("map.stop")+" "+(plan?.stop ? plan.stop.join(", ") : "—")}</span></>}
       </div>
-      <p className="map-caption">Kolor pola: blokada. Symbol: typ obiektu. Zielone pole nie gwarantuje przejścia.</p>
-      </div><aside className="map-inspector" aria-label="Szczegóły wybranego pola">
-        <div className="inspector-heading">INSPEKTOR POLA {selected && <span>PRZYPIĘTE</span>}</div>
+      <p className="map-caption">{t("map.caption")}</p>
+      </div><aside className="map-inspector" aria-label={t("map.inspectorAria")}>
+        <div className="inspector-heading">{t("map.inspector")} {selected && <span>{t("map.pinned")}</span>}</div>
         <CellDetails cell={cell} />
         {cell && <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button className="copy-cell-button" onClick={()=>copyCell(cell)}>Kopiuj dane pola</button>
-          <button className="secondary-button" onClick={e=>{const rect=e.currentTarget.getBoundingClientRect();openMenu(cell,rect.left,rect.bottom);}}>Menu pola…</button>
+          <button className="copy-cell-button" onClick={()=>copyCell(cell)}>{t("map.copyTile")}</button>
+          <button className="secondary-button" onClick={e=>{const rect=e.currentTarget.getBoundingClientRect();openMenu(cell,rect.left,rect.bottom);}}>{t("map.menu")}</button>
           <span role="status" className="text-xs text-gray-400">{copyResult?.key === keyOf(cell) ? copyResult.message : ""}</span>
         </div>}
-        <p className="mt-3 text-xs text-gray-400">PPM na polu → wybierz typ obiektu. Klawiatura: Shift+F10.</p>
-        {selected && <button className="mt-2 text-xs text-sky-300 underline" onClick={() => setSelected(null)}>Zwolnij wybór pola</button>}
-      </aside></div> : <div className="empty-panel map-empty"><span aria-hidden="true">⌖</span><h2>{shown?.status==="waiting" ? "Mapa czeka na połączenie" : "Mapa chwilowo niedostępna"}</h2><p>{shown?.message ?? "Pola klienta pojawią się tutaj po zalogowaniu do gry."}</p></div>}
+        <p className="mt-3 text-xs text-gray-400">{t("map.menuHint")}</p>
+        {selected && <button className="mt-2 text-xs text-sky-300 underline" onClick={() => setSelected(null)}>{t("map.release")}</button>}
+      </aside></div> : <div className="empty-panel map-empty"><span aria-hidden="true">⌖</span><h2>{t(shown?.status==="waiting" ? "map.waiting" : "map.unavailable")}</h2><p>{shown?.message ?? t("map.afterLogin")}</p></div>}
     {menu && menuCell && <TileContextMenu key={`${menu.key}:${menuCell.items.map(i=>i.id).join(",")}`} position={menu} cell={menuCell} scope={menu.scope}
       editable={!!editable && menu.scope===map?.annotation_scope} onClose={closeMenu} onCopy={()=>copyCell(menuCell)}/>}
     {map?.annotation_error && <p className="mt-2 text-xs text-amber-300">{map.annotation_error}</p>}
-    <details className="map-source"><summary>O danych i oznaczeniach</summary>
-      <p className="mt-2">Przejście może mieć czerwone tło. Cele, warunki wejścia i zamykanie drzwi wymagają osobnej obserwacji.</p>
-      <p className="mt-1">{shown?.asset?.message ?? "Definicje obiektów i pola odczytywane z pamięci klienta."}</p>
-      {shown?.catalogue_items && <p>Katalog: {shown.catalogue_items} wpisów. Siatka: {shown.width} × {shown.height}, bieżące piętro.</p>}
+    <details className="map-source"><summary>{t("map.about")}</summary>
+      <p className="mt-2">{t("map.aboutRed")}</p>
+      <p className="mt-1">{shown?.asset?.message ?? t("map.aboutAssets")}</p>
+      {shown?.catalogue_items && <p>{t("map.catalogue",{n:shown.catalogue_items,width:shown.width ?? 0,height:shown.height ?? 0})}</p>}
     </details>
   </section>;
 }
