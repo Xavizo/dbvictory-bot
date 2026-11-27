@@ -1,5 +1,9 @@
 # Working on this project
 
+- Branch from `develop` and open pull requests against `develop`, not `master`.
+  Every push to `develop` publishes a test build (see `docs/RELEASES.md`); `master`
+  only receives `develop` once it was tested, followed by a release.
+
 - Each commit advances the displayed version. Use `feat(scope):` for a
   backwards-compatible feature and `type(scope)!:` or a `BREAKING CHANGE:`
   footer for an incompatible change. Fixes and other commits advance patch.
