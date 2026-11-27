@@ -6,7 +6,7 @@ and provides a desktop panel for healing, combat, cavebot routes, a learned
 world atlas, hunt statistics and alerts. It can also be controlled by an AI
 coding agent (Codex or Claude Code) through MCP.
 
-![Dashboard](docs/dashboard.png)
+![Loop planning in the atlas: three route variants across floors 4 to 7](docs/screenshots/atlas-loop-variants.png)
 
 > **Read this first.** Using a bot breaks DBVictory's rules and can get your
 > account banned. You use this software at your own risk.
@@ -37,8 +37,121 @@ coding agent (Codex or Claude Code) through MCP.
 **Panel**
 - Live HP/Ki, position, nearby creatures, items, pets and the world map
 - Session statistics (XP/h, kills, loot) and hunt comparisons
-- Sound and tray alerts for players on screen and private messages
+- Alerts with sound for private messages, chat, players on screen and Ki drops
 - Bot profiles per character, so each character keeps its own settings
+
+## A tour of the panel
+
+The panel is in Polish. Labels are quoted as they appear, with a translation.
+The screenshots use a real learned atlas with a demo character.
+
+### Automation
+
+The **Automatyka** (Automation) tab holds everything that runs while you play
+or hunt: healing rules, combat spells, buffs and the Hunter Knife. Each feature
+has its own switch, and enabled features resume on your next login.
+
+![Automation tab with healing rules](docs/screenshots/automation.png)
+
+Healing is a list of **Reguły leczenia** (healing rules). Each rule says
+*when* (HP or Ki below a threshold) and *what* to use (a potion, senzu bean or
+spell). Rules are checked in priority order and share the item cooldown, so the
+most urgent one always wins.
+
+The session strip at the top shows XP/h, kills, Senzu/h and how long you have
+been hunting.
+
+### Atlas
+
+**Atlas** opens a full-screen map with three views:
+
+- **Świat** (World): every area you have discovered, with the hunting grounds the
+  bot found and approximate monster spawns.
+- **Zapisana mapa** (Saved map): the learned map, floor by floor, with stairs,
+  ladders, holes and other transitions the bot has confirmed.
+- **Mapa na żywo** (Live map): what the client sees around you right now.
+
+![The world as the atlas has learned it](docs/screenshots/atlas-world.png)
+
+![Live map with your character, nearby monsters and a floor transition](docs/screenshots/atlas-live.png)
+
+The atlas fills itself while you play. You don't need to record anything: walk
+around, change floors and fight, and the bot remembers tiles, transitions,
+monster sightings and where you gained XP. All of it is stored locally in
+`local_data/`.
+
+### Creating a route
+
+There are three ways to create a cavebot route. All of them end as a
+**szkic** (draft) that you can review and edit on the map before using it.
+
+**1. Plan it from a hunting ground (no recording).**
+Open **Atlas → Świat** and click **Planuj pętlę** (plan a loop). Pick a hunting
+ground from the list. The bot adds one automatically whenever you gain XP
+somewhere during manual play, and it remembers every floor you fought on. Choose
+**Całe expowisko** (whole hunting ground) or select sectors yourself, then click
+**Porównaj pętle** (compare loops). The atlas proposes three variants:
+
+- **Krótka** (short): a compact loop, well under the respawn time, that still
+  meets monsters often.
+- **Pod respawn** (paced to respawn): the most expected monster encounters per
+  hour, with a loop time close to the respawn time and as many different rooms
+  as possible.
+- **Pełna** (full): covers every selected sector it can reach.
+
+Each variant shows the loop time, how many sectors it covers, an estimated
+XP/h, and coverage per floor. If part of the ground can only be reached through
+an unconfirmed passage, the planner suggests a **łącznik** (connector) and lists
+the transitions to check in game. Save the variant you like as a draft.
+
+**2. Record it while you hunt.**
+Start **Nagrywanie adaptacyjne** (adaptive recording) and hunt normally. A
+progress bar tells you when the recording is good enough:
+
+1. Gain XP in the first spot.
+2. Visit the next room or go back for another group.
+3. The bot looks for a way back to sectors you've already visited.
+4. A loop is detected, and you can stop recording.
+
+The bot turns what you did into a draft. **Optymalizuj trasę** (optimize route)
+removes detours and backtracking. You can compare the result with the original
+before accepting it.
+
+**3. Draw it on the map.**
+In a new draft, click points on the map or draw a path. The editor connects them
+using known paths and transitions, and marks any section it can't connect.
+
+![Route editor: stages by floor, doors and waypoints](docs/screenshots/route-editor.png)
+
+In the editor you can drag waypoints, insert points after a waypoint, choose a
+specific transition (stairs, ladder, rope spot) for a floor change, and show the
+route one stage or floor at a time. Save the draft with a name when you're done.
+
+### Running a route
+
+On the **Cavebot** tab, choose the route and set up combat:
+
+![Cavebot tab with a route and lure settings](docs/screenshots/cavebot.png)
+
+- When to attack: **Gdy potwór jest na ekranie** (when a monster is on screen) or
+  **Gdy podejdzie na X SQM** (when it comes within X squares).
+- Target priority: **Najbliższy** (nearest), **Najmniej HP** (lowest HP) or
+  **Najwięcej HP** (highest HP).
+- Fighting style: **Stój i walcz** (stand and fight), **Goń** (chase) or
+  **Luruj** (lure: gather a group of a set size before fighting).
+- Chase distance, loot time limit and spell conditions.
+
+Press start. The run bar at the top shows the current phase (route, lure, fight,
+chase, return), the current waypoint and any problem, such as a transition that
+needs checking. **Pauza** (pause) or the **Pause/Break** key stops everything at
+once. **Historia decyzji i raporty okrążeń** (decision history and loop reports)
+explains why the bot did what it did and sums up each loop.
+
+### Alerts
+
+The bell collects game events: a private message, a message in local chat, a
+player on screen, or a sudden Ki drop. You can turn each kind on or off, give it
+a sound, and choose whether it fires always or only while the cavebot is running.
 
 ## How it works
 
