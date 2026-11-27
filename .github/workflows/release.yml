@@ -3,6 +3,12 @@
 # Publish: Actions -> "Release" -> Run workflow (on master). The version comes
 # from the commit history (feat: = minor, fix: = patch), so nothing to type.
 # Pull requests that touch packaging only build the zip, without publishing.
+#
+# Test build: Run workflow on any other branch (for example a pull request's). It is
+# published as a pre-release vX.Y.Z-test.<commit>, which GitHub never marks "latest":
+# players' launchers ignore it, master's version numbers are unaffected, and only a
+# launcher with "Wersje testowe" switched on offers it. A new test build of a branch
+# replaces that branch's previous one; "Delete test builds" removes them.
 name: Release
 
 on:
@@ -42,6 +48,9 @@ jobs:
     timeout-minutes: 60
     outputs:
       version: ${{ steps.package.outputs.version }}
+    env:
+      # Anything not built from master is a test build (pull request checks included).
+      TEST_BUILD: ${{ github.ref != 'refs/heads/master' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,7 +85,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}   # reads the latest release to build the patch against it
         run: |
-          .\scripts\build-release.ps1 -Repo "${{ github.repository }}" -MinGwBin "${{ steps.msys2.outputs.msys2-location }}\mingw32\bin"
+          $build = @{ Repo = "${{ github.repository }}"; MinGwBin = "${{ steps.msys2.outputs.msys2-location }}\mingw32\bin" }
+          if ($env:TEST_BUILD -eq "true") { $build.TestBuild = $true }
+          .\scripts\build-release.ps1 @build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,6 +111,7 @@ jobs:
         with:
           name: release
       - name: Create GitHub release
+        if: github.ref == 'refs/heads/master'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
@@ -114,3 +126,36 @@ jobs:
           gh release create "$VERSION" "${assets[@]}" \
             -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "DBVictory Bot $VERSION" --notes-file release-notes.md
+
+      - name: Create test pre-release
+        if: github.ref != 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test\.[0-9a-f]{7}$ ]]; then
+            echo "::error::$VERSION is not a test build version."
+            exit 1
+          fi
+          title_suffix="($BRANCH)"
+          # One test build per branch: drop this branch's earlier ones (and a rerun of this commit).
+          gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName,name,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | [.tagName, .name] | @tsv' |
+          while IFS=$'\t' read -r tag name; do
+            if [[ "$tag" =~ -test\.[0-9a-f]{7}$ && ( "$name" == *" $title_suffix" || "$tag" == "$VERSION" ) ]]; then
+              echo "Removing earlier test build $tag"
+              gh release delete "$tag" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            fi
+          done
+          shopt -s nullglob
+          assets=("DBVictory-Bot-$VERSION.zip" DBVictory-Bot-"$VERSION"-patch-v*.zip release.json release-manifest.json)
+          {
+            echo "## Test build $VERSION"
+            echo
+            echo "Branch \`$BRANCH\`, commit $GITHUB_SHA. Not for players: only launchers with"
+            echo "**Ustawienia → Wersje testowe** switched on offer it. Delete it when done testing."
+          } > test-notes.md
+          gh release create "$VERSION" "${assets[@]}" \
+            -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Test build $VERSION $title_suffix" --notes-file test-notes.md

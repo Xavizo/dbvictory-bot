@@ -70,7 +70,7 @@ async def check_release(root, args):
 
 def history(root, label):
     """Release notes up to the installed version, newest first."""
-    match = re.match(r"^v(\d+)\.(\d+)\.(\d+)(?:\s|$)", label or "")
+    match = re.match(r"^v(\d+)\.(\d+)\.(\d+)(?:-test\.[0-9a-f]{7})?(?:\s|$)", label or "")
     if not match:
         return []
     installed = tuple(map(int, match.groups()))
@@ -172,6 +172,15 @@ async def mcp_clients(root, operation, target=None):
     if operation not in ("connect", "disconnect") or target not in MCP_TARGETS:
         raise RuntimeError("Nieznana integracja.")
     return await run_json(root, "mcp_clients.py", [operation, target])
+
+
+async def set_channel(root, channel):
+    if channel not in ("stable", "test"):
+        raise RuntimeError("Nieznany kanał aktualizacji.")
+    try:
+        return await run_json(root, "launcher_files.py", ["channel", channel], 30)
+    except ValueError as error:
+        raise RuntimeError("Nie udało się zapisać kanału aktualizacji.") from error
 
 
 async def client_support(root, folder):
