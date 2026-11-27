@@ -2,11 +2,12 @@
 # Used by .github/workflows/release.yml; also runs locally on Windows.
 #
 # The package bundles a relocatable Python in venv\Scripts (so every existing
-# venv\Scripts\python.exe path keeps working), the prebuilt panel with
-# Electron for its window, the observer DLLs and DBVictory Launcher.exe.
-# The engine serves the panel itself, so Node.js is only used here, to build it.
-# tools\release_trim.py then drops what only the build needed (Next.js, React,
-# compilers, pip, Tk), so players download and unpack less.
+# venv\Scripts\python.exe path keeps working), the prebuilt panel, the
+# observer DLLs and DBVictory Launcher.exe. The engine serves the panel itself
+# and the launcher and panel windows are pywebview (Windows' own WebView2), so
+# Node.js is only used here, to build the panel. tools\release_trim.py then
+# drops what only the build needed (node_modules, pip, Tk), so players
+# download and unpack less.
 #
 #   -PythonDir  existing relocatable Python to copy (default: `uv python install`)
 #   -MinGwBin   folder with 32-bit g++.exe for the DLLs
@@ -76,15 +77,12 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
 }
 Invoke-Checked $Python @("-c", "import mcp, Crypto, websockets, pymem; print('Python OK')")
 
-# 3. Panel and Electron, built with the Node.js on PATH (not shipped).
+# 3. Panel, built with the Node.js on PATH (not shipped).
 $Npm = (Get-Command npm.cmd).Source
-$Node = (Get-Command node.exe).Source
 $env:NEXT_TELEMETRY_DISABLED = "1"
 Push-Location (Join-Path $Stage "dashboard")
 try {
     Invoke-Checked $Npm @("ci", "--no-audit", "--no-fund")
-    # Electron fetches its binary on first use, not on install; players must not need that download.
-    Invoke-Checked $Node @("node_modules\electron\install.js")
     Invoke-Checked $Npm @("run", "build")
 } finally { Pop-Location }
 $cache = Join-Path $Stage "dashboard\.next\cache"
@@ -108,7 +106,9 @@ foreach ($built in "dll\dbvbot.dll", "dll\dbvobserver_marker_20261117.dll", "dll
 # 6. Drop what only the build needed, then prove the trimmed runtime still starts.
 Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_trim.py"), $Stage)
 Invoke-Checked $Python @("-c", "import mcp, Crypto, websockets, pymem, ssl, sqlite3, ctypes, win32api, win32job; from mcp.os.win32 import utilities; print('Trimmed Python OK')")
-Invoke-Checked (Join-Path $Stage "dashboard\node_modules\electron\dist\electron.exe") @("--version")
+# The windows: pywebview drives WebView2 through pythonnet; the tray is a WinForms NotifyIcon.
+Push-Location $Stage  # imports the staged launcher and panel modules
+try { Invoke-Checked $Python @("-c", "import clr, webview, win32clipboard, pathlib; clr.AddReference('System.Windows.Forms'); assert (pathlib.Path(webview.__file__).parent / 'lib' / 'Microsoft.Web.WebView2.Core.dll').is_file(); import webview.platforms.edgechromium, launcher.desktop_app, dbv.mcp_server.panel_window; print('Windows OK')") } finally { Pop-Location }
 # The engine serves the panel with dbv.mcp_server.panel_server; it only reads .next.
 $panel = Start-Process -FilePath $Python -ArgumentList "-m", "dbv.mcp_server.panel_server", (Join-Path $Stage "dashboard") -WorkingDirectory $Stage -PassThru -WindowStyle Hidden
 try {

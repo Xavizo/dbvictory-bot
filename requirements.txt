@@ -3,3 +3,5 @@ mcp==1.30.0
 pycryptodome==3.24.1
 websockets==17.4
 pymem==1.14.0; sys_platform == "win32"
+# The launcher's and the panel's windows: Windows' own WebView2 through pythonnet.
+pywebview==6.2.1; sys_platform == "win32"

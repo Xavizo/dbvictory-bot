@@ -246,7 +246,7 @@ Each entry shows the kind, the time, who or what triggered it, and the message:
    `127.0.0.1`, reads the session key, and starts decoding the game traffic.
 5. A small observer DLL is loaded into the client to read creatures and the map
    and to show the in-game target marker.
-6. The **panel** (Electron) opens. It only listens on `127.0.0.1` and requires a
+6. The **panel** opens in its own window (Windows' WebView2). It only listens on `127.0.0.1` and requires a
    per-session token. You enter the game and turn on the features you want.
 
 The launcher works on your computer. A downloaded package asks GitHub at start
@@ -263,7 +263,7 @@ Launcher ──► run_bot.py ──► MCP engine (dbv/mcp_server/server.py)
                               ├── dbv/brain/navigation/passive_map.py / dbv/client_bridge/client_player_state.py (read-only memory)
                               ├── dbv/client_bridge/dll_bridge.py ◄── named pipe ◄── observer DLL (in client)
                               ├── actions/*.py (healing, combat, cavebot…)
-                              └── dbv/mcp_server/dashboard_api.py ──► dashboard/ (Electron + Next.js)
+                              └── dbv/mcp_server/dashboard_api.py ──► dashboard/ (Next.js, shown with pywebview)
 ```
 
 ## Installation
