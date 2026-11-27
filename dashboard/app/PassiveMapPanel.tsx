@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LiveMovementPreview, PassiveMapState, PassiveMapCell, MapNavigationFeature } from "@/lib/api";
 import { labelVisiblePet, saveMapAnnotation } from "@/lib/api";
-import {activationLabels,activations,defaultActivation} from "@/lib/mapInteractions";
+import {type Activation,activationLabel,activations,defaultActivation} from "@/lib/mapInteractions";
 import { transitionActions } from "./TransitionLearningPanel";
 
 import {tileStyles as styles,navigationStyles,petStyle,cutWebStyle,petDescription,displayOccupants,unidentifiedStyle} from "@/lib/mapVisuals";
@@ -35,7 +35,7 @@ export function copyCellText(cell: PassiveMapCell) {
     ...(cell.web_cut?[cutWebStyle.label+" · ID 189"]:[]),
     `Blokada przekazana przez serwer: ${cell.server_blocking === undefined ? "nieustalona" : cell.server_blocking ? `tak (${cell.server_blocking})` : "nie"}`,
     ...cell.items.map(i => `ID ${i.id} · warstwa ${i.stack} · ${i.flags.map(f=>flags[f] ?? f).join(", ") || "brak flag"}${i.lens_help !== undefined ? ` · kod pomocy ${i.lens_help}` : ""}${i.minimap_color !== undefined ? ` · kolor minimapy ${i.minimap_color}` : ""}`),
-    ...(cell.navigation ?? []).map(f=>`${navigationStyles[f.kind].label} · ID ${f.item_id} · ${f.source === "observed" ? `zaobserwowano ${f.observation_count ?? 1}×` : f.source === "client_hint" ? "wskazówka klienta" : f.source === "user_annotation" ? "własny opis pola" : "potwierdzone"}${f.required_level ? ` · wymagany poziom ${f.required_level} (zgłoszenie użytkownika dla tego pola)` : ""}${f.activation_hint ? ` · ${activationLabels[f.activation_hint]}` : ""}${f.door_state_hint ? ` · stan: ${f.door_state_hint === "open" ? "otwarte" : f.door_state_hint === "closed" ? "zamknięte" : "nieznany"}` : ""}${f.note ? ` · ${f.note}` : ""}`),
+    ...(cell.navigation ?? []).map(f=>`${navigationStyles[f.kind].label} · ID ${f.item_id} · ${f.source === "observed" ? `zaobserwowano ${f.observation_count ?? 1}×` : f.source === "client_hint" ? "wskazówka klienta" : f.source === "user_annotation" ? "własny opis pola" : "potwierdzone"}${f.required_level ? ` · wymagany poziom ${f.required_level} (zgłoszenie użytkownika dla tego pola)` : ""}${f.activation_hint ? ` · ${activationLabel(f.activation_hint)}` : ""}${f.door_state_hint ? ` · stan: ${f.door_state_hint === "open" ? "otwarte" : f.door_state_hint === "closed" ? "zamknięte" : "nieznany"}` : ""}${f.note ? ` · ${f.note}` : ""}`),
     ...creatureCounts(cell).map(c=>`${c.label}: ${c.count}${c.kind==="pet" && cell.pet_names?.length ? " · "+petDescription(cell) : ""}`),
     ...(cell.transitions ?? []).map(t=>`Zaobserwowane przejście → (${t.exit.join(", ")}) · ${transitionActions[t.action]} · ${t.count} razy`),
   ].join("\n");
@@ -48,7 +48,7 @@ export function NavigationDetails({ feature, historical=false }: { feature: MapN
     {feature.note && <p className="mt-1 text-gray-300">{feature.note}</p>}
     {feature.required_level && <p className="mt-1 text-amber-200">Wymagany poziom: {feature.required_level}. Źródło: zgłoszony przez Ciebie opis tej bramki.</p>}
     {(feature.activation_hint || feature.direction_hint) && <p className="mt-1 text-gray-300">{feature.source === "user_annotation" ? "Według Twojego opisu:" : "Według metadanych:"}
-      {feature.activation_hint ? ` ${activationLabels[feature.activation_hint]}` : ""}
+      {feature.activation_hint ? ` ${activationLabel(feature.activation_hint)}` : ""}
       {feature.direction_hint ? ` · ${feature.direction_hint === "up" ? "w górę" : "w dół"}` : ""}. Działanie na serwerze wymaga sprawdzenia.
     </p>}
     {(feature.kind === "door" || feature.kind === "level_gate" || feature.door_state_hint) && <p className="mt-1 text-gray-300">
@@ -134,8 +134,8 @@ function AnnotationEditor({cell,scope,enabled,initialKind,onClose}:{cell:Passive
       </select></label>
       {kind && <label>Czynność
         {(activations[kind]?.length ?? 0)>1 ? <select className={fieldClass} value={activation} onChange={e=>setActivation(e.target.value)}>
-          {(activations[kind] ?? []).map(k=><option key={k} value={k}>{activationLabels[k]}</option>)}
-        </select> : <p className="annotation-default">{activationLabels[defaultActivation(kind) as keyof typeof activationLabels]}</p>}
+          {(activations[kind] ?? []).map(k=><option key={k} value={k}>{activationLabel(k)}</option>)}
+        </select> : <p className="annotation-default">{activationLabel(defaultActivation(kind) as Activation)}</p>}
       </label>}
       {["door","level_gate"].includes(kind) && <p className="annotation-default">Stan teraz: {feature?.door_state_hint==="open" ? "otwarte — wystarczy wejść" : feature?.door_state_hint==="closed" ? "zamknięte — najpierw otwarcie" : "do sprawdzenia"}. Stan trzeba sprawdzić ponownie przed przejściem.</p>}
       {kind==="level_gate" && <label>Wymagany poziom (opcjonalnie)<input className={fieldClass} type="number" min={1} max={100000} step={1} value={level} onChange={e=>setLevel(e.target.value)}/></label>}

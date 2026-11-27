@@ -1,4 +1,5 @@
 "use client";
+import { t } from "@/lib/i18n";
 import {useCallback,useEffect,useRef,useState} from 'react';
 import dynamic from 'next/dynamic';
 import type {BotState} from '@/lib/api';
@@ -7,7 +8,7 @@ import {useWorldZones} from '@/lib/useWorldZones';
 import {atlasLocation,atlasPlayer} from '@/lib/atlasWildlife';
 import AtlasPanel from './AtlasPanel';
 import PassiveMapPanel from './PassiveMapPanel';
-function MapLoading(){return <p role="status" className="atlas-loading"><i className="atlas-spinner"/>Wczytywanie atlasu…</p>;}
+function MapLoading(){return <p role="status" className="atlas-loading"><i className="atlas-spinner"/>{t("atlas.loading")}</p>;}
 const WorldOverview=dynamic(()=>import('./WorldOverview'),{ssr:false,loading:MapLoading});
 const HuntAreas=dynamic(()=>import('./HuntAreas'),{ssr:false,loading:MapLoading});
 type MapTab='saved'|'live'|'world';
@@ -32,8 +33,8 @@ export default function GlobalAtlas({state,onRefresh,onClose}:{state:BotState|nu
   const location=atlasLocation(state,player)??selected??null, floor=location?.[2]??7;
   const openTile=useCallback((p:Position)=>{setSelected(p);setTab('saved');},[]);
   useEffect(()=>{const previous=document.activeElement;close.current?.focus();const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.stopPropagation();onClose();}};window.addEventListener('keydown',key);return()=>{window.removeEventListener('keydown',key);if(previous instanceof HTMLElement)previous.focus();};},[onClose]);
-  return <div className="global-atlas-dialog" role="dialog" aria-modal="true" aria-label="Atlas i mapa na żywo">
-    <header><strong>Atlas</strong><div role="group" aria-label="Rodzaj mapy"><button aria-pressed={tab==='world'} onClick={()=>{setGrounds(false);setTab('world');}}>Świat</button><button aria-pressed={tab==='saved'} onClick={()=>setTab('saved')}>Zapisana mapa</button><button aria-pressed={tab==='live'} onClick={()=>setTab('live')}>Mapa na żywo</button></div><button ref={close} className="spell-remove" aria-label="Zamknij atlas" onClick={onClose}>×</button></header>
+  return <div className="global-atlas-dialog" role="dialog" aria-modal="true" aria-label={t("globalAtlas.aria")}>
+    <header><strong>{t("globalAtlas.title")}</strong><div role="group" aria-label={t("globalAtlas.kind")}><button aria-pressed={tab==='world'} onClick={()=>{setGrounds(false);setTab('world');}}>{t("globalAtlas.world")}</button><button aria-pressed={tab==='saved'} onClick={()=>setTab('saved')}>{t("globalAtlas.saved")}</button><button aria-pressed={tab==='live'} onClick={()=>setTab('live')}>{t("globalAtlas.live")}</button></div><button ref={close} className="spell-remove" aria-label={t("globalAtlas.close")} onClick={onClose}>×</button></header>
     <div className="global-atlas-content">{tab==='world'?(grounds?
       <HuntAreas world={index.zones} worldError={index.error} retryWorld={index.retry} viewport={worldView} startInWorld state={state} location={location} player={player} initialFloor={floor} onOpen={openTile} onClose={()=>setGrounds(false)}/>:
       <WorldOverview {...index} viewport={worldView} location={location} player={player} initialFloor={floor} onOpen={openTile} onGrounds={()=>setGrounds(true)}/>):

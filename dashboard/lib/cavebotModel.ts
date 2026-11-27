@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 export type Position=[number,number,number];
 export type LureProgress={engaged?:number;nearby?:number;following:number;goal:number;waiting:boolean;stop_reason:'group'|'timeout'|'transition'|'corridor'|'origin_limit'|'clear_pack'|'no_approach'|null};
 export type ConditionOp='>'|'>='|'='|'<='|'<';
@@ -11,25 +12,25 @@ export type CombatConfig={enabled:boolean;mode:"stop"|"chase"|"lure";strategy:"n
 export const defaultMonsterRule=():MonsterRule=>({pattern:"",action:"attack",priority:50,stance:"inherit",spell_mode:"inherit"});
 export const defaultCombatSpell=():CombatSpell=>({words:"",trigger:"distance",cooldown:1,ki:10,range:5,count:1});
 export function monsterRuleSummary(rule:MonsterRule):string {
-  if(rule.action==='ignore')return 'Ignoruj';
-  const stance={inherit:'',stop:'Stój',chase:'Podejdź',lure:'Luruj',distance:'Dystans'}[rule.stance??'inherit'];
+  if(rule.action==='ignore')return t('rule.ignore');
+  const stance=rule.stance&&rule.stance!=='inherit'?t(`rule.stance.${rule.stance}`):'';
   const movement=stance+(['chase','distance'].includes(rule.stance??'')?` ${rule.distance??3} SQM`:'');
-  const spell=rule.spell_mode==='none'?'Bez czarów':rule.spell_mode==='custom'?(rule.spell?.words||'Wpisz czar'):'';
-  return [movement,spell].filter(Boolean).join(' · ')||'Zaznacz i atakuj';
+  const spell=rule.spell_mode==='none'?t('rule.noSpells'):rule.spell_mode==='custom'?(rule.spell?.words||t('rule.typeSpell')):'';
+  return [movement,spell].filter(Boolean).join(' · ')||t('rule.attack');
 }
 export type DraftTag={text:string;color:"mint"|"blue"|"amber"|"rose"|"violet"};
 export type RouteDraft={navigation_revision?:string;id:string;name:string;tags?:DraftTag[];points:Position[];labels:string[];links?:{from_index:number;id:string}[];loop:boolean;updated:number;combat:CombatConfig};
 export const defaultCombat=():CombatConfig=>({enabled:false,mode:"stop",strategy:"nearest",engage:"near",radius:5,distance:1,lure_count:4,lure_seconds:8,lure_distance:3,lure_origin_limit:12,rules:[],spells:[]});
 export type TargetPreview={message:string;targets:{id:number;name:string;health:number;priority:number;distance:number}[];selected:{id:number}|null;spells?:SpellCheck[]};
 export function parseTargetPreview(response:unknown):TargetPreview {
-  if(!response || typeof response!=="object")throw Error("Nieprawidłowa odpowiedź podglądu celów.");
+  if(!response || typeof response!=="object")throw Error(t("targets.badReply"));
   const envelope=response as Record<string,unknown>;
   const result=(envelope.message && typeof envelope.message==="object"?envelope.message:envelope) as Partial<TargetPreview>;
-  if(typeof result.message!=="string" || !Array.isArray(result.targets) || result.targets.some(t=>!t || typeof t.name!=="string" || ![t.id,t.health,t.priority,t.distance].every(Number.isFinite)) || (result.selected!=null && !Number.isFinite(result.selected.id)))throw Error("Nieprawidłowa odpowiedź podglądu celów — spróbuj ponownie.");
-  if(result.spells!==undefined&&(!Array.isArray(result.spells)||result.spells.some(s=>!s||typeof s.words!=='string'||typeof s.reason!=='string'||!Number.isFinite(s.matched_count))))throw Error('Nieprawidłowy podgląd warunków czarów.');
+  if(typeof result.message!=="string" || !Array.isArray(result.targets) || result.targets.some(t=>!t || typeof t.name!=="string" || ![t.id,t.health,t.priority,t.distance].every(Number.isFinite)) || (result.selected!=null && !Number.isFinite(result.selected.id)))throw Error(t("targets.badReplyRetry"));
+  if(result.spells!==undefined&&(!Array.isArray(result.spells)||result.spells.some(s=>!s||typeof s.words!=='string'||typeof s.reason!=='string'||!Number.isFinite(s.matched_count))))throw Error(t('targets.badSpells'));
   return {message:result.message,targets:result.targets,selected:result.selected??null,...(result.spells?{spells:result.spells}:{})};
 }
-export function waypointKind(points:Position[],index:number){if(index===0)return "Start";const d=points[index][2]-points[index-1][2];return d<0?`↑ ${-d}`:d>0?`↓ ${d}`:index===points.length-1?"Koniec":"Idź";}
+export function waypointKind(points:Position[],index:number){if(index===0)return t("waypoint.start");const d=points[index][2]-points[index-1][2];return d<0?`↑ ${-d}`:d>0?`↓ ${d}`:index===points.length-1?t("waypoint.end"):t("waypoint.walk");}
 export function moveRule<T>(rows:T[],index:number,delta:number):T[]{const next=[...rows],to=index+delta;if(to>=0&&to<rows.length)[next[index],next[to]]=[next[to],next[index]];return next;}
 
 export function usesRoute(movement:boolean,route?:Pick<RouteDraft,'points'>):boolean {
@@ -39,7 +40,7 @@ export function v2StartRequest(movement:boolean,route:RouteDraft|undefined,comba
   if(usesRoute(movement,route)) {
     return {command:'start',scope,draft_id:route!.id,loop};
   }
-  if(!combat.enabled || !combat.rules.some(r=>r.action==='attack'&&r.pattern.trim()))throw Error('Włącz walkę i dodaj potwory.');
+  if(!combat.enabled || !combat.rules.some(r=>r.action==='attack'&&r.pattern.trim()))throw Error(t('combat.enableFirst'));
   return {command:'start_combat',combat:{...combat,mode:'stop' as const}};
 }
 
