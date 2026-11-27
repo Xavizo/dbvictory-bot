@@ -78,6 +78,7 @@ from source on Windows.
 
 - Windows 10 or 11
 - The DBVictory client, in a supported build
+- [Git for Windows](https://git-scm.com/download/win)
 - [Python 3.12](https://www.python.org/downloads/windows/) (3.11+ works)
 - [Node.js 22.12+](https://nodejs.org/)
 - [MinGW-w64, 32-bit](https://winlibs.com/) installed in `C:\mingw32` (to build the observer DLL)
@@ -85,8 +86,10 @@ from source on Windows.
 
 ### Steps
 
-Clone or download the repository into any folder (for example
-`C:\DBVictoryBot`). Then run these in **Windows PowerShell** in that folder:
+Clone the repository with Git into any folder (for example
+`git clone <repository URL> C:\DBVictoryBot`). A ZIP download does not work:
+the launcher reads the installed version from Git. Then run these in
+**Windows PowerShell** in that folder:
 
 ```powershell
 # 1. Python environment
