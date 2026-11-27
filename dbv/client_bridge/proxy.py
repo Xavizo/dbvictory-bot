@@ -14,6 +14,7 @@ XTEA data whose plain text is ``u16 inner length`` + packet + padding.
 Server frames are always forwarded before anything inspects them.
 """
 import asyncio
+import contextlib
 import logging
 import struct
 import time
@@ -28,7 +29,7 @@ from dbv.client_bridge.crypto import (
 from dbv.client_bridge.packet_observer import decrypt_game_packet
 from dbv.client_bridge.protocol import ClientOpcode, PacketReader, ServerOpcode
 
-log = logging.getLogger("proxy")
+log = logging.getLogger(name="proxy")
 
 RSA_BLOCK = 128
 # The 26 Nov client's game login: checksum + opcode 0x0A, OS 10, version 372.
@@ -96,20 +97,18 @@ def point_character_list_at_proxy(body: bytes, keys) -> bytes | None:
 class OTProxy:
     """One relay: listens on ``listen_port`` and connects each client to the server."""
 
-    def __init__(self, server_host: str, server_port: int, listen_port: int,
-                 is_login_proxy: bool = False, shared_rsa_key=None, *, client_key_reader=None):
-        self.server_host, self.server_port, self.listen_port = server_host, server_port, listen_port
-        self.is_login_proxy = is_login_proxy
+    def __init__(self, server_host: str, server_port: int, listen_port: int, is_login_proxy: bool = False,
+                 shared_rsa_key=None, *, client_key_reader=None) -> None:
+        self.server_host, self.server_port, self.listen_port, self.is_login_proxy = (
+            server_host, server_port, listen_port, is_login_proxy)
         # The client encrypts its login to the public OTClient key, whose private half is known,
         # so the relay reads the keys without patching the client's RSA key.
-        self.default_rsa_key = get_default_rsa_key()
-        self._shared_rsa_key = shared_rsa_key
+        self.default_rsa_key, self._shared_rsa_key = get_default_rsa_key(), shared_rsa_key
         self._proxy_rsa_key = None            # generated only when first needed
         self.server_rsa_n, self.server_rsa_e = DEFAULT_RSA_N, DEFAULT_RSA_E
         # 26 Nov client: keys are read from client memory and confirmed on server frames.
         self.client_key_reader = client_key_reader
-        self.xtea_keys = None
-        self.logged_in = False
+        self.xtea_keys, self.logged_in = None, False
         self._reset_client_key()
         self.client_reader = self.client_writer = None
         self.server_reader = self.server_writer = None
@@ -118,8 +117,7 @@ class OTProxy:
         self.on_server_packet = None          # (opcode, reader) for server packets
         self.on_raw_server_data = None        # (decrypted bytes)
         self.on_encrypted_server_data = None  # (frame, keys, session) passive tap, after forwarding
-        self.on_login_success = None
-        self.on_game_disconnected = None
+        self.on_login_success = self.on_game_disconnected = None   # (keys) and ()
         # Bot commands.
         self._inject_queue = asyncio.Queue(maxsize=256)
         self.command_delivery = True
@@ -132,95 +130,102 @@ class OTProxy:
         self.last_server_read = self.last_client_forward = None
         self._connection_task = None
         self._server = None
-        self._ts_created = time.time()
+        self._stamp("_ts_created")
         self._ts_listening = self._ts_client_connected = self._ts_server_connected = None
         self._ts_xtea_captured = self._ts_logged_in = None
 
+    def _stamp(self, name: str) -> None:
+        """Record when a connection step happened (wall clock, for the panel)."""
+        setattr(self, name, time.time())
+
     # ── hooks ────────────────────────────────────────────────────────
-    def register_client_packet_callback(self, callback):
-        if callback not in self._client_packet_callbacks:
-            self._client_packet_callbacks.append(callback)
+    def register_client_packet_callback(self, callback) -> None:
+        callbacks = self._client_packet_callbacks
+        if callback not in callbacks:
+            callbacks.append(callback)
 
-    def unregister_client_packet_callback(self, callback):
-        if callback in self._client_packet_callbacks:
-            self._client_packet_callbacks.remove(callback)
+    def unregister_client_packet_callback(self, callback) -> None:
+        callbacks = self._client_packet_callbacks
+        with contextlib.suppress(ValueError):   # it was never registered
+            callbacks.remove(callback)
 
-    @property
-    def on_client_packet(self):
-        """The first client callback; assigning replaces it, None removes all."""
+    def _first_client_callback(self):
         return next(iter(self._client_packet_callbacks), None)
 
-    @on_client_packet.setter
-    def on_client_packet(self, callback):
-        if callback is None:
-            self._client_packet_callbacks.clear()
+    def _replace_first_client_callback(self, callback) -> None:
+        callbacks = self._client_packet_callbacks
+        if callback is not None:
+            callbacks[:1] = [callback]
         else:
-            self._client_packet_callbacks[:1] = [callback]
+            callbacks.clear()
+
+    on_client_packet = property(_first_client_callback, _replace_first_client_callback,
+                                doc="The first client callback; assigning replaces it, None removes all.")
 
     @property
-    def proxy_rsa_key(self):
-        if self._proxy_rsa_key is None:
-            self._proxy_rsa_key = self._shared_rsa_key or generate_proxy_rsa_keypair()
-        return self._proxy_rsa_key
+    def proxy_rsa_key(self) -> "RSA.RsaKey":
+        """The relay's own key pair, shared between relays or generated on first use."""
+        key = self._proxy_rsa_key
+        if key is None:
+            key = self._proxy_rsa_key = self._shared_rsa_key or generate_proxy_rsa_keypair()
+        return key
 
     def _rsa_keys(self):
         yield self.default_rsa_key
         yield self.proxy_rsa_key  # generated only if the OTClient key did not fit
 
-    def get_proxy_rsa_public_key(self) -> str:
-        return str(self.proxy_rsa_key.n)
+    def get_proxy_rsa_public_key(self):
+        """The relay's RSA modulus as decimal text."""
+        return "%d" % self.proxy_rsa_key.n
 
     # ── listening ────────────────────────────────────────────────────
-    async def start(self):
+    async def start(self) -> None:
         self._server = await asyncio.start_server(self._handle_client_connection, "127.0.0.1", self.listen_port)
-        self._ts_listening = time.time()
+        self._stamp("_ts_listening")
         host, port = self._server.sockets[0].getsockname()[:2]
         log.info("[%s] relay on %s:%s -> %s:%s", "LOGIN" if self.is_login_proxy else "GAME",
                  host, port, self.server_host, self.server_port)
         async with self._server:
             await self._server.serve_forever()
 
-    def close_server(self):
+    def close_server(self) -> None:
         server, self._server = self._server, None
         if server:
-            try:
+            with contextlib.suppress(Exception):
                 server.close()
-            except Exception:
-                pass
 
-    async def _handle_client_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def _handle_client_connection(self, client_in: asyncio.StreamReader,
+                                        client_out: asyncio.StreamWriter) -> None:
         """Serialize ownership changes; an old handler cannot clear a newer session."""
         if not hasattr(self, '_handover_lock'):
             self._handover_lock = asyncio.Lock()
         generation = None
         try:
             async with self._handover_lock:
-                previous = self._connection_task
-                if previous and previous is not asyncio.current_task() and not previous.done():
+                previous, current = self._connection_task, asyncio.current_task()
+                if previous and previous is not current and not previous.done():
                     previous.cancel()
                     await asyncio.gather(previous, return_exceptions=True)
-                self._connection_task = asyncio.current_task()
+                self._connection_task = current
                 self.session_generation += 1
                 generation = self.session_generation
                 self.discard_commands('session_changed')
-                self.client_reader, self.client_writer = reader, writer
+                self.client_reader, self.client_writer = client_in, client_out
                 self.server_reader = self.server_writer = None
                 self.logged_in, self.xtea_keys = False, None
                 self._reset_client_key()
                 self.last_server_read = self.last_client_forward = None
-                self._ts_client_connected = time.time()
+                self._stamp("_ts_client_connected")
             self.server_reader, self.server_writer = await asyncio.open_connection(self.server_host, self.server_port)
-            self._ts_server_connected = time.time()
+            self._stamp("_ts_server_connected")
             if self.is_login_proxy:
                 await self._handle_login_session()
             else:
                 await self._run_relay_loop()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
+        except Exception as exc:   # cancellation is not an Exception and propagates
             log.error('Proxy connection ended: %s', type(exc).__name__)
         finally:
-            writer.close()
+            client_out.close()
             if generation is not None and self.session_generation == generation:
                 self.discard_commands('disconnected')
                 self.logged_in, self.xtea_keys = False, None
@@ -229,12 +234,13 @@ class OTProxy:
                 self.client_writer = self.server_writer = None
                 if server_writer:
                     server_writer.close()
-                if self.on_game_disconnected:
+                on_disconnect = self.on_game_disconnected
+                if on_disconnect:
                     try:
-                        self.on_game_disconnected()
+                        on_disconnect()
                     except Exception:
                         log.exception('Game disconnect callback failed')
-                for stream in (writer, server_writer):
+                for stream in (client_out, server_writer):
                     if stream:
                         try:
                             await asyncio.wait_for(stream.wait_closed(), timeout=1)
@@ -242,8 +248,10 @@ class OTProxy:
                             pass
 
     # ── framing ──────────────────────────────────────────────────────
-    def _wrap_packet(self, data: bytes) -> bytes:
-        return struct.pack("<H", len(data)) + data
+    @staticmethod
+    def _wrap_packet(body: bytes) -> bytes:
+        """Prefix a frame body with its u16 length."""
+        return struct.pack("<H", len(body)) + body
 
     async def _send(self, writer, body: bytes):
         writer.write(self._wrap_packet(body))
@@ -258,32 +266,32 @@ class OTProxy:
                  getattr(exc, 'errno', None), getattr(exc, 'winerror', None),
                  age(getattr(self, 'last_server_read', None)), age(getattr(self, 'last_client_forward', None)))
 
-    async def _read_packet(self, reader: asyncio.StreamReader) -> bytes | None:
+    async def _read_packet(self, stream) -> bytes | None:
         """One frame body, or None when the stream ends (only the reason is logged)."""
-        side = 'server' if reader is self.server_reader else 'client'
+        side = 'server' if stream is self.server_reader else 'client'
         stage = 'header'
         try:
-            (size,) = struct.unpack("<H", await reader.readexactly(2))
+            (size,) = struct.unpack("<H", await stream.readexactly(2))
             if not size:
                 self._log_stream_end(side, stage, 'empty_frame')
                 return None
             stage = 'body'
-            return await reader.readexactly(size)
+            return await stream.readexactly(size)
         except asyncio.IncompleteReadError as exc:
             self._log_stream_end(side, stage, 'eof' if stage == 'header' and not exc.partial else 'truncated')
         except OSError as exc:
             self._log_stream_end(side, stage, type(exc).__name__, exc)
         return None
 
-    def _decrypt_game_packet(self, data: bytes) -> bytes | None:
-        return decrypt_game_packet(data, self.xtea_keys)
+    def _decrypt_game_packet(self, frame: bytes) -> bytes | None:
+        return decrypt_game_packet(frame, self.xtea_keys)
 
-    def _encrypt_game_packet(self, payload: bytes) -> bytes:
-        sealed = xtea_encrypt(struct.pack("<H", len(payload)) + payload, self.xtea_keys)
+    def _encrypt_game_packet(self, packet: bytes) -> bytes:
+        sealed = xtea_encrypt(struct.pack("<H", len(packet)) + packet, self.xtea_keys)
         return struct.pack("<I", adler32_checksum(sealed)) + sealed
 
     # ── login relay ──────────────────────────────────────────────────
-    async def _handle_login_session(self):
+    async def _handle_login_session(self) -> None:
         """Forward the login, then the character list rewritten to point at the game relay."""
         request = await self._read_packet(self.client_reader)
         if request is None:
@@ -298,9 +306,9 @@ class OTProxy:
         await self._send(self.client_writer, rewritten or reply)
         log.info("[LOGIN] Character list %s", "now points at the game relay" if rewritten else "forwarded unchanged")
 
-    def _modify_login_response(self, data: bytes) -> bytes | None:
+    def _modify_login_response(self, reply: bytes) -> bytes | None:
         try:
-            return point_character_list_at_proxy(data, self.xtea_keys)
+            return point_character_list_at_proxy(reply, self.xtea_keys)
         except Exception as exc:
             log.error("[LOGIN] Could not rewrite the character list: %s", type(exc).__name__)
             return None
@@ -322,7 +330,7 @@ class OTProxy:
                     log.warning("No RSA block found in the login packet")
                 return data
             self.xtea_keys = keys
-            self._ts_xtea_captured = time.time()
+            self._stamp("_ts_xtea_captured")
             log.info("XTEA session keys captured (redacted)")
             return data
         except Exception as exc:
@@ -330,7 +338,7 @@ class OTProxy:
             return data
 
     # ── game relay ───────────────────────────────────────────────────
-    async def _run_relay_loop(self):
+    async def _run_relay_loop(self) -> None:
         """Run both directions and the command worker until one of them stops."""
         workers = {
             asyncio.create_task(self._relay_client_to_server()): 'towards_server',
@@ -348,29 +356,35 @@ class OTProxy:
                 task.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
 
-    async def _relay_client_to_server(self):
-        while (body := await self._read_packet(self.client_reader)) is not None:
-            self.packets_from_client += 1
-            if self.server_writer is None:
+    async def _frames(self, stream, counter: str):
+        """Frame bodies read from one side, counting each in ``counter``."""
+        while (body := await self._read_packet(stream)) is not None:
+            setattr(self, counter, getattr(self, counter) + 1)
+            yield body
+
+    async def _relay_client_to_server(self) -> None:
+        async for body in self._frames(self.client_reader, "packets_from_client"):
+            server = self.server_writer
+            if server is None:
                 log.warning("Server connection gone; client relay stops")
                 return
             if self.logged_in:
                 body = self._process_client_game_packet(body)
             else:
                 body = self._process_login_packet(body) or body
-            await self._send(self.server_writer, body)
-        log.info("Client disconnected")
+            await self._send(server, body)
+        log.info("Client disconnected; its stream ended")
 
-    async def _relay_server_to_client(self):
-        while (body := await self._read_packet(self.server_reader)) is not None:
+    async def _relay_server_to_client(self) -> None:
+        async for body in self._frames(self.server_reader, "packets_from_server"):
             self.last_server_read = time.monotonic()
-            self.packets_from_server += 1
-            if not self.logged_in and self.xtea_keys is not None:
+            if not (self.logged_in or self.xtea_keys is None):
                 self._establish_session()
-            if self.client_writer is None:
+            client = self.client_writer
+            if client is None:
                 log.warning("Client connection gone; server relay stops")
                 return
-            await self._send(self.client_writer, body)   # the client first, inspection after
+            await self._send(client, body)   # the client first, inspection after
             self.last_client_forward = time.monotonic()
             frames = [body]
             if not self.logged_in and getattr(self, 'client_key_reader', None) is not None:
@@ -380,7 +394,7 @@ class OTProxy:
                 self._establish_session()
             if self.logged_in:
                 self._observe_server_frames(frames)
-        log.info("Server disconnected")
+        log.info("Server disconnected; its stream ended")
 
     def _observe_server_frames(self, frames):
         tap = getattr(self, "on_encrypted_server_data", None)
@@ -392,30 +406,29 @@ class OTProxy:
             except Exception:
                 log.warning("Passive observer unavailable; relay continues")
             return
-        if not (self.on_server_packet or self.on_raw_server_data):
+        raw_tap, packet_tap = self.on_raw_server_data, self.on_server_packet
+        if not (packet_tap or raw_tap):
             return
         for frame in frames:
             plain = self._decrypt_game_packet(frame)
             if not plain:
                 continue
-            if self.on_raw_server_data:
-                try:
-                    self.on_raw_server_data(plain)
-                except Exception:
-                    pass
-            if self.on_server_packet:
+            if raw_tap:
+                with contextlib.suppress(Exception):
+                    raw_tap(plain)
+            if packet_tap:
                 reader = PacketReader(plain)
                 try:
-                    self.on_server_packet(reader.read_u8(), reader)
+                    packet_tap(reader.read_u8(), reader)
                 except Exception as exc:
                     log.debug("Server packet callback error: %s", exc)
 
     def _establish_session(self):
-        self.logged_in = True
-        self._ts_logged_in = time.time()
+        self.logged_in, self._ts_logged_in = True, time.time()
         log.info("=== GAME SESSION ESTABLISHED === (keys redacted)")
-        if self.on_login_success:
-            self.on_login_success(self.xtea_keys)
+        on_login = self.on_login_success
+        if on_login:
+            on_login(self.xtea_keys)
 
     def _reset_client_key(self):
         self._client_login_seen = False
@@ -451,7 +464,7 @@ class OTProxy:
             if len(self._key_frames) < 2:
                 return []
             self.xtea_keys = keys
-            self._ts_xtea_captured = time.time()
+            self._stamp("_ts_xtea_captured")
             frames, self._key_frames = self._key_frames, []
             self._candidate_keys = None
             log.info('Client protocol key confirmed against two server frames (redacted)')
@@ -462,13 +475,13 @@ class OTProxy:
                 log.warning('Client protocol key could not be confirmed; relay continues without automation')
             return []
 
-    def _process_client_game_packet(self, data: bytes) -> bytes:
+    def _process_client_game_packet(self, frame: bytes) -> bytes:
         """Show a client packet to the bot's callbacks; the packet is forwarded unchanged."""
         if not (self._client_packet_callbacks and self.xtea_keys):
-            return data
-        plain = self._decrypt_game_packet(data)
+            return frame
+        plain = self._decrypt_game_packet(frame)
         if not plain:
-            return data
+            return frame
         if len(plain) == 5 and plain[0] == ClientOpcode.ATTACK:
             # The player picked a target in the client: drop the bot's visual marker request.
             self._notify_target_marker(_CANCEL_ATTACK)
@@ -478,13 +491,13 @@ class OTProxy:
                 callback(reader.read_u8(), reader)
             except Exception as exc:
                 log.debug("Client packet callback error: %s", exc)
-        return data
+        return frame
 
     # ── bot commands ─────────────────────────────────────────────────
     async def inject_to_server(self, payload: bytes, *, guard=None):
         return self.enqueue_command('server', payload, guard)
 
-    async def inject_to_client(self, payload: bytes):
+    async def inject_to_client(self, payload: bytes) -> CommandReceipt | None:
         return self.enqueue_command('client', payload)
 
     def enqueue_command(self,target,payload,guard=None):
@@ -532,10 +545,9 @@ class OTProxy:
             return 'rejected', 'conditions_changed'  # the command's owner is gone or changed its mind
         return None
 
-    async def _process_inject_queue(self):
+    async def _process_inject_queue(self) -> None:
         """Send queued commands one by one, each with a receipt of what happened."""
-        while True:
-            queued = await self._inject_queue.get()
+        while (queued := await self._inject_queue.get()) is not None:
             target, payload = queued[:2]
             guard = queued[2] if len(queued) == 3 else None
             receipt = getattr(queued, 'receipt', None)
@@ -565,13 +577,13 @@ class OTProxy:
                 if target == 'server':
                     self._notify_target_marker(payload)
                 log.info("Sent to %s: opcode=0x%02X len=%dB", target, payload[0], len(payload))
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception) as exc:
+                stopped = isinstance(exc, asyncio.CancelledError)
                 if receipt:
-                    receipt.finish('unknown' if wrote or receipt.write_started else 'cancelled', 'dispatcher_stopped')
-                raise
-            except Exception as exc:
-                if receipt:
-                    receipt.finish('unknown' if wrote or receipt.write_started else 'failed', type(exc).__name__)
+                    receipt.finish('unknown' if wrote or receipt.write_started else 'cancelled' if stopped else 'failed',
+                                   'dispatcher_stopped' if stopped else type(exc).__name__)
+                if stopped:
+                    raise
                 log.error("Command failed: %s", type(exc).__name__)
 
     def pause_injections(self):
