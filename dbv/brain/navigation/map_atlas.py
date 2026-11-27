@@ -482,6 +482,18 @@ class MapAtlas:
             tiles.recent.update(self._pending)
             return tiles
 
+    def known_tile(self,pos):
+        """Last stored observation of one tile, from memory first, then the atlas file."""
+        key=tuple(pos)
+        with self.lock:
+            stored=self._pending.get(key) or self.tiles.get(key)
+        if stored is not None:
+            return stored
+        try:
+            return self._paged_tiles().get(key)
+        except (sqlite3.Error,ValueError,TypeError,KeyError):
+            return None
+
     def view(self,x,y,z,radius=20):
         if not position([x,y,z]) or type(radius)is not int or not 5<=radius<=32:raise ValueError("Nieprawidłowy obszar atlasu.")
         with self.lock:
