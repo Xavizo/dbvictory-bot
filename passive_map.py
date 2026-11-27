@@ -424,7 +424,13 @@ class PassiveMapMonitor:
         try:
             from transition_learning import TransitionLearner
             proxy = getattr(self.state,"game_proxy",None)
-            scope = hashlib.sha256(f"{asset.get('client_sha256',CLIENT_SHA256)}|{asset.get('sha256')}|{getattr(proxy,'server_host','')}:{getattr(proxy,'server_port',0)}".encode()).hexdigest()
+            server = f"{getattr(proxy,'server_host','')}:{getattr(proxy,'server_port',0)}"
+            scope = hashlib.sha256(f"{asset.get('client_sha256',CLIENT_SHA256)}|{asset.get('sha256')}|{server}".encode()).hexdigest()
+            if getattr(self, "_inherited_scope", None) != scope:
+                # A client update changes the scope; start it from the same server's previous data.
+                from atlas_scope import inherit
+                inherit(Path(__file__).parent / "local_data", scope, server)
+                self._inherited_scope = scope
             if self.learner is None or self.learner.scope != scope:
                 self.learner = TransitionLearner(Path(__file__).parent / "local_data",scope)
             if self.annotations is None or self.annotations.scope != scope:

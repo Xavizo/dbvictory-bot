@@ -1,5 +1,11 @@
 [
   {
+    "version":"v1.39.1",
+    "changes":[
+      {"title":"Atlas i trasy zostają po aktualizacji klienta","detail":"Nowa wersja klienta zakładała pusty atlas, więc znikały trasy cavebota, schody, drzwi, opisy i odkryta mapa. Przy pierwszym logowaniu na tym samym serwerze bot kopiuje teraz dane z poprzedniej wersji. Stare pliki zostają bez zmian. Gdy nowy atlas już istnieje, nic nie jest nadpisywane."}
+    ]
+  },
+  {
     "version":"v1.38.4",
     "changes":[
       {"title":"Instrukcja aktualizacji klienta","detail":"Dokumentacja plików, weryfikacji zgodności, kompilacji DLL, instalacji i diagnostyki kolejnych wersji klienta. Zapisano potwierdzenie działania v1.38.3."}
