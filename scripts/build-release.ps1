@@ -96,6 +96,8 @@ $env:NEXT_TELEMETRY_DISABLED = "1"
 Push-Location (Join-Path $Stage "dashboard")
 try {
     Invoke-Checked (Join-Path $NodeTarget "npm.cmd") @("ci", "--no-audit", "--no-fund")
+    # Electron fetches its binary on first use, not on install; players must not need that download.
+    Invoke-Checked (Join-Path $NodeTarget "node.exe") @("node_modules\electron\install.js")
     Invoke-Checked (Join-Path $NodeTarget "npm.cmd") @("run", "build")
 } finally { Pop-Location }
 $cache = Join-Path $Stage "dashboard\.next\cache"
