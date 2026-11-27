@@ -336,15 +336,6 @@ def build_use_item_packet(x: int, y: int, z: int, item_id: int, stack_pos: int, 
     return pw.data
 
 
-def manual_move_count_bytes(reader):
-    """Identify the normal OTC move layout; an extra opcode is not a count byte."""
-    if reader.remaining == 14:
-        return 1
-    if reader.remaining == 15 and reader.peek_remaining()[-1] == 0:
-        return 2
-    return None
-
-
 def build_move_item_packet(from_pos: tuple, item_id: int, from_stack: int, to_pos: tuple, count: int, *, count_bytes=1) -> bytes:
     """Build a move item packet."""
     pw = PacketWriter()

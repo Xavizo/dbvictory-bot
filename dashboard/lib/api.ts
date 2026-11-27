@@ -274,6 +274,7 @@ export interface BotState {
   adaptive_cavebot?: {navigation_wait?:{reason:string;observations:string[];review_in_ms:number}|null;map_preview?: LiveMovementPreview | null;domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
   passive_map?: PassiveMapState;
   connected: boolean;
+  session_kills?: number;
   automation_paused?: boolean;
   automation_pause_kind?: "manual"|"emergency"|null;
   potion_diagnostics?: PotionDiagnosticState;
@@ -312,32 +313,6 @@ export const pauseAutomation = () => control("/api/automation/pause");
 export const resumeAutomation = () => control("/api/automation/resume");
 export const emergencyStop = () => control("/api/emergency-stop");
 export const unlockAutomation = () => control("/api/automation/unlock");
-export interface NearbyItemList {
-  center: [number,number,number];
-  rows: { token:string; position:[number,number,number]; item_id:number; stack:number; pickup:boolean; covered:boolean; browsed:boolean; stackable:boolean }[];
-}
-export async function fetchNearbyItems(signal:AbortSignal):Promise<NearbyItemList> {
-  const res = await authenticatedFetch(API_BASE+"/api/nearby-items", {signal});
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-  return body.message;
-}
-export type NearbyContainer = { token:string; number:number; size:number };
-export async function fetchNearbyContainers(signal:AbortSignal):Promise<NearbyContainer[]> {
-  const res = await authenticatedFetch(API_BASE+"/api/nearby-items/containers", {signal});
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-  return body.message;
-}
-export async function moveNearbyItem(token:string, destination:"feet"|"backpack", container?:string):Promise<string> {
-  const res = await authenticatedFetch(API_BASE+"/api/nearby-items", {
-    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token,destination,container})
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-  return body.message;
-}
-
 export type MovementHistoryStatus = {active:boolean;capturing:boolean;available:boolean;latest:string|null;error:string|null;unwritten_reports:number};
 export async function movementHistory(save=false,signal?:AbortSignal):Promise<MovementHistoryStatus>{
   const response=await authenticatedFetch(API_BASE+"/api/movement-history",{method:save?"POST":"GET",signal});
@@ -407,96 +382,3 @@ export async function updateActionConfig(
 }
 
 // ── Cavebot API ─────────────────────────────────────────────────
-
-export async function startRecording(name: string): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/record/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    console.error("Start recording failed:", res.status, err);
-  }
-}
-
-export async function stopRecording(discard = false): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/record/stop`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ discard }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    console.error("Stop recording failed:", res.status, err);
-  }
-}
-
-export async function playRecording(
-  name: string,
-  loop = false
-): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/play`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, loop }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-}
-
-export async function stopPlayback(): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/cavebot/play/stop`, {
-    method: "POST",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    console.error("Stop playback failed:", res.status, err);
-  }
-}
-
-export async function fetchRecording(
-  name: string
-): Promise<{ name: string; waypoints: WaypointInfo[] } | null> {
-  const res = await authenticatedFetch(`${API_BASE}/api/recordings/${encodeURIComponent(name)}`);
-  if (!res.ok) return null;
-  return res.json();
-}
-
-export async function deleteRecording(name: string): Promise<void> {
-  const res = await authenticatedFetch(`${API_BASE}/api/recordings/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    console.error("Delete recording failed:", res.status, err);
-  }
-}
-
-export async function removeWaypoints(
-  name: string,
-  indices: number[]
-): Promise<{ waypoints: WaypointInfo[] } | null> {
-  const res = await authenticatedFetch(
-    `${API_BASE}/api/recordings/${encodeURIComponent(name)}/remove_waypoints`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ indices }),
-    }
-  );
-  if (!res.ok) return null;
-  return res.json();
-}
-
-export async function fetchActionsMap(
-  name: string
-): Promise<ActionsMapResponse | null> {
-  const res = await authenticatedFetch(
-    `${API_BASE}/api/cavebot/actions_map/${encodeURIComponent(name)}`
-  );
-  if (!res.ok) return null;
-  return res.json();
-}

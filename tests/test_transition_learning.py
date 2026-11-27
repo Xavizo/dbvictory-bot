@@ -280,14 +280,14 @@ def test_nearest_prioritizes_current_floor_and_leaves_unknown_entrance_last(lear
     assert [r["entry"] for r in learner.snapshot()["nearby_records"]]==[[110,100,7],[100,100,6],None]
 
 
-@pytest.mark.parametrize("mode",["manual","cavebot","walk","playback","dead"])
+@pytest.mark.parametrize("mode",["manual","cavebot","walk","dead"])
 def test_monitor_suspends_while_automated_or_dead(tmp_path,monkeypatch,mode):
     actual=tl.TransitionLearner(tmp_path,"unused")
     monkeypatch.setattr(tl,"TransitionLearner",lambda directory,scope: actual)
     task=Mock(); task.done.return_value=False
     state=SimpleNamespace(game_proxy=SimpleNamespace(server_host="test",server_port=1),
-                          _action_tasks={"cavebot":task} if mode=="cavebot" else {},
-                          _auto_task=task if mode=="walk" else None,playback_active=mode=="playback",
+                          _action_tasks={"adaptive_cavebot":task} if mode=="cavebot" else {},
+                          _auto_task=task if mode=="walk" else None,
                           game_state=SimpleNamespace(hp=0 if mode=="dead" else 100,stats_updated_at=1))
     monitor=PassiveMapMonitor(state)
     monitor._learn(sample(),{"sha256":"a"})

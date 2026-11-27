@@ -208,7 +208,7 @@ def _make_bridge():
 
 
 def _marker_active(state, gs, proxy):
-    combat_actions={'adaptive_cavebot','auto_combat','auto_targeting','auto_targeting2','cavebot','cavebot2'}
+    combat_actions={'adaptive_cavebot','auto_combat','auto_targeting'}
     tasks=getattr(state,'_action_tasks',{})
     sample=getattr(gs,'client_snapshot',None)
     return bool(proxy and state.game_proxy is proxy and proxy.logged_in and not state.automation_paused
@@ -465,7 +465,7 @@ async def run(bot):
                         if max(abs(cx - ref_x), abs(cy - ref_y)) > PROXIMITY_RANGE:
                             continue
                     # Translate DLL positions to packet coordinate space so
-                    # consumers (auto_combat, aoe_spell) using gs.position
+                    # consumers (auto_combat) using gs.position
                     # get consistent distance calculations.
                     if dll_px > 0 and px > 0:
                         tx = cx - dll_px + px
