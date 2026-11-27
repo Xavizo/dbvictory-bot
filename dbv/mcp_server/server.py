@@ -116,7 +116,7 @@ class BotState:  # one per process: ``state`` below
     """Everything this process knows: proxies, the game session, actions and their settings."""
 
     def __init__(self) -> None:
-        from dbv.brain.combat.hunter_knife import CorpseSuggestions
+        from dbv.brain.combat.hunter_knife import LearnedCorpses
         from dbv.brain.combat.speed_up import SpeedScheduler
         from dbv.brain.profiles import ProfileStore
         from dbv.brain.state.game_alerts import AlertCenter
@@ -137,7 +137,7 @@ class BotState:  # one per process: ``state`` below
         self.speed_scheduler = SpeedScheduler()
         self.potion_scheduler = PotionScheduler()
         self.potion_diagnostics = PotionDiagnostics()
-        self.knife_suggestions = CorpseSuggestions()
+        self.knife_learned = LearnedCorpses()
         self.profile_store = ProfileStore()
         self._action_completed = set()  # actions whose run() returned normally
         self.action_logs = {}           # name -> deque of "[HH:MM:SS] text"
@@ -529,9 +529,21 @@ async def _async_update_action_config(name: str, changes: dict) -> dict:
     if name == "auto_hunter_knife":
         from dbv.brain.combat.hunter_knife import validate_config as validate_knife_config
         cfg = validate_knife_config(cfg)
+        # The panel saves the list it showed, which already included corpses learned by hand.
+        state.knife_learned.forget(list(state.knife_learned.snapshot()))
     state.settings.setdefault("actions", {})[name] = cfg
     _persist_settings()
     return cfg
+
+
+def _save_learned_knife_corpses():
+    """Save corpses skinned by hand, whether or not automatic skinning is running."""
+    from dbv.brain.combat.hunter_knife import learn_into
+    if learn_into(state.settings, state.knife_learned):
+        try:
+            save_settings(state.settings)
+        except OSError:
+            log.exception("Hunter Knife: could not save the corpse list")
 
 
 async def _async_emergency_stop(*, preserve_enabled=False) -> str:
@@ -1359,8 +1371,10 @@ async def start_bot() -> Reply:
     log.info("Proxies are listening; log in through the game client")
 
     # The panel API and window start now; they do not wait for the login.
+    loop = asyncio.get_running_loop()
+    state.knife_learned.on_record = lambda: loop.call_soon_threadsafe(_save_learned_knife_corpses)
     from dbv.mcp_server import dashboard_api
-    dashboard_api.start_api(asyncio.get_running_loop(), state, panel_only=False)
+    dashboard_api.start_api(loop, state, panel_only=False)
     _launch_dashboard()  # the panel window, next to the game
     _publish_observer_bridge()
     return (f"Bot launched. Patched {patched} IP(s). Proxies listening.\n"

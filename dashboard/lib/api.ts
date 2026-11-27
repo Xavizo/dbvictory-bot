@@ -149,7 +149,7 @@ export interface BotState { // the whole /api/state answer
   automation_pause_kind?: "manual"|"emergency"|null;
   potion_diagnostics?: PotionDiagnosticState;
   item_identification?: ItemIdentificationState | null;
-  hunter_knife?: {last_issue?:{position:[number,number,number];reason:string;action:"skin"|"uncover";spell?:string;since_spell_ms?:number}|null;unassigned_bodies?:number;status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number;monsters?:KnifeMonster[];default_monsters?:KnifeMonster[];ignored_suggestions?:number[];suggestions?:KnifeSuggestion[]};
+  hunter_knife?: {last_issue?:{position:[number,number,number];reason:string;action:"skin"|"uncover";spell?:string;since_spell_ms?:number}|null;unassigned_bodies?:number;status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number;corpses?:KnifeCorpse[];default_corpses?:KnifeCorpse[]};
   barrier_band?: {status:string;equipped_id:number|null;stock:number|null;attempts:number};
   actions: ActionInfo[];             // every script in actions/, internal ones excluded
   packets_from_server: number; packets_from_client: number;
@@ -199,9 +199,7 @@ export interface MapAnnotationInput {
 export const saveMapAnnotation = (data:MapAnnotationInput) => control("/api/map/annotation",data);
 export const labelVisiblePet = (position:number[],ref:string,name:string|null) => control("/api/map/pet",{position,ref,name});
 
-export type KnifeCorpse = {id:number;skinned:number;confirmed?:boolean};
-export type KnifeMonster = {name:string;corpses:KnifeCorpse[]};
-export type KnifeSuggestion = {id:number;skinned:number;name:string|null;seen:number};
+export type KnifeCorpse = {id:number;skinned:number;monster?:string};
 
 function okOrThrow(response: Response): Response {
   if (response.ok) return response;

@@ -793,13 +793,10 @@ def _action_catalog(directory, internal):
 
 
 def _knife_corpse_config(st, cfg):
-    from dbv.brain.combat.hunter_knife import DEFAULT_MONSTERS, effective_config
-    current = effective_config(cfg)
-    suggestions = getattr(st, "knife_suggestions", None)
-    return {"monsters": current["monsters"],
-            "default_monsters": [{"name": m["name"], "corpses": [dict(c) for c in m["corpses"]]} for m in DEFAULT_MONSTERS],
-            "ignored_suggestions": current["ignored_suggestions"],
-            "suggestions": suggestions.pending(cfg) if suggestions else []}
+    from dbv.brain.combat.hunter_knife import DEFAULT_CORPSES, effective_config, with_learned
+    learned = getattr(st, "knife_learned", None)
+    current = (learned and with_learned(cfg, learned.snapshot())) or effective_config(cfg)
+    return {"corpses": current["corpses"], "default_corpses": [dict(c) for c in DEFAULT_CORPSES]}
 
 
 def _live(task):

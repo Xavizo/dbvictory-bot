@@ -389,15 +389,5 @@ section[aria-label="Widok cavebota"],section[aria-label="Widok diagnostyki"] {di
 .hunt-variants > button[aria-pressed="true"] { border-color:var(--accent, #6bd6bb); background:rgba(77,175,147,.13); }
 .hunt-variants > button span { justify-self:end; font-size:.82em; }
 .hunt-variants > button small { grid-column:1/-1; }
-.knife-config-dialog .spell-picker-content{display:flex;flex-direction:column;gap:10px;padding:12px 14px;max-height:calc(100dvh - 40px);overflow:auto}
-.knife-config-dialog h4{margin:0 0 6px;font-size:12px;font-weight:600}.knife-config-dialog h4 small{color:#a397b0;font-weight:400}
-.knife-config-help{margin:0;color:#c3b7d1;font-size:11px;line-height:1.5}
-.knife-config-table{width:100%;border-collapse:collapse}.knife-config-table th{text-align:left;color:#a397b0;font-size:10px;font-weight:400;padding:0 4px 4px}.knife-config-table td{padding:2px 4px}
-.knife-config-dialog input{width:100%;min-height:28px;padding:4px 8px;background:#17131e;border:1px solid #655574;border-radius:5px;color:#eee8f5;font-size:12px}
-.knife-config-names{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 6px;padding:0;list-style:none}.knife-config-names li{display:inline-flex;align-items:center;gap:2px;padding:0 2px 0 8px;background:#302639;border:1px solid #4c465e;border-radius:12px;font-size:11px}.knife-config-names button.spell-remove{width:20px;height:22px;min-height:22px;font-size:16px}
-.knife-config-add{display:flex;gap:6px}.knife-config-actions{display:flex;justify-content:space-between;gap:8px}
-.knife-config-monsters{display:grid;gap:6px;margin:0 0 8px;padding:0;list-style:none}.knife-config-monsters>li{padding:6px 8px;border:1px solid #3c3448;border-radius:6px;background:#1b1722}
-.knife-config-monster-head{display:flex;align-items:center;gap:8px}.knife-config-monster-head small{color:#e3b26a;font-size:10px}.knife-config-monster-head button{margin-left:auto}
-.knife-config-names{align-items:center}.knife-config-names>span{display:inline-flex;align-items:center;gap:2px;padding:0 2px 0 8px;background:#302639;border:1px solid #4c465e;border-radius:12px;font-size:11px}.knife-config-names input{width:80px;min-height:24px}
-.knife-config-suggestions ul{display:grid;gap:4px;margin:0;padding:0;list-style:none}.knife-config-suggestions li{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #6a5a2e;border-radius:6px;background:#2a2418;font-size:11px}.knife-config-suggestions li>span{flex:none}.knife-config-suggestions input{flex:1}
-.knife-config-names>span.knife-corpse-guess{border-style:dashed;color:#c9bfd6}
+
+.knife-corpses{display:flex;flex-wrap:wrap;align-items:center;gap:4px;flex-basis:100%}.knife-corpses>span{display:inline-flex;align-items:center;gap:2px;padding:0 2px 0 8px;background:#302639;border:1px solid #4c465e;border-radius:12px;font-size:11px}.knife-corpses button.knife-remove{border:0;background:transparent;color:#ee7d8e;font-size:15px;line-height:1;padding:0 4px;cursor:pointer}.knife-corpses button.knife-remove:disabled{opacity:.4;cursor:default}
