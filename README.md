@@ -1,389 +1,196 @@
 # DBVictory Bot
 
-A man-in-the-middle proxy bot for the DBVictory game, controlled through Codex or Claude Code via MCP (Model Context Protocol). Features DLL injection for real-time creature tracking, in-game targeting, automated healing/buffing, and a live Electron dashboard.
+A desktop bot for the DBVictory game client (Windows). It runs next to the
+official client, reads the game state from network traffic and client memory,
+and provides a desktop panel for healing, combat, cavebot routes, a learned
+world atlas, hunt statistics and alerts. It can also be controlled by an AI
+coding agent (Codex or Claude Code) through MCP.
 
-![Dashboard Screenshot](docs/dashboard.png)
+![Dashboard](docs/dashboard.png)
 
-![Cavebot with Minimap](docs/dashboard_cavebot.png)
+> **Read this first.** Using a bot breaks DBVictory's rules and can get your
+> account banned. You use this software at your own risk.
+>
+> The bot only supports **specific builds of the game client**. When the server
+> ships a new client, the bot refuses to attach until a matching profile is
+> added. See [Supported client builds](#supported-client-builds).
 
-![Cavebot Compare View](docs/dashboard_compare.png)
+## What it does
 
-## Codex setup (this fork)
+**Survival**
+- Priority healing rules for HP and Ki (potions, senzu beans, healing spells)
+- Barrier band and barrier spell upkeep, speed up, food
+- Emergency stop and a global pause on the **Pause/Break** key
 
-The 2026-11-26 client (`af433830…7486e4`) uses a separate memory profile,
-`dbvobserver_marker_20261126.dll` and verified native session-key reading.
-After the v1.38.3 fresh-login test, the operator confirmed the bot was working.
-See the [client-update maintenance guide](docs/CLIENT_UPDATE_GUIDE.md) for the
-file map, next-update procedure, tests, installation and troubleshooting, and
-the [November 26 evidence record](docs/CLIENT_UPDATE.md) for exact hashes and
-validation limits. Unknown builds still stop before memory patches or
-connection teardown.
+**Combat**
+- Auto targeting with per-monster rules, attack spells and runes
+- Spell conditions (cast only when the required monsters, HP or Ki are present)
+- Area (wave) spells when several monsters are in range
+- Hunter Knife: skins your own corpses and confirms the loot
 
-See [Codex on Windows](docs/CODEX.md) for installation, safe MCP checks, dashboard authentication, and Windows acceptance. Every new client build needs its own compatibility checks.
+**Cavebot and atlas**
+- Record and replay hunting routes, including stairs, ladders, ropes, doors and digging
+- Lure mode: keep walking until a group follows, then fight before corridors and floor changes
+- A world atlas learned passively while you play: floors, transitions, hunt areas and monster sightings
+- Atlas routes planned from what the atlas has learned, with a route replay viewer
+
+**Panel**
+- Live HP/Ki, position, nearby creatures, items, pets and the world map
+- Session statistics (XP/h, kills, loot) and hunt comparisons
+- Sound and tray alerts for players on screen and private messages
+- Bot profiles per character, so each character keeps its own settings
+
+## How it works
+
+1. The **launcher** (`DBVictory Launcher.exe`, or the `Uruchom bota` shortcut)
+   checks the installed version, opens the game client and prepares the engine.
+2. You log in and stay on the **character list**, then click **Połącz z grą**
+   (Connect to game). The click is your confirmation; the launcher does not take
+   screenshots.
+3. The engine checks the client's executable against a known profile. Unknown
+   builds stop here, before anything is changed in the client.
+4. The engine redirects the client's connection through a local proxy on
+   `127.0.0.1`, reads the session key, and starts decoding the game traffic.
+5. A small observer DLL is loaded into the client to read creatures and the map
+   and to show the in-game target marker.
+6. The **panel** (Electron) opens. It only listens on `127.0.0.1` and requires a
+   per-session token. You enter the game and turn on the features you want.
+
+All learned data (atlas, profiles, reports) stays on your computer in
+`local_data/`. Nothing is uploaded anywhere.
+
+```
+Launcher ──► run_bot.py ──► MCP engine (mcp_server.py)
+                              ├── proxy.py ◄──► game client ◄──► game server
+                              ├── packet_observer.py → game_state.py
+                              ├── passive_map.py / client_player_state.py (read-only memory)
+                              ├── dll_bridge.py ◄── named pipe ◄── observer DLL (in client)
+                              ├── actions/*.py (healing, combat, cavebot…)
+                              └── dashboard_api.py ──► dashboard/ (Electron + Next.js)
+```
+
+## Installation
+
+There is no ready-made download yet, so for now installation means building
+from source on Windows.
+
+### Requirements
+
+- Windows 10 or 11
+- The DBVictory client, in a supported build
+- [Python 3.12](https://www.python.org/downloads/windows/) (3.11+ works)
+- [Node.js 22.12+](https://nodejs.org/)
+- [MinGW-w64, 32-bit](https://winlibs.com/) installed in `C:\mingw32` (to build the observer DLL)
+- .NET Framework 4 (built into Windows; used to build the launcher)
+
+### Steps
+
+Run these in **Windows PowerShell** in the folder where you cloned the repository:
 
 ```powershell
-.\scripts\setup-codex.ps1
-.\scripts\start-codex.ps1
+# 1. Python environment
+python -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 2. Panel
+cd dashboard; npm ci; npm run build; cd ..
+
+# 3. Observer DLL for the current client build
+.\build_dll.ps1 -ClientVersion 20261126
+
+# 4. Launcher
+.\launcher\build_desktop.ps1 -OutputFile '.\DBVictory Launcher.exe'
 ```
 
-## Features
+Then double-click **`Uruchom bota.cmd`** (or `DBVictory Launcher.exe`). On the
+first start, use **Zmień** (Change) to point the launcher at your game client
+folder, the one that contains `dbvStart.exe`.
 
-- **MITM Proxy** — intercepts and decrypts all game traffic using XTEA encryption keys
-- **DLL Injection** — reads creature battle list directly from game memory via `std::map` tree walk
-- **In-Game Targeting** — calls `Game::attack()` internally so the red targeting square appears in-game
-- **Real-Time Dashboard** — Electron + Next.js app with WebSocket updates every 100ms, showing player stats, creatures, packet counts, and action controls
-- **Automated Actions** — pluggable Python scripts that run in the background (healing, buffing, eating, targeting)
-- **Full Game State** — parses server packets for HP, mana, level, position, creatures, and text messages
-- **MCP Agent Control** — natural language commands via MCP tools (walk, attack, say, use items)
-- **HP Reading from DLL** — reads player health directly from game memory for fast, reliable healing triggers
-- **Dead Creature Filtering** — automatically filters out 0% HP creatures from game state
+### Using it
 
-## How It Works
+1. Click **Start**. The launcher opens the client if it is closed.
+2. Log in and stay on the character list. Click **Połącz z grą**.
+3. Wait for **Zaloguj się do gry** in the panel, then enter the game with your character.
+4. Turn on only the features you want. Enabled features are remembered and
+   resume on your next login.
 
-The overview below describes the original proxy/legacy DLL architecture.
-For the current profile-selected observer, visual-only marker and native key
-reader, use the [current connection path and file map](docs/CLIENT_UPDATE_GUIDE.md#1-understand-the-connection-path).
+Closing the game client ends the bot session.
 
-1. The game client (`dbvStart.exe`) normally connects to `87.98.220.215`
-2. The bot patches the client's memory to redirect traffic through `127.0.0.1`
-3. A local proxy intercepts login/game traffic, extracts XTEA encryption keys, and injects packets on demand
-4. A DLL is injected into the game process to read creature data and enable in-game targeting
-5. Codex or Claude Code sends commands to the MCP server, which translates them into game packets
+## Supported client builds
 
-### Architecture
+The bot reads the client's memory, so every client build needs its own profile
+with verified addresses. Supported builds are listed in
+[`client_profiles.py`](client_profiles.py); the current one is the
+**2026-11-26** client (`af433830…7486e4`).
 
-```
-You (Claude Code)
-    │
-    │ MCP protocol (tools: walk, attack, say...)
-    ▼
-mcp_server.py ──────────────────────────────┐
-    │                                       │
-    ├── proxy.py ◄──► Game Client ◄──► Game Server
-    │     │                │
-    │     │ decrypts       │
-    │     │ via crypto.py  │
-    │     │                │
-    │     ▼                │
-    │  protocol.py         │
-    │     │                │
-    │     ▼                │
-    │  game_state.py       │
-    │     ▲                │
-    │     │                │
-    ├── dll_bridge.py ◄────┤ named pipe ◄── dbvbot.dll (injected)
-    │                      │                    │
-    ├── actions/*.py       │                    ├── hooks XTEA encrypt
-    │   (eat, attack,      │                    ├── walks creature map tree
-    │    sniff, heal)      │                    ├── calls Game::attack()
-    │                      │                    └── sends data to Python
-    │                      │
-    └── dashboard_api.py ──┤──► dashboard/ (Electron + Next.js)
-                           │
-                        bot.py (BotContext — what actions use)
-```
+If the server updates the client, the bot reports an unknown build and does not
+attach. Adding a new build is a developer task described in the
+[client update guide](docs/CLIENT_UPDATE_GUIDE.md) and the
+[offsets guide](docs/CLIENT_UPDATE_OFFSETS_GUIDE.md).
 
-## Automated Actions
+## Using it with Codex or Claude Code (optional)
 
-The bot supports pluggable background actions — Python scripts in the `actions/` folder that run continuously while connected. Each action has an `async def run(bot)` entry point.
+The engine is a standard stdio MCP server (`run_mcp.py`), so an AI agent can
+read the game state and control the bot with tools such as `get_status`,
+`start_bot`, `walk`, `attack`, `toggle_action`, `play_recording` and
+`session_activity`. Connecting to the game is always an explicit `start_bot`
+call.
 
-| Action | Description |
-|--------|-------------|
-| **auto_targeting** | Targets the nearest alive monster using DLL internal `Game::attack()` call (100ms loop) |
-| **eat_food** | Eats food (red ham) every 10 seconds using hotkey-style packets — works from any backpack/slot |
-| **power_up** | Says "power up" every 1 second for healing, only when HP is below 99% |
-| **speed_up** | Casts "speed up" when not hasted — detects haste via player icons bitmask |
-| **power_down** | Says "power down" every 1 second to cancel healing buff |
-| **auto_rune** | Uses rune 3165 on the currently targeted creature every 1 second |
-| **cavebot** | Records and replays navigation paths with live minimap visualization |
-| **packet_sniffer** | Logs packet metadata to `sniff_log.txt`; raw payloads require explicit opt-in |
-| **item_id_spy** | Debug tool: shows "Item Id: XXXXX" in the game status bar when you use or look at an item |
-| **full_light** | Patches the game client to skip the darkness overlay entirely |
+- Codex: run `.\scripts\setup-codex.ps1`, then `.\scripts\start-codex.ps1`.
+  See [Codex on Windows](docs/CODEX.md).
+- Claude Code: edit `.mcp.json` so the paths point at your own `venv` and
+  `run_mcp.py`.
 
-Actions can be toggled on/off from the dashboard UI or via MCP tools. Enabled actions auto-start when the bot connects.
+A second agent can also attach read-only to a session the launcher started
+(`attach_status`, `session_activity`, `packet_journal`).
 
-### Writing Custom Actions
+## Writing your own actions
 
-Create a `.py` file in `actions/` with an `async def run(bot)` function:
+Actions are Python files in `actions/` with an `async def run(bot)` entry point.
+They appear in the panel and can be turned on and off at runtime.
 
 ```python
-"""Eat food every 10 seconds. Uses hotkey-style packet — works from any backpack/slot."""
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+"""Eat food every 10 seconds."""
 from protocol import build_use_item_packet
 
-FOOD_ID = 3583    # red ham on DBVictory
+FOOD_ID = 3583  # red ham
 INTERVAL = 10
 
 async def run(bot):
     while True:
         if bot.is_connected:
-            pkt = build_use_item_packet(0xFFFF, 0, 0, FOOD_ID, 0, 0)
-            await bot.inject_to_server(pkt)
+            await bot.inject_to_server(build_use_item_packet(0xFFFF, 0, 0, FOOD_ID, 0, 0))
         await bot.sleep(INTERVAL)
 ```
 
-The `bot` object provides:
+See [`bot.py`](bot.py) for everything the `bot` object offers (stats, position,
+creatures, `say`, `walk`, `use_item_in_container`, `use_item_on_map`, logging).
 
-```python
-bot.use_item_in_container(item_id, container, slot)  # use item from backpack
-bot.use_item_on_map(x, y, z, item_id, stack_pos)     # use item on ground
-bot.say(text)                                          # send chat message
-bot.walk(direction, steps, delay)                      # walk in a direction
-bot.inject_to_server(packet)                           # send raw packet
-bot.sleep(seconds)                                     # async sleep
-bot.is_connected                                       # connection status
-bot.hp / bot.max_hp / bot.mana                         # player stats
-bot.position                                           # (x, y, z)
-bot.creatures                                          # nearby creatures
-bot.log(msg)                                           # log to stderr
+## Development
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\venv\Scripts\python.exe -m pytest -q          # engine tests, no game needed
+cd dashboard; npm test; npm run typecheck; npm run build
 ```
 
-## Dashboard
+- Contributor rules are in [`AGENTS.md`](AGENTS.md).
+- Commit messages drive the version number (`feat:` → minor, `fix:` → patch,
+  `!` or `BREAKING CHANGE:` → major). User-visible changes go at the top of
+  [`launcher/desktop/release-notes.json`](launcher/desktop/release-notes.json).
+- Design notes: [cavebot review](docs/CAVEBOT_REVIEW.md),
+  [OTClient analysis](docs/otclient_source_analysis.md),
+  [vBot comparison](docs/vbot/architecture.md) (Polish).
 
-The Electron dashboard provides real-time visibility into the bot's state:
+## Privacy and safety
 
-- **Status badges** — MCP, Game Login, DLL Injected, DLL Bridge connection status
-- **Player stats** — Level, HP/Mana bars, position coordinates
-- **Creatures list** — Nearby creatures with HP percentage
-- **Packet counters** — Server and client packet counts
-- **Action controls** — Toggle, view logs, and remove actions directly from the UI
+- The panel and its API listen only on `127.0.0.1` and require a session token.
+- Session keys, credentials and packet payloads are never logged by default.
+  Packet capture is off unless you turn it on for diagnosis.
+- Your settings (`bot_settings.json`), learned data (`local_data/`) and logs are
+  excluded from Git.
 
-The authenticated Electron dashboard is launched by `start_bot`; direct browser access is disabled. It connects via WebSocket (`ws://127.0.0.1:8090`) for 100ms update intervals, with an HTTP API (`http://127.0.0.1:8089`) for action mutations.
+## Credits
 
-## DLL Injection System
-
-The injected DLL (`dll/dbvbot.dll`) provides capabilities that can't be achieved through the proxy alone:
-
-- **Creature map tree walk** — reads the `std::map<uint32, Creature*>` red-black tree directly from memory every 100ms for O(log n) creature lookup
-- **In-game targeting** — calls `Game::attack()` from the game thread via WndProc hook, making the red targeting square appear natively
-- **XTEA key extraction** — hooks the XTEA encrypt function to capture session encryption keys
-- **HP reading** — reads player health directly from game memory
-
-Communication between the DLL and Python happens over a named pipe (`\\.\pipe\dbvbot`). The `dll_bridge` action runs as an always-on internal service.
-
-### Build
-
-Requires MinGW-w64 (32-bit) since dbvStart.exe is 32-bit:
-
-```bash
-cd dll && make
-```
-
-## Available MCP Commands
-
-### Movement
-- **walk** — Move in a direction (n/s/e/w/ne/se/sw/nw)
-- **autowalk** — Walk continuously in a direction
-- **stop** — Stop walking
-- **turn** — Face a cardinal direction
-
-### Combat
-- **attack** — Attack a creature by ID
-- **follow** — Follow a creature by ID
-- **set_fight_modes** — Set offensive/balanced/defensive, chase/stand, PvP/safe
-
-### Interaction
-- **say** — Send a chat message
-- **use_item** — Use an item at a map position
-- **move_item** — Move an item between positions
-- **look_at** — Inspect a tile or item
-
-### Actions
-- **list_actions** — Show all actions with ON/OFF/running status and source preview
-- **toggle_action** — Enable/disable an action
-- **remove_action** — Delete an action script
-- **restart_action** — Reload and restart a running action
-
-### Cavebot
-- **start_recording** — Begin recording navigation waypoints
-- **stop_recording** — Stop recording and save to disk
-- **list_recordings** — List all saved recordings
-- **play_recording** — Replay a saved recording (with optional loop)
-- **stop_playback** — Stop cavebot playback
-- **delete_recording** — Delete a saved recording
-
-### Utility
-- **get_status** — Check connection state and packet stats
-- **send_ping** — Ping the game server
-- **logout** — Disconnect from the server
-
-### Observing the launcher's session (read-only)
-The process that ran `start_bot` (normally the launcher's) publishes a read-only
-bridge on a local named pipe with an HMAC key, recorded in
-`.codex/runtime/observer.json` and removed on exit. Another MCP instance (Claude,
-Codex) uses it when it owns no game connection itself. The bridge serves only
-status, activity and journal control; it cannot send packets or change actions.
-- **attach_status** — Find the running session and return its status
-- **session_activity** — Player, running actions, cavebot, recent commands, events and kills
-- **packet_journal** — `status | start | stop | dump`. Off for every new game
-  session. Records time, direction, opcode name and size, plus parsed events, in
-  memory and in `.codex/journal/journal-*.jsonl` (5 MB × 5). Never payload bytes,
-  keys or the login connection. Other players' chat keeps sender and kind; text
-  only with `include_chat=true`. `dump` writes the buffers to one JSON file.
-
-## Setup
-
-### Requirements
-
-- Python 3.11+ (3.12 recommended)
-- Node.js 22.12+ (for the dashboard)
-- Windows (required for memory patching and DLL injection)
-- DBVictory game client (`dbvStart.exe`)
-- MinGW-w64 32-bit (for DLL compilation)
-
-### Install Dependencies
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-### Usage
-
-Use the [Codex setup and verification guide](docs/CODEX.md). Start without elevating
-Codex; matching process permissions are needed for native game attachment, and
-some operations may require elevation. Do not routinely run the entire coding
-agent as Administrator.
-
-1. Check MCP with `get_status` and `list_actions` before connecting to the game.
-2. Launch `dbvStart.exe` at the login screen and review saved enabled actions.
-3. Request `start_bot` to patch memory and launch the local proxies and dashboard.
-4. Log in through the game client. The login wait runs in the background.
-5. Enable only the automated actions you want.
-
-## Project Structure
-
-```
-dbv_exp/
-├── mcp_server.py          ★ Main entry point — MCP server for Claude Code
-├── proxy.py               Network MITM proxy (XTEA decrypt/encrypt)
-├── protocol.py            OT protocol packet parser
-├── crypto.py              XTEA encryption implementation
-├── bot.py                 BotContext class for actions
-├── game_state.py          Live game state (HP, creatures, position)
-├── patcher.py             Patches game client memory
-├── inject.py              DLL injector (LoadLibrary via CreateRemoteThread)
-├── dll_bridge.py          Python ↔ DLL named pipe communication
-├── dashboard_api.py       REST + WebSocket API for dashboard
-│
-├── dll/
-│   ├── dbvbot.cpp         Injected DLL (creature scan, Game::attack, XTEA hook)
-│   └── dbvbot.dll         Compiled DLL
-│
-├── actions/
-│   ├── dll_bridge.py      Always-on DLL bridge service
-│   ├── auto_targeting.py  Auto-target nearest monster via Game::attack()
-│   ├── eat_food.py        Periodic food consumption
-│   ├── power_up.py        Healing when HP < 99%
-│   ├── speed_up.py        Haste buff with icon bitmask detection
-│   ├── auto_rune.py       Auto-rune on targeted creature
-│   ├── cavebot.py         Navigation recording and playback
-│   ├── full_light.py      Darkness overlay patch
-│   ├── power_down.py      Cancel healing buff
-│   ├── packet_sniffer.py  Packet capture to file
-│   └── item_id_spy.py     Item ID debug display
-│
-├── dashboard/
-│   ├── app/               Next.js pages (React UI)
-│   ├── lib/               Shared utilities
-│   └── electron/          Electron wrapper (desktop app)
-│
-├── cavebot.py             Cavebot engine (recording, actions map, minimap)
-├── recordings/            Saved cavebot navigation recordings
-├── docs/                  Research notes and analysis
-├── offsets.json           Centralized game offsets (DLL reads via pipe)
-└── bot_settings.json      Persisted action settings
-```
-
-## Changelog
-
-### DLL Crash Safety & Stability
-- Add Fix 12: pre-validation before Game::attack to prevent Lua corruption
-- Add deferred attack retry after map instability, reduce cooldown to 500ms
-- Add map stability detection (Fix 11), crash report skill, action updates
-- Add VEH crash recovery, cavebot floor/cancel_walk support, fix far use_item preservation
-- Fix cavebot double-offset bug, add DLL crash safety, dashboard improvements
-
-### Cavebot
-- Add cavebot v1: recording, playback, minimap, and dashboard UI
-- Add sequence-based minimap visualization for cavebot
-- Add unit tests for cavebot build_actions_map (62 tests)
-- Add tile update verification for cavebot and proxy sequence dashboard
-- Add self-contained pre-walk to cavebot use_item nodes
-- Fix floor change detection, event-driven cavebot, proxy reset reliability
-- Add Compare grouped view, remove floor mismatch skip
-- Use DLL position for recording, reduce loop sleep to 1ms
-- Increase DLL scan and bridge poll rate to 60 FPS
-- Add AOE spell action, reduce retries, fix waypoint removal, color-code playback logs
-- Add PZ detection, floor skip, cancel_walk restructure, unreachable monster handling, double use_item
-
-### Actions & Combat
-- Add auto_targeting (nearest monster via Game::attack)
-- Add auto_rune action and build_use_on_creature_packet
-- Add auto_senzu action: use senzu bean (8465) when HP < 40%
-- Add speed_up action with haste detection via PLAYER_ICONS
-- Add full light action via code patch (skip darkness overlay)
-- Add AOE spell action (cast area spell when 2+ monsters nearby)
-- Only cast power up when HP is below 99%
-- Target closest creature, add action logs to dashboard
-
-### DLL & Targeting
-- Implement in-game targeting via Game::attack + sendAttackCreature
-- Replace VirtualQuery scan with direct creature map tree walk, add WndProc hook
-- Make dll_bridge always-on internal service, add 4 dashboard status badges
-- Read HP from DLL memory, improve packet scan and proxy reliability
-- Filter out dead creatures (0% HP) from game state
-
-### Infrastructure & Code Quality
-- Consolidate game constants into constants.py
-- Add OTCv8 source cross-reference comments to constants.py
-- Replace fragile callback chain with list-based registry
-- Auto-close game connections on start_bot and rebuild DLL
-- Code review fixes: remove ghost mode, guard tree walk, path traversal fix
-- Fix relay loop break indentation in proxy.py
-
-### Dashboard
-- Add Electron + Next.js dashboard with live action controls
-- Add WebSocket dashboard, fix player position tracking
-- Add game state parsing, dashboard player stats, bot reset and hot-reload
-- Add cavebot Compare view screenshot to docs and README
-- Add cavebot minimap screenshot to README
-
-### Security & Reviews
-- Fix 36 issues from full codebase security and quality audit
-- Fix 20 code quality, maintenance, and performance issues from full codebase review
-
-## Cavebot TODO
-
-The cavebot is a first working version but not yet fully functional:
-
-### Bugs
-- [x] **Ladder floor change bug** — fixed: double use_item sends packet twice for ladders/doors that need 2 clicks
-- [x] **Some waypoints randomly retry** — fixed: reduced MAX_RETRIES from 5 to 2 for fail-fast
-- [x] **Pause on untargetable monster** — fixed: unreachable monsters stay targeted but don't pause cavebot
-- [x] **PZ zone false pause** — fixed: PZ detection parses "protection zone" server messages, skips pause in PZ
-- [x] **Waypoint removal broken** — fixed: URL-decode recording names, double-click guard, encodeURIComponent in API call
-- [x] **Cancelled path not handled** — fixed: cancel_walks don't consume retry attempts, escape threshold reduced to 2
-
-### Planned Features
-- [x] **Sequence-based minimap visualization** — instead of showing one map per floor (Z level), split the recording into sequential "frames" based on floor transitions. Each time the player enters a floor, a new sequence/frame starts with a fresh map. For example: sequence 1 at Z=6 shows the initial patrol, sequence 2 at Z=7 shows the underground segment, sequence 3 at Z=6 shows the return path on a clean map. This prevents overlapping backtrack lines that make debugging impossible — each frame only shows the waypoints and actions for that continuous segment on that floor
-- [x] **Reduce max retries to 1-2** — done: MAX_RETRIES reduced from 5 to 2
-- [ ] **Floor skip on Z mismatch** — was added then reverted; if player is on wrong Z level, skip to first node matching current floor
-- [ ] **Door auto-open script** — either smart recording that captures door interactions, or a background action that automatically opens doors when the player walks into one
-- [x] **Intelligent targeting (lure mode)** — done: lure walks waypoints without stopping, lets monsters aggro and follow, fights before floor changes, handles body-blocks
-- [x] **Targeting with lure mob count** — done: configurable lure_count, plus lure_timeout (8s) to fight with fewer mobs if count not reached
-- [ ] **Auto-attack prioritize lowest HP** — auto_targeting should prefer the monster with the lowest health percentage to finish off wounded targets first
-- [ ] **Action priority ordering** — allow prioritizing looped action scripts by execution order, with drag-and-drop reordering in the dashboard
-- [ ] **Cavebot preview search** — textual search in the cavebot minimap preview to find specific waypoints, actions, or node labels
-- [ ] **Auto-retarget on deselect** — when user manually deselects a monster and auto_targeting is enabled, retarget that same creature again
-- [x] **AOE spell on mob clusters** — done: aoe_spell.py casts "Inner Flame" when 2+ monsters within range
-- [ ] **Monster combat strategies** — move-and-attack behavior that keeps 1 square distance from the monster while fighting
-- [ ] **Real item usage support** — shovel, rope, and other usable items during cavebot navigation
-- [ ] **Terrain testing** — verify and fix playback on doors, ladders, and other interactive map objects
-- [x] **Spell rotation** — done: auto_rune_and_spell.py handles rune + spell usage during combat
-- [ ] **Loot pickup** — open corpses and move loot to backpack
-- [ ] **Death handling** — detect death, pause actions, resume after respawn
-
-### Nice to Have
-- [ ] **Smart waypoint-to-action-map optimizer** — algorithm that transforms a raw recorded path into an optimized action map based on monster spawn locations. Analyzes which tiles have the highest monster density, removes redundant backtracking, and generates an efficient patrol route that maximizes kills-per-minute by prioritizing high-spawn areas and minimizing idle walking through empty corridors
-- [ ] **Anti-bot / Intelligent responder** — automated system to detect and respond to anti-bot checks or GM interactions
+This project started from the DBVictory proxy bot by **patrykjanik** and has
+since been largely rewritten.
