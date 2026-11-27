@@ -40,6 +40,15 @@ PROTECTED_FILES = {"bot_settings.json", ".env", ".mcp.json"}
 SEED_PREFIXES = ("recordings/",)
 
 
+def _long(root):
+    """Extended-length form on Windows: Electron's node_modules plus the stage folder can pass 260 characters."""
+    root = Path(root).resolve()
+    text = str(root)
+    if os.name == "nt" and not text.startswith("\\\\?\\") and not text.startswith("\\\\"):
+        return Path("\\\\?\\" + text)
+    return root
+
+
 def is_release_install(root):
     return read_release(root) is not None
 
@@ -189,7 +198,7 @@ def _lock(root):
 
 
 def status(root, check_only=False, *, fetch=fetch_latest):
-    root = Path(root)
+    root = _long(root)
     release = read_release(root)
     if release is None:
         raise ValueError("To nie jest instalacja z paczki wydania.")
@@ -219,7 +228,7 @@ def status(root, check_only=False, *, fetch=fetch_latest):
 
 
 def defer(root, revision, *, fetch=fetch_latest):
-    root = Path(root)
+    root = _long(root)
     report = status(root, check_only=True, fetch=fetch)
     if report["state"] != "available" or report["pending"] != revision:
         raise ValueError("Oczekujące wydanie zmieniło się. Sprawdź aktualizacje ponownie.")
@@ -297,7 +306,7 @@ def _extract(package, stage, latest):
 
 def plan(root, old, new):
     """Paths to write from the stage and paths to remove from the installation."""
-    root = Path(root)
+    root = _long(root)
     write, remove = [], []
     for path, entry in new.items():
         if _protected(path):
@@ -339,7 +348,7 @@ def _apply(root, stage, write, remove, tx):
 
 def recover(root):
     """Roll back an interrupted swap. Safe to run more than once."""
-    root = Path(root)
+    root = _long(root)
     feed = _feed(root)
     try:
         journal = json.loads((feed / "transaction.json").read_text(encoding="utf-8"))
@@ -379,7 +388,7 @@ def _remember_leftovers(root, paths):
 
 def cleanup(root):
     """Delete old copies left by a previous update. Files still in use stay listed."""
-    root = Path(root)
+    root = _long(root)
     path = _feed(root) / "cleanup.json"
     try:
         items = json.loads(path.read_text(encoding="utf-8"))
@@ -404,7 +413,7 @@ def cleanup(root):
 
 
 def install(root, revision, *, fetch=fetch_latest, opener=urllib.request.urlopen):
-    root = Path(root)
+    root = _long(root)
     release = read_release(root)
     if release is None:
         raise ValueError("To nie jest instalacja z paczki wydania.")

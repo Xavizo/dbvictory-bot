@@ -39,7 +39,11 @@ if (-not [IO.Path]::IsPathRooted($OutDir)) { $OutDir = Join-Path $Root $OutDir }
 $Out = [IO.Path]::GetFullPath($OutDir)
 $Work = Join-Path $Out "work"
 $Stage = Join-Path $Out "DBVictory-Bot"
-foreach ($dir in $Stage, $Work) { if (Test-Path $dir) { Remove-Item -Recurse -Force $dir } }
+function Remove-Tree([string]$Path) {
+    # node_modules goes past 260 characters, which Remove-Item in Windows PowerShell 5.1 cannot delete.
+    if (Test-Path $Path) { cmd /c "rd /s /q `"\\?\$Path`""; if (Test-Path $Path) { throw "Cannot remove $Path" } }
+}
+foreach ($dir in $Stage, $Work) { Remove-Tree $dir }
 New-Item -ItemType Directory -Force $Stage, $Work | Out-Null
 
 # 1. Program files exactly as committed (no .git, no local data).
@@ -115,7 +119,7 @@ foreach ($built in "dll\dbvbot.dll", "dll\dbvobserver_marker_20261117.dll", "dll
 # 7. Version file, checksum manifest, zip and release description.
 Invoke-Checked $HostPython @("-I", (Join-Path $Root "tools\release_package.py"), $Stage, "--version", $Version,
     "--revision", $Revision, "--repo", $Repo, "--out", $Out)
-Remove-Item -Recurse -Force $Work
+Remove-Tree $Work
 $outputs = $env:GITHUB_OUTPUT
 if (-not $outputs) { $outputs = Join-Path $Out "outputs.txt" }
 "version=$Version" | Out-File -Append -Encoding utf8 -FilePath $outputs
