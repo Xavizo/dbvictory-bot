@@ -323,7 +323,10 @@ class Progress:
 
     def clear(self):
         if self.path is not None:
-            self.path.unlink(missing_ok=True)
+            try:
+                self.path.unlink(missing_ok=True)
+            except OSError:
+                pass  # e.g. the launcher is reading it on Windows; never turn a finished install into an error
 
 
 _report = Progress()

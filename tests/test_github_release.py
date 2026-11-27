@@ -355,3 +355,13 @@ def test_progress_is_throttled_but_always_writes_the_end(tmp_path):
     progress("download", 10, 10, unit="bytes", kind="patch")
     last = json.loads((tmp_path / "progress.json").read_text())
     assert last == {"stage": "download", "done": 10, "total": 10, "unit": "bytes", "kind": "patch", "started": 100.0}
+
+
+def test_a_progress_file_that_cannot_be_removed_does_not_fail_the_install(tmp_path, monkeypatch):
+    progress = gr.Progress(tmp_path / "progress.json")
+    progress("apply", 1, 1)
+
+    def locked(self, missing_ok=False):
+        raise PermissionError("in use")
+    monkeypatch.setattr(type(tmp_path), "unlink", locked)
+    progress.clear()
