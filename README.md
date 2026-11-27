@@ -233,10 +233,11 @@ a sound, and choose whether it fires always or only while the cavebot is running
 6. The **panel** (Electron) opens. It only listens on `127.0.0.1` and requires a
    per-session token. You enter the game and turn on the features you want.
 
-The launcher works entirely on your computer. It does not download anything
-from the internet: it starts the bot from the folder you cloned, and the
-**Ostatnie zmiany** (recent changes) list comes from the release notes in that
-folder. All learned data (atlas, profiles, reports) stays on your computer in
+The launcher works on your computer. A downloaded package asks GitHub at start
+whether a newer release exists and installs it only when you click
+**Zainstaluj aktualizację**; a Git checkout never downloads anything. The
+**Ostatnie zmiany** (recent changes) list comes from the release notes in the
+installed folder. All learned data (atlas, profiles, reports) stays on your computer in
 `local_data/`, and nothing is uploaded anywhere.
 
 ```
