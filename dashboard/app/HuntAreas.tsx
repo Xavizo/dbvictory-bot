@@ -1,5 +1,6 @@
 "use client";
 import { t, labels, num, language, onLanguage } from "@/lib/i18n";
+import Help from "@/app/Help";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {authenticatedFetch} from "@/lib/auth";
 import type {BotState} from "@/lib/api";
@@ -334,8 +335,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
           {!!floorCoverage.length&&!route&&<details><summary>{t("hunt.outside",{n:check?.missing?.length ?? 0})}</summary>
             {floorCoverage.map(s=><small key={s.floor}>{t("hunt.floorCoverage",{floor:s.floor,covered:s.covered,total:s.total})}</small>)}</details>}
         </div>:copy?<fieldset disabled={busy}>
-          <label>{t("hunt.areaName")}<input value={copy.name} maxLength={100} onChange={e=>setCopy({...copy,name:e.target.value})}/></label>
-          <p>{t("hunt.editHint",{side})}</p>
+          <label>{t("hunt.areaName")}<Help text={t("hunt.editHint",{side})}/><input value={copy.name} maxLength={100} onChange={e=>setCopy({...copy,name:e.target.value})}/></label>
           <details><summary>Przypisane szkice ({copy.drafts.length})</summary>{data?.drafts.filter(d=>!d.archived||choices.get(key)?.drafts.includes(d.id)).map(d=><label key={d.id}><input type="checkbox" checked={copy.drafts.includes(d.id)} onChange={e=>setCopy({...copy,drafts:e.target.checked?[...copy.drafts,d.id]:copy.drafts.filter(i=>i!==d.id)})}/>{d.name}{d.archived?" (kosz)":""}</label>)}</details>
           <button onClick={save} disabled={!copy.name.trim()||!copy.cells.length||!copy.drafts.length}>{t("hunt.saveArea")}</button> <button onClick={()=>{setCopy(null);setError("");}}>{t("common.cancel")}</button>
         </fieldset>:key==="world"?null:<div><button disabled={busy||!!planning} onClick={()=>{resetRoute();setCopy({...area});}}>{t(area.id?"hunt.editArea":"hunt.adjust")}</button> {!area.id&&<button disabled={busy||!!planning||!area.cells.length} onClick={save}>{t("hunt.saveArea")}</button>}</div>}
@@ -347,8 +347,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
             {!worldLayer&&<button disabled={!!planning||!area.cells.length} onClick={()=>changeSelection(area.cells)}>{t("hunt.wholeArea")}</button>}
             {!!selected.length&&<button disabled={!!planning} onClick={()=>changeSelection([])}>{t("hunt.clear")}</button>}
             {previousSelection&&<button disabled={!!planning} onClick={()=>{setSelection(previousSelection.sectors);setConfirmedVia(previousSelection.via);setPreviousSelection(null);setRouteError("");setApproach([]);}}>{t("hunt.undo")}</button>}
-            <small role="status">{t("hunt.selected")} · {selected.length}{floors.length?" · "+t("hunt.floors",{list:floors.join(", ")}):""}</small>
-            {selecting&&<small>{t("hunt.selectHint")}</small>}
+            <small role="status">{t("hunt.selected")} · {selected.length}{floors.length?" · "+t("hunt.floors",{list:floors.join(", ")}):""}{selecting&&<Help text={t("hunt.selectHint")}/>}</small>
           </div>
           <button className="atlas-primary" disabled={!!planning||busy||!selected.length} onClick={()=>preview()}>{planning===t("hunt.comparing")?planning:t("hunt.compare")}</button>
           {routeError&&<p role="alert">{routeError}</p>}
@@ -376,8 +375,7 @@ export default function HuntAreas({initialFloor:playerFloor,onOpen,onClose,state
               <button className="atlas-primary" disabled={!!planning} onClick={()=>preview(undefined,true)}>{t("hunt.addConnector")}</button>
             </section>}
             {route.missing.length>0&&!connector&&<small>{t("hunt.noConnector")}</small>}
-            {!connector&&!!route.floor_checks?.length&&<details><summary>{t("hunt.floorChecks")}</summary>
-              <small>{t("hunt.floorChecksNote")}</small>
+            {!connector&&!!route.floor_checks?.length&&<details><summary>{t("hunt.floorChecks")}<Help text={t("hunt.floorChecksNote")}/></summary>
               {route.floor_checks.map(h=><button key={h.point.join(",")+":"+h.to_floor}
                 onClick={()=>setFocus({floor:h.point[2],cells:[h.point]})}>
                 {h.point[2]} → {h.to_floor} · {t(h.exact?"hunt.tile":"hunt.area")} ({h.point.join(", ")})</button>)}

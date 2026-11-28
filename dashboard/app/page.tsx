@@ -1,6 +1,7 @@
 'use client';
 
 import { t, num, plural, type TextKey } from "@/lib/i18n";
+import Help from "@/app/Help";
 import { useBot } from "../lib/useBot";
 import RouteReplayPanel from "./RouteReplayPanel";
 import MovementHistoryPanel from "./MovementHistoryPanel";
@@ -135,7 +136,7 @@ export default function DashboardPage() {
       {view==="diagnostics"&&<MovementHistoryPanel online={mcpConnected}/>}
       {state?.proxy_sequence && <div className="diagnostic-section"><button className="secondary-button" onClick={()=>setShowProxySeq(!showProxySeq)}>{t(showProxySeq ? "diagnostics.hideSteps" : "diagnostics.showSteps")}</button>{showProxySeq && <ConnectionSequence seq={state.proxy_sequence} onClose={()=>setShowProxySeq(false)}/>}</div>}
       {state?.connected && state.player && <PlayerStats player={state.player}/>}
-      <div className="diagnostic-section"><div className="section-caption"><div><h2>{t("diagnostics.creatures")}</h2><p>{t("diagnostics.creaturesNote")}</p></div></div><CreatureList creatures={state?.creatures ?? []}/></div>
+      <div className="diagnostic-section"><div className="section-caption"><div><h2>{t("diagnostics.creatures")}<Help text={t("diagnostics.creaturesNote")}/></h2></div></div><CreatureList creatures={state?.creatures ?? []}/></div>
     </section>
   </DashboardChrome>;
 }
