@@ -8,6 +8,10 @@
   backwards-compatible feature and `type(scope)!:` or a `BREAKING CHANGE:`
   footer for an incompatible change. Fixes and other commits advance patch.
 
+- Release notes (`launcher/desktop/release-notes.json`) are written in Polish
+  and English: every change has `title` and `detail` in Polish and the same
+  under `en`. See `docs/RELEASES.md`.
+
 - This is a Windows game client integration, exposed through standard stdio MCP.
   `run_mcp.py` only starts MCP. Connecting to the game is an explicit `start_bot`
   tool call. Never use that call as a smoke test.
@@ -23,6 +27,9 @@
   `requirements-dev.txt`. The MCP smoke test must work without a game or DLL.
 - Validate dashboard changes with `npm test`, `npm run typecheck` and `npm run build` in
   `dashboard/`. Use the lockfile with `npm ci`; check `npm audit` after updates.
+- `dashboard/mock/` builds a phone preview of the launcher and panel with invented data
+  (`node mock/build.mjs`, see `dashboard/mock/README.md`). After a UI change, rebuild it and
+  republish the preview; give a new state field or endpoint a fake value there.
 - The panel window (`dbv/mcp_server/panel_window.py`, pywebview) receives a
   session token from the parent process. Keep HTTP and WebSocket
   authentication, exact Origin checks, loopback binding, and the page-origin

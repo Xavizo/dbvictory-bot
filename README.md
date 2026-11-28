@@ -554,7 +554,8 @@ cd dashboard; npm test; npm run typecheck; npm run build
 - Contributor rules are in [`AGENTS.md`](AGENTS.md).
 - Commit messages drive the version number (`feat:` → minor, `fix:` → patch,
   `!` or `BREAKING CHANGE:` → major). User-visible changes go at the top of
-  [`launcher/desktop/release-notes.json`](launcher/desktop/release-notes.json).
+  [`launcher/desktop/release-notes.json`](launcher/desktop/release-notes.json),
+  in Polish and in English (`en`); see [docs/RELEASES.md](docs/RELEASES.md).
 
 ## Project layout
 

@@ -43,7 +43,7 @@ PYTHON_DROPPED = (
 )
 # Program files from `git archive` that only developers use. docs/vbot stays: MCP serves it.
 SOURCE_DROPPED = ("tests", "docs/screenshots", "requirements-dev.txt", "dashboard/electron/*.test.js",
-                  "dashboard/electron/*.test.cjs", "dashboard/electron/*.cjs")
+                  "dashboard/electron/*.test.cjs", "dashboard/electron/*.cjs", "dashboard/mock")
 # The panel build: only the compiled output (minus its build caches) and public/ are served.
 PANEL_DROPPED = ("node_modules", ".next/cache", ".next/trace", ".next/types")
 

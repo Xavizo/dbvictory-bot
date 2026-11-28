@@ -795,10 +795,14 @@ def _action_catalog(directory, internal):
 
 
 def _knife_corpse_config(st, cfg):
-    from dbv.brain.combat.hunter_knife import DEFAULT_CORPSES, effective_config, with_learned
+    from dbv.brain.combat.hunter_knife import DEFAULT_CORPSES, DEFAULT_MONSTERS, effective_config, with_learned
     learned = getattr(st, "knife_learned", None)
     current = (learned and with_learned(cfg, learned.snapshot())) or effective_config(cfg)
-    return {"corpses": current["corpses"], "default_corpses": [dict(c) for c in DEFAULT_CORPSES]}
+
+    def named(corpse):  # display only: a default corpse saved without a name still shows one
+        name = corpse.get("monster") or DEFAULT_MONSTERS.get(corpse["id"])
+        return {**corpse, "monster": name} if name else dict(corpse)
+    return {"corpses": [named(c) for c in current["corpses"]], "default_corpses": [named(c) for c in DEFAULT_CORPSES]}
 
 
 def _live(task):
@@ -937,6 +941,10 @@ def _build_state_json() -> str:
     from_client = proxy.packets_from_client if proxy else 0
     gs = st.game_state
     observer = _observer_connected(gs)
+    # Standalone combat drives the cavebot's controller; the cavebot view shows its parked route.
+    controller = getattr(st, "adaptive_cavebot", None)
+    fighting = controller if getattr(controller, "standalone", False) else None
+    route = getattr(st, "_parked_route", None) if fighting else controller
     return json.dumps(obj={
         "connected": st.connected,  # a character is in game
         "language": _language(),  # "pl" or "en", from the launcher's switch
@@ -968,7 +976,9 @@ def _build_state_json() -> str:
         "dll_bridge_connected": _live(tasks.get("dll_bridge")) and observer,
         "cavebot": _cavebot_json(st),
         "combat_profile": validate_combat(st.settings.get("combat_profile")),
-        "adaptive_cavebot": {**(st.adaptive_cavebot.snapshot() if getattr(st,"adaptive_cavebot",None) else {"status":"idle","reason":"Wybierz zapisany szkic."}),"preparing":getattr(st,"_adaptive_prepare_token",None) is not None},
+        "adaptive_cavebot": {**(route.snapshot() if route else {"status":"idle","reason":"Wybierz zapisany szkic."}),"preparing":getattr(st,"_adaptive_prepare_token",None) is not None},
+        "standalone_combat": {**getattr(st, "standalone_combat", {"status": "off", "reason": ""}),
+                              "combat": fighting.combat.snapshot() if fighting else None},
         "proxy_sequence": _proxy_sequence(proxy, from_server > 0 or from_client > 0),
     })
 

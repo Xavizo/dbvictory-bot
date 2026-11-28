@@ -1,5 +1,6 @@
 "use client";
 import { t } from "@/lib/i18n";
+import Help from "@/app/Help";
 import {useEffect,useState} from "react";
 import type {BotState} from "@/lib/api";
 import {authenticatedFetch} from "@/lib/auth";
@@ -65,6 +66,6 @@ export default function ProfilePicker({kind,state,config,disabled=false,dirty=fa
     <button disabled={busy||disabled||!name.trim()} onClick={()=>void act('save')}>{t("profile.save")}</button>
     {id&&<button title={t("profile.saveNewTitle")} aria-label={t("profile.saveCopy")} disabled={busy||disabled||!name.trim()} onClick={()=>void act('save','')}>＋</button>}
     {id&&<button title={t("profile.delete")} aria-label={t("profile.delete")} disabled={busy||disabled} onClick={()=>void act('delete')}>×</button>}
-  </div>{kind==='combat'&&routeId&&scope&&<div className="profile-binding"><span>{state?.profile_selection?.routes?.[`${scope}:${routeId}`]?t('profile.routeHasCombat'):t('profile.routeNoCombat')}</span><button disabled={busy||disabled||dirty||!id} onClick={async()=>{setBusy(true);setError('');try{await request({command:'bind',kind:'combat',id,scope,draft_id:routeId});await onRefresh();setNote(t('profile.remembered'));}catch(e){setError(String(e));}finally{setBusy(false);}}}>{t("profile.bindShort")}</button>{state?.profile_selection?.routes?.[`${scope}:${routeId}`]&&<button aria-label={t("profile.unbindAria")} disabled={busy||disabled} onClick={async()=>{try{await request({command:'bind',kind:'combat',id:null,scope,draft_id:routeId});await onRefresh();}catch(e){setError(String(e));}}}>×</button>}</div>}{kind==='bot'&&<small>{t("profile.botNote")}</small>}{error&&<p role="alert" className="text-red-300">{error}</p>}{note&&<p role="status" className="profile-note">{note}</p>}</>;
-  return kind==='bot'?<details className="profile-panel"><summary>{t("profile.botProfiles")}</summary>{content}</details>:compactCombat;
+  </div>{kind==='combat'&&routeId&&scope&&<div className="profile-binding"><span>{state?.profile_selection?.routes?.[`${scope}:${routeId}`]?t('profile.routeHasCombat'):t('profile.routeNoCombat')}</span><button disabled={busy||disabled||dirty||!id} onClick={async()=>{setBusy(true);setError('');try{await request({command:'bind',kind:'combat',id,scope,draft_id:routeId});await onRefresh();setNote(t('profile.remembered'));}catch(e){setError(String(e));}finally{setBusy(false);}}}>{t("profile.bindShort")}</button>{state?.profile_selection?.routes?.[`${scope}:${routeId}`]&&<button aria-label={t("profile.unbindAria")} disabled={busy||disabled} onClick={async()=>{try{await request({command:'bind',kind:'combat',id:null,scope,draft_id:routeId});await onRefresh();}catch(e){setError(String(e));}}}>×</button>}</div>}{error&&<p role="alert" className="text-red-300">{error}</p>}{note&&<p role="status" className="profile-note">{note}</p>}</>;
+  return kind==='bot'?<details className="profile-panel"><summary>{t("profile.botProfiles")}<Help text={t("profile.botNote")}/></summary>{content}</details>:compactCombat;
 }

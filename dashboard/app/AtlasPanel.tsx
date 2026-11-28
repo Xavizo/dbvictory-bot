@@ -1,5 +1,6 @@
 "use client";
 import { t, locale, language, onLanguage } from "@/lib/i18n";
+import Help from "@/app/Help";
 import {useEffect,useMemo,useRef,useState,type ReactNode} from "react";
 import {MapTool,MapMore} from "./MapTools";
 import {createPortal} from "react-dom";
@@ -486,9 +487,8 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
       {busy && <p role="status">{t("atlas.preparing")}</p>}
       {mapWaiting&&<p role="status">Wczytywanie atlasu…</p>}{loadError && <p role="alert" className="text-amber-200">{loadError}</p>}{error && <p role="alert" className="text-red-300">{error}</p>}{atlas?.error && <p role="alert">{atlas.error}</p>}
       {atlas && <small>{t("atlas.remembered",{n:atlas.total.toLocaleString(locale())})}</small>}
-      {plan && <><h3>{plan.complete && !plan.requires_action_review&&!executionIssues.length?t("atlas.proposalReady"):t("atlas.planToCheck")}</h3><p>{t("atlas.planSummary",{tiles:plan.path.length,n:plan.transitions.length,points:plan.points.length})}</p><p className="atlas-help">{plan.warning}</p>
+      {plan && <><h3>{plan.complete && !plan.requires_action_review&&!executionIssues.length?t("atlas.proposalReady"):t("atlas.planToCheck")}</h3><p>{t("atlas.planSummary",{tiles:plan.path.length,n:plan.transitions.length,points:plan.points.length})}<Help text={t("atlas.simNote")}/></p><p className="atlas-help">{plan.warning}</p>
         {simIndex!==null && <p role="status" className="atlas-simulation">{t("atlas.simulation")} · {simIndex+1}/{plan.path.length} · {sim?.current && pointText(sim.current)}<small>{sim?.transition?`${transitionActions[sim.transition.action as TransitionAction]} → ${pointText(sim.transition.exit)}`:t(sim?.next?"atlas.knownStep":plan.complete?"atlas.proposalEnd":"atlas.stoppedAtGap")}</small></p>}
-        <small>{t("atlas.simNote")}</small>
         {plan.transitions.map((step,i)=>{
           const link=editableLinks[i],open=replacement?.plan===plan && replacement.row===i;
           return <div key={i} className="atlas-transition-row">
