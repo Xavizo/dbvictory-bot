@@ -26,6 +26,18 @@ it the same way.
 
 Add a `launcher/desktop/release-notes.json` entry for the new version before
 running the workflow: it is shown in the launcher and used as the release text.
+Write every change in both languages: `title` and `detail` in Polish, and the
+same under `en` in English:
+
+```json
+{"title": "Zmiana", "detail": "Opis.", "en": {"title": "Change", "detail": "Details."}}
+```
+
+The launcher shows the notes in the language chosen with **PL / EN**, falling
+back to Polish when a change has no `en`. The GitHub release text lists the
+Polish changes first, then an **English** section. The release uses the newest entry up to
+its version, so an entry may carry the version of the commit that added it: the
+merges into `develop` and `master` that follow still find it.
 
 The repository must be **public** so players can download without a GitHub
 account. A fork publishes to its own Releases page: the workflow writes the

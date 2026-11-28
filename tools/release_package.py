@@ -50,17 +50,31 @@ def collect(stage):
     return files
 
 
+def _number(version):
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)(?:-test\.[0-9a-f]+)?", version or "")
+    return tuple(map(int, match.groups())) if match else None
+
+
 def notes(stage, version):
     try:
         releases = json.loads((stage / "launcher" / "desktop" / "release-notes.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         releases = []
-    entry = next((r for r in releases if isinstance(r, dict) and r.get("version") == version), None)
+    # The newest entry up to this version: every merge advances the version, so an entry
+    # written for the feature commit (vX.Y.0) still describes the release built a few merges later.
+    entry = max((r for r in releases if isinstance(r, dict) and _number(r.get("version")) is not None
+                 and _number(r["version"]) <= (_number(version) or ())), key=lambda r: _number(r["version"]), default=None)
+    changes = entry.get("changes", []) if entry else []
     lines = [f"## DBVictory Bot {version}", ""]
-    if entry:
-        lines += [f"- **{c['title']}** {c['detail']}" for c in entry.get("changes", [])]
+    lines += [f"- **{c['title']}** {c['detail']}" for c in changes]
     lines += ["", "Pobierz `DBVictory-Bot-" + version + ".zip`, rozpakuj do krótkiej ścieżki (np. `C:\\DBVictory-Bot`) "
               "i uruchom `DBVictory.exe`. Instrukcja: README.pl.md → Pierwsze kroki."]
+    english = [c["en"] for c in changes if isinstance(c.get("en"), dict)]
+    if english:
+        lines += ["", "### English", ""]
+        lines += [f"- **{c['title']}** {c['detail']}" for c in english]
+        lines += ["", "Download `DBVictory-Bot-" + version + ".zip`, extract it to a short path (for example "
+                  "`C:\\DBVictory-Bot`) and run `DBVictory.exe`. Guide: README.md → Getting started."]
     return "\n".join(lines) + "\n"
 
 

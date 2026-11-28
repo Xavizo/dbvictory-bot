@@ -1,5 +1,16 @@
 [
   {
+    "version":"v3.4.0",
+    "changes":[
+      {"title":"Polski albo angielski","detail":"Launcher i panel działają po polsku albo po angielsku. Język zmienisz przyciskami PL / EN obok ⚙, a panel podąża za tym wyborem.","en":{"title":"Polish or English","detail":"The launcher and the panel speak Polish or English. Switch with the PL / EN buttons next to ⚙, and the panel follows."}},
+      {"title":"Hunter Knife uczy się ciał","detail":"Panel pokazuje listę ID ciał, których używa nóż. Oskóruj nowe ciało raz samodzielnie, a bot doda je do listy. × usuwa ID, a „Przywróć domyślne” wraca do domyślnej listy.","en":{"title":"Hunter Knife learns corpses","detail":"The panel lists the corpse IDs the knife uses. Skin a new corpse once yourself and the bot adds it to the list. × removes an ID, and Restore the defaults goes back to the default list."}},
+      {"title":"Schody i drabiny bez zacięć","detail":"Gdy klient nie może pewnie odczytać pola ze schodami albo drabiną, cavebot po krótkiej próbie używa przejścia, które atlas już zna, zamiast czekać w miejscu.","en":{"title":"Stairs and ladders without getting stuck","detail":"When the client can't read a stairs or ladder tile reliably, the cavebot uses the transition the atlas already knows after a short retry, instead of waiting in place."}},
+      {"title":"Start po pobraniu z internetu","detail":"Launcher sam zdejmuje z plików znacznik Windows „pobrano z internetu”, więc okno otwiera się bez klikania „Odblokuj” we właściwościach pliku.","en":{"title":"Starts right after downloading","detail":"The launcher removes Windows' \"downloaded from the internet\" mark from its files itself, so its window opens without clicking Unblock in the file properties."}},
+      {"title":"Folder .dbvictory","detail":"Pliki robocze instalacji (logi, blokady, aktualizacje) są teraz w ukrytym folderze .dbvictory zamiast .codex. Launcher przenosi je sam.","en":{"title":"The .dbvictory folder","detail":"The installation's working files (logs, locks, updates) now live in the hidden .dbvictory folder instead of .codex. The launcher moves them itself."}},
+      {"title":"Licencja MIT i nowy README","detail":"Kod bota jest na licencji MIT. README ma spis treści, zaczyna od launchera i jest dostępny po polsku i po angielsku.","en":{"title":"MIT license and a new README","detail":"The bot's code is under the MIT License. The README has a table of contents, starts with the launcher, and comes in Polish and English."}}
+    ]
+  },
+  {
     "version":"v2.0.5",
     "changes":[
       {"title":"Paczka do pobrania","detail":"Bota można pobrać z GitHuba jako gotowy plik zip z launcherem, panelem, Pythonem i Node.js. Nie trzeba niczego instalować ani używać Gita."},
