@@ -6,7 +6,7 @@ import re
 import pytest
 
 from dbv import language as lang
-from launcher import desktop_app, texts
+from launcher import desktop_app, desktop_host, texts
 from tests.test_desktop_app import FakeWindow
 
 TEXT_DIR = texts.TEXT_DIR
@@ -97,3 +97,20 @@ def test_the_panel_state_carries_the_language(tmp_path, monkeypatch):
     assert json.loads(dashboard_api._build_state_json())["language"] == "pl"
     lang.write_language("en", tmp_path)
     assert json.loads(dashboard_api._build_state_json())["language"] == "en"
+
+
+def test_switching_shows_the_release_notes_in_the_new_language(tmp_path):
+    directory = tmp_path / "launcher" / "desktop"
+    directory.mkdir(parents=True)
+    (directory / "release-notes.json").write_text(json.dumps([{"version": "v1.0.0", "changes": [
+        {"title": "Zmiana", "detail": "Opis", "en": {"title": "Change", "detail": "Details"}}]}]), encoding="utf-8")
+
+    async def scenario():
+        window = FakeWindow()
+        launcher = desktop_app.Launcher(tmp_path, desktop_host, window, read_only=True,
+                                        settings=tmp_path / "client.json", loop=asyncio.get_running_loop())
+        launcher.view = {**launcher.view, "version": "v1.0.0",
+                         "changes": desktop_host.history(tmp_path, "v1.0.0", "pl")}
+        launcher.set_language("en")
+        assert window.views[-1]["changes"][0]["changes"] == [{"title": "Change", "detail": "Details"}]
+    asyncio.run(scenario())

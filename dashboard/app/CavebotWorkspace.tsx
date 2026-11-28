@@ -3,14 +3,13 @@ import { t, locale } from "@/lib/i18n";
 import {useEffect,useRef,useState} from "react";
 import type {BotState} from "@/lib/api";
 import {authenticatedFetch} from "@/lib/auth";
-import {defaultCombat,defaultCombatSpell,visibleWaypointProgress,moveRule,usesRoute,v2StartRequest,parseTargetPreview,type TargetPreview,type CombatConfig,type RouteDraft} from "@/lib/cavebotModel";
+import {defaultCombat,visibleWaypointProgress,usesRoute,v2StartRequest,parseTargetPreview,type TargetPreview,type CombatConfig,type RouteDraft} from "@/lib/cavebotModel";
 import AtlasPanel from "./AtlasPanel";
 import ProfilePicker from "./ProfilePicker";
 import ActivationCheckbox from "./ActivationCheckbox";
-import MonsterRules from "./MonsterRules";
-import SpellPicker,{SpellCooldown} from './SpellPicker';
-import {LureSettings} from './LureStatus';
-import SpellConditions,{SpellDiagnostics} from './SpellConditions';
+import CombatEditor from "./CombatEditor";
+import Help from "@/app/Help";
+import {SpellDiagnostics} from './SpellConditions';
 async function request(path:string,body?:unknown){const r=await authenticatedFetch(`http://127.0.0.1:8089${path}`,body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:undefined);const d=await r.json();if(!r.ok)throw Object.assign(new Error(d.error??`HTTP ${r.status}`),{status:r.status});return d;}
 export default function CavebotWorkspace({state,active,onRefresh}:{state:BotState|null;active:boolean;onRefresh:()=>void}){
   const [movement,setMovement]=useState(true);
@@ -26,7 +25,6 @@ export default function CavebotWorkspace({state,active,onRefresh}:{state:BotStat
   const moveOnRoute=usesRoute(movement,route),hasRoute=usesRoute(true,route);
   const resumable=moveOnRoute&&run?.resumable&&!!visibleWaypointProgress(run,id,route?.updated,sketchDirty,route?.navigation_revision)&&run?.loop===loop;
   const preparing=pendingStart||run?.preparing;
-  const hasLure=moveOnRoute&&(combat.mode==='lure'||combat.rules.some(r=>r.action==='attack'&&r.stance==='lure'));
   const globalCombat=JSON.stringify(state?.combat_profile??defaultCombat());
   useEffect(()=>{if(!edited.current)setCombat(JSON.parse(globalCombat));},[globalCombat]);
   let startError="";try{v2StartRequest(movement,route,combat,loop,scope);}catch(e){startError=(e as Error).message;}
@@ -86,27 +84,9 @@ export default function CavebotWorkspace({state,active,onRefresh}:{state:BotStat
         moreActions={<><button disabled={busy||sketchDirty} onClick={()=>{choose("");setSelectionVersion(v=>v+1);}}>{t("workspace.newSketch")}</button><button disabled={busy||sketchDirty} onClick={()=>openEditor(id)}>{t("workspace.openWindow")}</button><button disabled={!route||busy||sketchDirty} title={t("workspace.exportTitle")} onClick={exportRoute}>{t("workspace.export")}</button><button disabled={busy||sketchDirty||!scope} title={t("workspace.importTitle")} onClick={importRoute}>{t("workspace.import")}</button><button disabled={!route||busy||executing} onClick={()=>setDeleting(!deleting)}>{t("workspace.deleteSketch")}</button>{sketchDirty&&!state?.cavebot?.recording.active&&<button onClick={()=>{setSelectionVersion(v=>v+1);setSketchDirty(false);}}>{t("workspace.discardUnsaved")}</button>}</>}/>
     </section>
       <section className="v2-combat"><header className="combat-section-header"><ActivationCheckbox label={t("workspace.combat")} checked={combat.enabled} disabled={busy||executing} onChange={enabled=>change({...combat,enabled})}/><ProfilePicker kind="combat" state={state} config={combat} routeId={id} scope={scope} legacy={route?.combat} onImport={value=>change(value as CombatConfig)} disabled={busy||executing} dirty={dirty} onRefresh={onRefresh} onApplied={value=>{setCombat(value as CombatConfig);setDirty(false);edited.current=false;setPreview(null);}}/></header>
-      {dirty&&<p className="combat-unsaved" role="status">{t("workspace.unsavedCombat")}</p>}
+      {dirty&&<p className="combat-unsaved" role="status">{t("workspace.unsavedCombatShort")}<Help text={t("workspace.unsavedCombat")}/></p>}
       <fieldset disabled={busy||executing} aria-label={t("workspace.combatSetup")}>
-        {moveOnRoute&&<div className="combat-behavior" role="group" aria-label={t("workspace.behavior")}>{(['stop','chase','lure'] as const).map(mode=><button key={mode} type="button" aria-pressed={combat.mode===mode} title={t(`workspace.mode.${mode}.hint`)} onClick={()=>change({...combat,mode})}>{t(`workspace.mode.${mode}`)}</button>)}</div>}
-        <div className="v2-engage"><label>{t("workspace.engage")}<select aria-label={t("workspace.engageAria")} value={combat.engage} onChange={e=>change({...combat,engage:e.target.value as CombatConfig['engage']})}><option value="visible">{t("workspace.engageVisible")}</option><option value="near">{t("workspace.engageNear")}</option></select></label>{combat.engage==="near"&&<label>{t("workspace.upTo")} <input aria-label={t("workspace.attackDistance")} type="number" min={1} max={7} value={combat.radius} onChange={e=>change({...combat,radius:Number(e.target.value)})}/> SQM</label>}</div>
-        {hasLure&&<LureSettings value={combat} onChange={change}/>}
-        <MonsterRules rules={combat.rules} movement={moveOnRoute} disabled={busy||executing} onChange={rules=>change({...combat,rules})}/>
-        <details className="v2-options"><summary>{t("workspace.sharedSpells")} <span>{combat.spells.length}</span></summary>
-          <small className="spell-priority-note">{t("workspace.spellOrder")}</small>
-          {combat.spells.map((s,i)=><div className="combat-spell-card" key={i}>
-            <div className="combat-spell-header"><b className="spell-priority-number">{i+1}</b><SpellPicker value={s} label={t("workspace.spell",{n:i+1})} disabled={busy||executing} onChange={next=>change({...combat,spells:combat.spells.map((v,j)=>j===i?next:v)})}/>
-              <SpellCooldown value={s} label={t("workspace.spellInterval",{n:i+1})} disabled={busy||executing} onChange={next=>change({...combat,spells:combat.spells.map((v,j)=>j===i?next:v)})}/>
-              <div className="spell-order"><button type="button" disabled={i===0} aria-label={t("workspace.spellUp",{n:i+1})} onClick={()=>change({...combat,spells:moveRule(combat.spells,i,-1)})}>↑</button><button type="button" disabled={i===combat.spells.length-1} aria-label={t("workspace.spellDown",{n:i+1})} onClick={()=>change({...combat,spells:moveRule(combat.spells,i,1)})}>↓</button></div>
-              <button type="button" className="spell-remove" aria-label={t("workspace.spellRemove",{n:i+1})} onClick={()=>change({...combat,spells:combat.spells.filter((_,j)=>j!==i)})}>×</button>
-            </div>
-            <SpellConditions value={s} disabled={busy||executing} onChange={next=>change({...combat,spells:combat.spells.map((v,j)=>j===i?next:v)})}/>
-          </div>)}
-          <button disabled={combat.spells.length>=12} onClick={()=>change({...combat,spells:[...combat.spells,defaultCombatSpell()]})}>＋ {t("workspace.addSpell")}</button></details>
-        <details className="v2-options"><summary>{t("workspace.more")}</summary><div className="v2-select-row">
-          <label>{t("workspace.tie")}<select value={combat.strategy} onChange={e=>change({...combat,strategy:e.target.value as CombatConfig['strategy']})}><option value="nearest">{t("workspace.nearest")}</option><option value="lowest_hp">{t("workspace.lowestHp")}</option><option value="highest_hp">{t("workspace.highestHp")}</option><option value="finish">{t("workspace.finish")}</option></select></label>
-          {moveOnRoute&&combat.mode==='chase'&&<label>{t("workspace.chaseDistance")}<input type="number" min={1} max={7} value={combat.distance} onChange={e=>change({...combat,distance:Number(e.target.value)})}/></label>}
-          {hasLure&&<label title={t("workspace.lureLimitTitle")}>{t("workspace.lureLimit")}<input type="number" min={1} max={30} value={combat.lure_seconds} onChange={e=>change({...combat,lure_seconds:Number(e.target.value)})}/></label>}</div></details>
+        <CombatEditor combat={combat} onChange={change} disabled={busy||executing} movement={moveOnRoute}/>
       </fieldset><div className="v2-savebar"><button disabled={!dirty||busy||executing} onClick={save}>{t("workspace.saveCombat")}</button><button disabled={!dirty||busy} onClick={()=>{setCombat(JSON.parse(globalCombat));setDirty(false);edited.current=false;setPreview(null);setError("");}}>{t("workspace.discardChanges")}</button><button disabled={busy||!state?.connected} onClick={inspectTargets}>{t("workspace.checkTargets")}</button></div>
       {executing&&!!run?.combat?.spells?.length&&<details className="v2-options" open><summary>{t("workspace.spellConditions")}</summary><SpellDiagnostics rows={run.combat.spells}/>{run.combat.last_spell_attempt&&<small className="spell-attempt-note">{t("workspace.lastAttempt")}: {run.combat.last_spell_attempt.words} · {new Date(run.combat.last_spell_attempt.at*1000).toLocaleTimeString(locale())} · {t("workspace.unconfirmed")}</small>}</details>}
       {preview?.spells&&<SpellDiagnostics rows={preview.spells} passive/>}

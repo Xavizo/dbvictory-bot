@@ -549,7 +549,8 @@ cd dashboard; npm test; npm run typecheck; npm run build
 - Zasady dla współtwórców są w [`AGENTS.md`](AGENTS.md).
 - Opisy commitów wyznaczają numer wersji (`feat:` → minor, `fix:` → patch,
   `!` albo `BREAKING CHANGE:` → major). Zmiany widoczne dla gracza trafiają na
-  górę [`launcher/desktop/release-notes.json`](launcher/desktop/release-notes.json).
+  górę [`launcher/desktop/release-notes.json`](launcher/desktop/release-notes.json),
+  po polsku i po angielsku (`en`); zobacz [docs/RELEASES.md](docs/RELEASES.md).
 
 ## Struktura projektu
 

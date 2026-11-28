@@ -1,6 +1,7 @@
 "use client";
 
 import { t, locale } from "@/lib/i18n";
+import Help from "@/app/Help";
 import {useEffect, useRef, useState} from "react";
 import {acknowledgeAlerts, configureAlerts, setAlertsPaused, type AlertConfig, type AlertKind, type AlertState} from "@/lib/api";
 
@@ -107,16 +108,14 @@ export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertSta
       <AlertPreview event={latest} onOpen={()=>setOpen(true)} onDismiss={dismissPreview}/>}
 
     {open&&<section id="alert-panel" className="alert-panel" aria-label={t("alerts.title")}>
-      <header><strong>{t("alerts.title")}</strong><span>{t(automationPaused?"alerts.automationPause":paused?"alerts.held":alerts?.cavebot_active?"alerts.cavebotOn":"alerts.cavebotOff")}</span><button aria-label={t("alerts.close")} className="alert-close" onClick={()=>setOpen(false)}>×</button></header>
+      <header><strong>{t("alerts.title")}<Help text={t("alerts.hint")}/></strong><span>{t(automationPaused?"alerts.automationPause":paused?"alerts.held":alerts?.cavebot_active?"alerts.cavebotOn":"alerts.cavebotOff")}</span><button aria-label={t("alerts.close")} className="alert-close" onClick={()=>setOpen(false)}>×</button></header>
       {!alerts||!config?<p>{t("alerts.needsSession")}</p>:<>
         <div className="alert-setting-head"><span>{t("alerts.event")}</span><span>{t("alerts.signal")}</span><span>{t("alerts.when")}</span></div>
         {kinds.filter(kind=>config[kind]).map(kind=><div key={kind} className="alert-setting">
-          <label><input type="checkbox" checked={config[kind].enabled} disabled={busy||!connected} onChange={e=>void change(kind,{enabled:e.target.checked})}/>{label(kind)}</label>
+          <label><input type="checkbox" checked={config[kind].enabled} disabled={busy||!connected} onChange={e=>void change(kind,{enabled:e.target.checked})}/>{label(kind)}{kind==="ki_loss"&&<Help text={t("alerts.kiHint")}/>}</label>
           <label className="alert-sound-toggle"><input type="checkbox" aria-label={t("alerts.soundAria",{kind:label(kind)})} checked={config[kind].sound} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{sound:e.target.checked})}/></label>
           <select aria-label={t("alerts.whenAria",{kind:label(kind)})} value={config[kind].scope} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{scope:e.target.value as "always"|"cavebot"})}><option value="always">{t("alerts.always")}</option><option value="cavebot">{t("alerts.withV2")}</option></select>
         </div>)}
-        <p className="alert-hint">{t("alerts.hint")}</p>
-        {config.ki_loss&&<p className="alert-hint">{t("alerts.kiHint")}</p>}
         <div className="alert-tools"><button disabled={paused} onClick={async()=>{setError("");try{if(!window.dbvAlerts)throw new Error(t("alerts.restartForSound"));await window.dbvAlerts.testSound();}catch(e){setError(String(e));}}}>♪ {t("alerts.test")}</button><button disabled={busy||!connected||!unread} onClick={()=>void read()}>{t("alerts.markRead")}</button></div>
         {error&&<p role="alert" className="alert-error">{error}</p>}
         <div className="alert-history" aria-label={t("alerts.history")}>{[...alerts.events].reverse().map(e=><article key={`${alerts.session}-${e.id}`}><div><b>{label(e.kind)}</b><time>{new Date(e.at*1000).toLocaleTimeString(locale())}</time></div><strong>{e.sender}</strong>{e.position&&<span className="alert-coordinates"> ({e.position.join(", ")})</span>}<p>{e.text}</p></article>)}{!alerts.events.length&&<p className="alert-empty">{t("action.noEvents")}</p>}</div>

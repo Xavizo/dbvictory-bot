@@ -7,6 +7,8 @@ from pathlib import Path
 from dbv.brain.combat.combat_wave import plan_wave, facing
 from dbv import paths
 
+# The client shows 8 tiles to the side of the character (an 18x14 view).
+SCREEN_RANGE = 8
 OPERATORS = {'>': operator.gt, '>=': operator.ge, '=': operator.eq, '<=': operator.le, '<': operator.lt}
 
 
@@ -45,7 +47,7 @@ def validate_conditions(spell, row):
         elif type(value) is not int or not 0 <= value <= limit:
             raise ValueError(f'Nieprawidłowy próg {field.upper()}.')
         row[field], row[field+'_unit'] = value, unit
-    for field, low, high in [('range', 1, 7), ('count', 0, 12)]:
+    for field, low, high in [('range', 1, SCREEN_RANGE), ('count', 0, 12)]:
         if type(row[field]) is not int or not low <= row[field] <= high:
             raise ValueError(f'Nieprawidłowe ustawienie czaru: {field}.')
     return row

@@ -31,7 +31,7 @@ def stage(tmp_path):
              "dashboard/node_modules/.bin/next",
              "dashboard/electron/windows_alert.py", "dashboard/electron/tray.png", "dashboard/electron/sounds/player.wav",
              "dashboard/electron/atlas.test.js", "dashboard/electron/layout-regression.cjs",
-             "tests/test_x.py", "launcher/desktop_app.py", "dbv/mcp_server/panel_server.py",
+             "dashboard/mock/build.mjs", "tests/test_x.py", "launcher/desktop_app.py", "dbv/mcp_server/panel_server.py",
              "docs/screenshots/a.png", "docs/vbot/architecture.md", "requirements-dev.txt"]
     for rel in files:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -70,7 +70,8 @@ def test_trim_keeps_what_players_run(tmp_path):
                     "runtime/node/node.exe", "dashboard/.next/cache/webpack/x.pack", "dashboard/.next/trace",
                     "dashboard/.next/types/app/page.ts", "dashboard/node_modules/next/dist/server/next.js",
                     "dashboard/node_modules/react/index.js", "dashboard/node_modules/.bin/next",
-                    "dashboard/electron/atlas.test.js", "dashboard/electron/layout-regression.cjs"):
+                    "dashboard/electron/atlas.test.js", "dashboard/electron/layout-regression.cjs",
+                    "dashboard/mock/build.mjs"):
         assert dropped not in files, dropped
     for folder in ("dashboard/node_modules", "venv/Scripts/tcl", "runtime"):
         assert not (root / folder).exists(), folder
