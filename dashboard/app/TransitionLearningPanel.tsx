@@ -1,6 +1,7 @@
 "use client";
 
 import { t, labels, locale, plural } from "@/lib/i18n";
+import Help from "@/app/Help";
 import { useState } from "react";
 import type { TransitionAction, PassiveMapState, TransitionObservation } from "@/lib/api";
 
@@ -22,21 +23,20 @@ export default function TransitionLearningPanel({ map, onInspect }: { map?: Pass
   const rows=order==="nearby" ? learning?.nearby_records ?? fallback : learning?.records ?? [];
   return <section aria-label={t("transition.aria")} className="transition-panel">
     <div className="transition-summary">
-      <div><span>{t("transition.saved")}</span><strong>{learning?.total ?? 0}</strong><small>{t("transition.savedNote")}</small></div>
-      <div><span>{t("transition.linked")}</span><strong className="text-emerald-300">{learning?.observed ?? 0}</strong><small>{t("transition.linkedNote")}</small></div>
-      <div><span>{t("transition.toCheck")}</span><strong className="text-amber-300">{(learning?.total ?? 0)-(learning?.observed ?? 0)}</strong><small>{t("transition.toCheckNote")}</small></div>
+      <div><span>{t("transition.saved")}<Help text={t("transition.savedNote")}/></span><strong>{learning?.total ?? 0}</strong></div>
+      <div><span>{t("transition.linked")}<Help text={t("transition.linkedNote")}/></span><strong className="text-emerald-300">{learning?.observed ?? 0}</strong></div>
+      <div><span>{t("transition.toCheck")}<Help text={t("transition.toCheckNote")}/></span><strong className="text-amber-300">{(learning?.total ?? 0)-(learning?.observed ?? 0)}</strong></div>
     </div>
     <div className="transition-toolbar">
       <div><h2>{t("transition.base")}</h2><span className={learning?.status === "learning" ? "text-emerald-300" : "text-amber-300"}>
         {statuses[learning?.status ?? "waiting"]}
       </span></div>
-    <label>{t("transition.sort")}
+    <label>{t("transition.sort")}{order==="nearby"&&<Help text={t("transition.context")}/>}
       <select value={order} onChange={e=>setOrder(e.target.value as "nearby"|"recent")}>
         <option value="nearby">{t("transition.nearby")}</option><option value="recent">{t("transition.recent")}</option>
       </select>
     </label>
     </div>
-    {order==="nearby" && <p className="transition-context">{t("transition.context")}</p>}
     {learning?.storage_error && <p role="alert" className="mt-2 rounded border border-amber-700 p-2 text-sm text-amber-200">{learning.storage_error}</p>}
     {learning?.limit_reached && <p className="mt-2 text-xs text-amber-300">{t("transition.limit")}</p>}
     {!learning?.records.length ? <div className="empty-panel"><h2>{t("transition.emptyTitle")}</h2><p>{t("transition.emptyNote")}</p></div> :

@@ -1,5 +1,6 @@
 "use client";
 import { t, locale } from "@/lib/i18n";
+import Help from "@/app/Help";
 import {useState} from "react";
 import {setItemIdentification, type BotState} from "@/lib/api";
 
@@ -23,11 +24,10 @@ export default function ItemIdentificationPanel({state, online, onRefresh}: {sta
   }
   return <section className="speed-up-panel" aria-label={t("itemId.title")}>
     <div className="speed-heading">
-      <strong>{t("itemId.title")}</strong><span>{t(enabled ? "itemId.on" : "itemId.off")}</span>
+      <strong>{t("itemId.title")}<Help text={t("itemId.note")}/></strong><span>{t(enabled ? "itemId.on" : "itemId.off")}</span>
       <button className={`action-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled}
         aria-label={t("itemId.title")} disabled={busy || !online} onClick={() => void toggle()}><span/></button>
     </div>
-    <small>{t("itemId.note")}</small>
     {enabled && (recent.length ? <table className="w-full text-xs mt-2">
       <thead><tr className="text-left text-gray-400"><th className="py-1">ID</th><th className="py-1">{t("itemId.place")}</th><th className="py-1">{t("itemId.time")}</th></tr></thead>
       <tbody>{recent.map((item, i) => <tr key={`${item.time}-${i}`} className="border-t border-gray-700">

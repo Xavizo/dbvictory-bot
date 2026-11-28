@@ -1,5 +1,6 @@
 "use client";
 import { t } from "@/lib/i18n";
+import Help from "@/app/Help";
 import {useState} from "react";
 import {toggleAction, updateActionConfig, type BotState} from "@/lib/api";
 import {LocalSpellIcon} from "./SpellPicker";
@@ -41,7 +42,7 @@ export default function BarrierSpellPanel({state, onRefresh}: {state: BotState |
   return <section className="speed-up-panel" aria-label={t("barrierSpell.aria")}>
     <div className="speed-heading">
       <LocalSpellIcon src="/local-spells/icons/11740.png" size={28}/>
-      <strong>Barrier</strong><span>{enabled ? state?.barrier_spell?.status ?? t("common.waitingForCharacter") : t("barrierSpell.off")}</span>
+      <strong>Barrier<Help text={t("barrierSpell.note")}/></strong><span>{enabled ? state?.barrier_spell?.status ?? t("common.waitingForCharacter") : t("barrierSpell.off")}</span>
       <button className={`action-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled}
         aria-label={t("barrierSpell.aria")} disabled={busy || dirty || !!state?.automation_paused} onClick={() => void change(false)}><span/></button>
     </div>
@@ -49,7 +50,6 @@ export default function BarrierSpellPanel({state, onRefresh}: {state: BotState |
       <input type="number" min={f.key === "duration" ? 2 : 0} max={3600} step="0.1" value={draft[f.key] ?? saved(f)}
         disabled={busy || enabled} onChange={e => setDraft({...draft, [f.key]: e.target.value})}/>
     </label>)}{dirty && <button className="secondary-button" disabled={busy || enabled} onClick={() => void change(true)}>{t("common.save")}</button>}</div>
-    <small>{t("barrierSpell.note")}</small>
     {error && <p role="alert" className="text-red-300">{error}</p>}
   </section>;
 }
