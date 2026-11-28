@@ -1,6 +1,5 @@
 "use client";
 import { t } from "@/lib/i18n";
-import Help from "@/app/Help";
 import {useState} from "react";
 import {toggleAction,updateActionConfig,type BotState} from "@/lib/api";
 
@@ -15,7 +14,7 @@ export default function BarrierBandPanel({state,onRefresh}:{state:BotState|null;
     await onRefresh();
   }catch(e){setError(String(e));}finally{setBusy(false);}}
   return <section className="barrier-band-panel" aria-label={t("band.aria")}>
-    <div><strong>Barrier Band<Help text={t("band.help")}/></strong><small>3051 → 3088 · {t("band.refill")}</small></div>
+    <div><strong>Barrier Band</strong><small>3051 → 3088 · {t("band.refill")}</small></div>
     <label>{t("band.slot")} <select aria-label={t("band.slotAria")} value={slot} disabled={busy||enabled} onChange={e=>change(e.target.value)}>
       <option value="band">{t("band.slotBand")}</option><option value="right_hand">{t("band.rightHand")}</option><option value="left_hand">{t("band.leftHand")}</option>
     </select></label>
