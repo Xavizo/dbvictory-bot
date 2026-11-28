@@ -1,6 +1,7 @@
 "use client";
 import { t } from "@/lib/i18n";
 import Help from "@/app/Help";
+import {useFold} from "@/app/Fold";
 import {useEffect,useRef,useState} from "react";
 import {toggleAction,updateActionConfig,type BotState} from "@/lib/api";
 import {authenticatedFetch} from "@/lib/auth";
@@ -15,6 +16,7 @@ export default function StandaloneCombatPanel({state,onRefresh}:{state:BotState|
   const [combat,setCombat]=useState<CombatConfig>(()=>JSON.parse(saved));
   const [dirty,setDirty]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [preview,setPreview]=useState<TargetPreview|null>(null);
+  const fold=useFold(t("combatPanel.aria"));
   const edited=useRef(dirty);edited.current=dirty;
   useEffect(()=>{if(!edited.current)setCombat(JSON.parse(saved));},[saved]);
   if(!action)return null;
@@ -26,14 +28,14 @@ export default function StandaloneCombatPanel({state,onRefresh}:{state:BotState|
   const save=()=>run(async()=>{await updateActionConfig("auto_combat",{combat:{...combat,enabled:true}});setDirty(false);edited.current=false;});
   const inspect=()=>run(async()=>{const r=await authenticatedFetch("http://127.0.0.1:8089/api/adaptive/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({combat})});const d=await r.json();if(!r.ok)throw new Error(d.error??`HTTP ${r.status}`);setPreview(parseTargetPreview(d));});
   return <section className="speed-up-panel standalone-combat" aria-label={t("combatPanel.aria")}>
-    <div className="speed-heading">
-      <span className="combat-icon" aria-hidden="true">⚔</span>
+    <div className="speed-heading fold-heading" onClick={fold.onHeading}>
+      {fold.arrow}<span className="combat-icon" aria-hidden="true">⚔</span>
       <strong>{t("action.title.auto_combat")}<Help text={t("combatPanel.help")}/></strong>
       <span className={live?.status==="yielding"&&on?"combat-yielding":undefined}>{status}{on&&held?.lost?" · "+t("combatPanel.holding",{name:held.name}):""}</span>
       <button className={`action-switch ${on?"on":""}`} role="switch" aria-checked={on} aria-label={t("combatPanel.aria")}
         disabled={busy||dirty||!!state?.automation_paused} title={dirty?t("combatPanel.saveFirst"):undefined} onClick={()=>void run(()=>toggleAction("auto_combat",!on))}><span/></button>
     </div>
-    <div className="v2-config standalone-combat-editor">
+    <div className="v2-config standalone-combat-editor" hidden={!fold.open}>
       <fieldset disabled={busy} aria-label={t("combatPanel.aria")}><CombatEditor combat={combat} onChange={change} disabled={busy} movement={false}/></fieldset>
       <div className="v2-savebar"><button disabled={!dirty||busy} onClick={save}>{t("common.save")}</button>
         <button disabled={!dirty||busy} onClick={()=>{setCombat(JSON.parse(saved));setDirty(false);edited.current=false;setPreview(null);setError("");}}>{t("workspace.discardChanges")}</button>
