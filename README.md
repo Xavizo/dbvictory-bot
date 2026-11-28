@@ -75,24 +75,23 @@ You only need the launcher. No Git, Python or Node install is needed.
 
 1. Run **`DBVictory.exe`**.
 2. Windows SmartScreen may warn about an unknown publisher: choose
-   **Więcej informacji → Uruchom mimo to** (More info → Run anyway).
+   **More info → Run anyway** (on Polish Windows: **Więcej informacji →
+   Uruchom mimo to**).
 3. On its first start the launcher removes Windows' "downloaded from the
    internet" mark from its own files, so you don't need to click **Unblock**
    in the file properties. It also hides the program's internal files, so the
    folder only shows `DBVictory.exe` (Explorer's **Hidden items** shows them
    again; nothing moves).
 4. The launcher looks for your game client folder. If it doesn't find it, use
-   **Wybierz folder klienta** / **Zmień** (Choose client folder / Change) to pick
+   **Choose the client folder** / **Change** to pick
    the folder that contains `dbvStart.exe`.
 
 ## 3. Connect to the game
 
 1. Click **Start**. The launcher opens the game client if it is closed.
-2. Log in and stay on the **character list**. Click **Połącz z grą** (Connect to
-   game). The click is your confirmation; the launcher does not take
+2. Log in and stay on the **character list**. Click **Connect to the game**. The click is your confirmation; the launcher does not take
    screenshots.
-3. The panel opens in its own window. Wait for **Zaloguj się do gry** (Log in to
-   the game), then enter the game with your character.
+3. The panel opens in its own window. Wait for **Log in to the game**, then enter the game with your character.
 4. Turn on only the features you want. Enabled features are remembered and
    resume on your next login.
 
@@ -101,23 +100,24 @@ Closing the game client ends the bot session.
 ## 4. Updates
 
 At every start the launcher asks GitHub whether a newer release exists and
-offers **Zainstaluj aktualizację** (Install update) or **Odłóż wydanie** (skip
-this release until a newer one appears). Updates replace only program files:
+offers **Install the update** or **Postpone this release** (skip this release
+until a newer one appears). Updates replace only program files:
 your settings, routes, map data and logs stay. Without internet the launcher
-simply starts the installed version. The **Ostatnie zmiany** (recent changes)
-list shows what is new.
+simply starts the installed version. The **Recent changes** list
+shows what is new.
 
 ## 5. Test builds
 
-Want to try new features before they are released? Tick **⚙ → Wersje testowe**
-(Test builds) in the launcher. It then offers whichever was published last: the
+Want to try new features before they are released? Tick **⚙ → Test builds** in the
+launcher. It then offers whichever was published last: the
 latest release or the newest test build. Test builds can have bugs. Untick
-**Wersje testowe** to go back; the latest release then replaces the test build,
+**Test builds** to go back; the latest release then replaces the test build,
 even if its version number is lower.
 
 ## 6. If something doesn't work
 
-- **"Klient DBVictory został zaktualizowany"** (the client was updated): the
+- **"Klient DBVictory został zaktualizowany"** (the client was updated; this
+  message is still in Polish only): the
   server shipped a new client that this version doesn't know yet. The bot
   doesn't touch the game; you can keep playing without it. Once a release for
   the new client is out, the launcher offers it.
@@ -133,8 +133,10 @@ even if its version number is lower.
 
 # Player guide: the panel
 
-The panel is in Polish. Labels are quoted as they appear, with a translation.
-The screenshots use a real learned atlas with a demo character.
+The panel and the launcher are in English or Polish: switch with the **PL / EN**
+buttons next to **⚙** in the launcher, and the panel follows. This guide quotes
+the English labels; [README.pl.md](README.pl.md) quotes the Polish ones. The
+screenshots show the Polish panel, with a real learned atlas and a demo character.
 
 ## What the bot does
 
@@ -164,13 +166,13 @@ The screenshots use a real learned atlas with a demo character.
 
 ## Automation
 
-The **Automatyka** (Automation) tab holds everything that runs while you play
+The **Automation** tab holds everything that runs while you play
 or hunt: healing rules, combat spells, buffs and the Hunter Knife. Each feature
 has its own switch, and enabled features resume on your next login.
 
 ![Automation tab with healing rules](docs/screenshots/automation.png)
 
-Healing is a list of **Reguły leczenia** (healing rules). Each rule says
+Healing is a list of **Healing rules**. Each rule says
 *when* (HP or Ki below a threshold) and *what* to use (a potion, senzu bean or
 spell). Rules are checked in priority order and share the item cooldown, so the
 most urgent one always wins.
@@ -178,7 +180,7 @@ most urgent one always wins.
 The session strip at the top shows XP/h, kills, Senzu/h and how long you have
 been hunting.
 
-To pause all automation at once, use **Pauza wszystkich** (pause all) or press
+To pause all automation at once, use **Pause all** or press
 **Pause/Break**.
 
 ## Combat on the Cavebot tab
@@ -187,12 +189,9 @@ On the **Cavebot** tab you set up how the bot fights:
 
 ![Cavebot tab with a route and lure settings](docs/screenshots/cavebot.png)
 
-- When to attack: **Gdy potwór jest na ekranie** (when a monster is on screen) or
-  **Gdy podejdzie na X SQM** (when it comes within X squares).
-- Target priority: **Najbliższy** (nearest), **Najmniej HP** (lowest HP) or
-  **Najwięcej HP** (highest HP).
-- Fighting style: **Stój i walcz** (stand and fight), **Goń** (chase) or
-  **Luruj** (lure: gather a group of a set size before fighting).
+- When to attack: **When the monster is on screen** or **When it comes within X SQM**.
+- Target priority: **Nearest**, **Lowest HP** or **Highest HP**.
+- Fighting style: **Stand and fight**, **Chase** or **Lure** (gather a group of a set size before fighting).
 - Chase distance, loot time limit and spell conditions.
 
 ## Hunter Knife
@@ -204,7 +203,7 @@ loot that drops. It is **adaptive**: it learns new corpse types from you.
 - **To add a corpse type, skin it once with the knife yourself.** The bot sees
   the corpse change and adds its ID to the list automatically.
 - Click **×** next to an ID to remove it.
-- **Przywróć domyślne** (restore defaults) goes back to the default list.
+- **Restore the defaults** goes back to the default list.
 
 The list is saved in `bot_settings.json`. To look up an item's ID by hand, use
 [item identification](#diagnostics) on the Diagnostics tab.
@@ -218,11 +217,11 @@ The list is saved in `bot_settings.json`. To look up an item's ID by hand, use
 
 **Atlas** opens a full-screen map with three views:
 
-- **Świat** (World): every area you have discovered, with the hunting grounds the
+- **World**: every area you have discovered, with the hunting grounds the
   bot found and approximate monster spawns.
-- **Zapisana mapa** (Saved map): the learned map, floor by floor, with stairs,
+- **Saved map**: the learned map, floor by floor, with stairs,
   ladders, holes and other transitions the bot has confirmed.
-- **Mapa na żywo** (Live map): what the client sees around you right now.
+- **Live map**: what the client sees around you right now.
 
 ![The world as the atlas has learned it](docs/screenshots/atlas-world.png)
 
@@ -265,35 +264,34 @@ is dead, so the bot only learns from what you did yourself.
 You don't have to wait for it to learn. On the live map, right-click a tile (or
 press **Shift+F10**) and choose the object type, such as stairs, hole or door.
 Your marks are saved with the atlas and used by the planner straight away. The
-learned passages are listed under **Diagnostyka → Wyuczone przejścia** (learned
-passages).
+learned passages are listed under **Diagnostics → Learned transitions**.
 
 ## Creating a route
 
 There are three ways to create a cavebot route. All of them end as a
-**szkic** (draft) that you can review and edit on the map before using it.
+**draft** that you can review and edit on the map before using it.
 
 **1. Plan it from a hunting ground (no recording).**
-Open **Atlas → Świat** and click **Planuj pętlę** (plan a loop). Pick a hunting
+Open **Atlas → World** and click **Plan a loop**. Pick a hunting
 ground from the list. The bot adds one automatically whenever you gain XP
 somewhere during manual play, and it remembers every floor you fought on. Choose
-**Całe expowisko** (whole hunting ground) or select sectors yourself, then click
-**Porównaj pętle** (compare loops). The atlas proposes three variants:
+**Whole hunting ground** or select sectors yourself, then click
+**Compare loops**. The atlas proposes three variants:
 
-- **Krótka** (short): a compact loop, well under the respawn time, that still
+- **Short**: a compact loop, well under the respawn time, that still
   meets monsters often.
-- **Pod respawn** (paced to respawn): the most expected monster encounters per
+- **For respawn**: the most expected monster encounters per
   hour, with a loop time close to the respawn time and as many different rooms
   as possible.
-- **Pełna** (full): covers every selected sector it can reach.
+- **Full**: covers every selected sector it can reach.
 
 Each variant shows the loop time, how many sectors it covers, an estimated
 XP/h, and coverage per floor. If part of the ground can only be reached through
-an unconfirmed passage, the planner suggests a **łącznik** (connector) and lists
+an unconfirmed passage, the planner suggests a **connector** and lists
 the transitions to check in game. Save the variant you like as a draft.
 
 **2. Record it while you hunt.**
-Start **Nagrywanie adaptacyjne** (adaptive recording) and hunt normally. A
+Start **Adaptive recording** and hunt normally. A
 progress bar tells you when the recording is good enough:
 
 1. Gain XP in the first spot.
@@ -301,7 +299,7 @@ progress bar tells you when the recording is good enough:
 3. The bot looks for a way back to sectors you've already visited.
 4. A loop is detected, and you can stop recording.
 
-The bot turns what you did into a draft. **Optymalizuj trasę** (optimize route)
+The bot turns what you did into a draft. **Optimise the route**
 removes detours and backtracking. You can compare the result with the original
 before accepting it.
 
@@ -322,9 +320,8 @@ settings](#combat-on-the-cavebot-tab) and press start.
 
 The run bar at the top shows the current phase (route, lure, fight, chase,
 return), the current waypoint and any problem, such as a transition that needs
-checking. **Pauza** (pause) there pauses only the route; healing and other
-actions keep running. **Historia decyzji i raporty okrążeń** (decision history
-and loop reports) explains why the bot did what it did and sums up each loop.
+checking. **Pause** there pauses only the route; healing and other
+actions keep running. **Decision history and lap reports** explains why the bot did what it did and sums up each loop.
 
 If the client can't read a stairs or ladder tile reliably, the cavebot doesn't
 get stuck: after a short retry it uses the transition the atlas already knows
@@ -332,11 +329,11 @@ for that spot.
 
 ## Sharing a route
 
-On the **Cavebot** tab, **Eksportuj trasę** (export route) saves the chosen route
+On the **Cavebot** tab, **Export the route** saves the chosen route
 to a `.dbvroute` file together with the part of your map it needs: the learned
 tiles along the route and the doors, ladders, stairs and ropes it passes. Your
 waypoint notes and recording names are left out. Send the file to another
-player; they press **Importuj trasę** (import route), pick the file, and the
+player; they press **Import a route**, pick the file, and the
 route appears as a new, selected route they can start right away, even on a
 fresh installation.
 
@@ -354,21 +351,21 @@ a sound, and choose whether it fires always or only while the cavebot is running
 
 Each entry shows the kind, the time, who or what triggered it, and the message:
 
-- **Wiadomość prywatna** (private message): the sender and the text.
-- **Czat Default** (Default chat): the speaker and what they said in local chat.
+- **Private message**: the sender and the text.
+- **Default chat**: the speaker and what they said in local chat.
   Only players in view count; your own messages and spell words are ignored.
-- **Pojawienie się gracza** (player appeared): the player's name and position.
+- **Player appeared**: the player's name and position.
   While another player stays in view, the sound repeats every 1.5 s.
-- **Nagła utrata Ki** (sudden Ki loss): where it happened and how far Ki fell.
+- **Sudden Ki loss**: where it happened and how far Ki fell.
   It fires when Ki drops from at least 90% to 5% or less in one change without
   any hit on your character, and the alarm lasts 10 s.
 
-**Oznacz jako przeczytane** (mark as read) clears the counter on the bell, and
-**Test sygnału** (test signal) plays the alert sound.
+**Mark as read** clears the counter on the bell, and
+**Test the signal** plays the alert sound.
 
 ## Diagnostics
 
-The **Diagnostyka** (Diagnostics) tab shows whether each part of the session is
+The **Diagnostics** tab shows whether each part of the session is
 working: the panel, the game session, the observer DLL and its bridge, and how
 many packets have passed. It also lists the passages the atlas has learned,
 nearest first, and lets you record a run or save the last movement block for a
@@ -376,7 +373,7 @@ bug report.
 
 ![Diagnostics tab with learned passages and session status](docs/screenshots/diagnostics.png)
 
-**Identyfikacja przedmiotów** (item identification): turn it on and use
+**Item identification**: turn it on and use
 **Look** on an item in the game. Its ID appears in the game's status bar
 ("Item Id: …") and in the list on this tab, with where it was (on the map or in
 your backpack). This is handy, for example, to find a corpse ID for the
@@ -385,9 +382,8 @@ your backpack). This is handy, for example, to find a corpse ID for the
 ## AI integration
 
 The bot works without any AI. If you use Codex, Claude Desktop or Claude Code,
-open **Integracja AI** (AI integration) in the launcher (bottom left) and click
-**Połącz** (Connect) next to the program; **Odłącz** (Disconnect) removes it
-again. Restart that program afterwards. The agent can then read the game state
+click **⚙** in the launcher to open **AI integrations**, and click **Connect**
+next to the program; **Disconnect** removes it again. Restart that program afterwards. The agent can then read the game state
 and control the bot. Details are in [MCP](#mcp-using-it-with-codex-or-claude-code).
 
 ---
@@ -399,7 +395,7 @@ and control the bot. Details are in [MCP](#mcp-using-it-with-codex-or-claude-cod
 1. The **launcher** (`DBVictory.exe` in a release, `DBVictory Launcher.exe` or
    the `Uruchom bota` shortcut in a source checkout) checks the installed
    version, opens the game client and prepares the engine.
-2. You log in, stay on the character list and click **Połącz z grą**.
+2. You log in, stay on the character list and click **Connect to the game**.
 3. The engine checks the client's executable against a known profile. Unknown
    builds stop here, before anything is changed in the client.
 4. The engine redirects the client's connection through a local proxy on
@@ -420,7 +416,7 @@ Launcher ──► run_bot.py ──► MCP engine (dbv/mcp_server/server.py)
 ```
 
 A downloaded package asks GitHub at start whether a newer release exists; a
-Git checkout never downloads anything. The **Ostatnie zmiany** list comes from
+Git checkout never downloads anything. The **Recent changes** list comes from
 the release notes in the installed folder.
 
 ## Build from source
@@ -460,7 +456,7 @@ cd dashboard; npm ci; npm run build; cd ..
 ```
 
 Then double-click **`Uruchom bota.cmd`** (or `DBVictory Launcher.exe`). On the
-first start, use **Zmień** (Change) to point the launcher at your game client
+first start, use **Change** to point the launcher at your game client
 folder, the one that contains `dbvStart.exe`.
 
 The installation's own state (runtime files, the packet journal and
@@ -471,7 +467,7 @@ automatically.
 
 - Pull requests go to `develop`. `master` only receives what was tested.
 - Every push to `develop` publishes a **test build**: a GitHub pre-release
-  `vX.Y.Z-test.<commit>` that players get through **⚙ → Wersje testowe**.
+  `vX.Y.Z-test.<commit>` that players get through **⚙ → Test builds**.
 - A single pull request can be tried before it reaches `develop` with
   **Actions → Release → Run workflow** on its branch.
 - When `develop` is good, it is merged into `master` (a normal merge, not
@@ -486,7 +482,7 @@ read the game state and control the bot with tools such as `get_status`,
 `start_bot`, `walk`, `attack`, `toggle_action` and `session_activity`.
 Connecting to the game is always an explicit `start_bot` call.
 
-The launcher's **Integracja AI** button only adds a `dbvictory-bot` server to
+The launcher's **AI integrations** dialog only adds a `dbvictory-bot` server to
 that program's own MCP settings. The same can be done from a terminal with
 `venv\Scripts\python.exe mcp_clients.py connect codex`.
 
