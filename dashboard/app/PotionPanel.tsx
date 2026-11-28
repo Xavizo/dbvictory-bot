@@ -81,8 +81,6 @@ export default function PotionPanel({action,diagnostics,paused,onRefresh}:{
       <label>{t("potions.shared")} <input aria-label={t("potions.shared")} type="number" min={0} max={3600} step={.1} disabled={busy} value={config.shared_cooldown} onChange={e=>{setConfig(c=>({...c,shared_cooldown:e.target.value==="" ? "" : Number(e.target.value)}));setNotice("");}}/> s</label>
       <button disabled={busy || !dirty} className="primary-button" onClick={()=>perform(()=>updateActionConfig("auto_potions",config),t("potions.saved"))}>{t("potions.save")}</button>
     </div>
-    {unknown && <p className="potion-notice">{t("potions.unknownCooldown")}</p>}
-    {error && <p role="alert" className="text-sm text-red-300">{error}</p>}{notice && <p role="status" className="text-xs text-emerald-300">{notice}</p>}
     <details className="border-t border-gray-700 pt-3" open={diagnostics?.active || undefined}>
       <summary>{t("potions.measure")}<Help text={t("potions.measureNote")}/> {diagnostics?.active ? `· ${diagnostics.remaining_seconds ?? 0} s` : ""}</summary>
       <div className="flex gap-3 items-center flex-wrap"><button className="secondary-button" disabled={busy} onClick={()=>perform(()=>setPotionDiagnostics(!diagnostics?.active),t(diagnostics?.active ? "potions.measureStopped" : "potions.measureStarted"))}>{t(diagnostics?.active ? "potions.stopMeasure" : "potions.startMeasure")}</button>
@@ -94,5 +92,7 @@ export default function PotionPanel({action,diagnostics,paused,onRefresh}:{
           <td className="py-2">{row.gap_seconds ?? "—"} s</td><td className="py-2">{row.reported_count ?? "—"}{row.stock_delta!=null && <small className="block">Δ {row.stock_delta}</small>}</td><td className="py-2">{row.stats_age_ms==null ? "—" : `${row.stats_age_ms} ms`}</td><td className="py-2">{row.hp_delta} / {row.ki_delta}</td></tr>)}</tbody></table></div>
     </details>
     </div>
+    {unknown && <p className="potion-notice">{t("potions.unknownCooldown")}</p>}
+    {error && <p role="alert" className="text-sm text-red-300">{error}</p>}{notice && <p role="status" className="text-xs text-emerald-300">{notice}</p>}
   </section>;
 }
