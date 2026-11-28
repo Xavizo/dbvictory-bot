@@ -128,7 +128,10 @@ testową, nawet jeśli ma niższy numer.
 
 # Poradnik gracza: panel
 
-Zrzuty ekranu pokazują prawdziwy, wyuczony atlas i postać demonstracyjną.
+Panel i launcher działają po polsku albo po angielsku: przełączasz je przyciskami
+**PL / EN** obok **⚙** w launcherze, a panel podąża za tym wyborem. Ten poradnik
+cytuje polskie etykiety; [README.md](README.md) cytuje angielskie. Zrzuty ekranu
+pokazują prawdziwy, wyuczony atlas i postać demonstracyjną.
 
 ## Co robi bot
 
@@ -372,7 +375,7 @@ znalezienia ID ciała dla [Hunter Knife](#hunter-knife).
 ## Integracja AI
 
 Bot działa bez żadnej AI. Jeśli używasz Codexa, Claude Desktop albo Claude
-Code, otwórz **Integracja AI** w launcherze (na dole po lewej) i kliknij
+Code, kliknij **⚙** w launcherze, żeby otworzyć **Integracje AI**, i kliknij
 **Połącz** przy wybranym programie; **Odłącz** usuwa go z powrotem. Potem
 uruchom ten program ponownie. Agent może wtedy odczytywać stan gry i sterować
 botem. Szczegóły w sekcji [MCP](#mcp-codex-i-claude-code).
@@ -473,7 +476,7 @@ odczytywać stan gry i sterować botem narzędziami takimi jak `get_status`,
 `start_bot`, `walk`, `attack`, `toggle_action` i `session_activity`.
 Połączenie z grą to zawsze jawne wywołanie `start_bot`.
 
-Przycisk **Integracja AI** w launcherze dodaje tylko serwer `dbvictory-bot` do
+Okno **Integracje AI** w launcherze dodaje tylko serwer `dbvictory-bot` do
 ustawień MCP danego programu. To samo można zrobić z terminala:
 `venv\Scripts\python.exe mcp_clients.py connect codex`.
 
