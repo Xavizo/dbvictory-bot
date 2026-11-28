@@ -8,6 +8,10 @@
   backwards-compatible feature and `type(scope)!:` or a `BREAKING CHANGE:`
   footer for an incompatible change. Fixes and other commits advance patch.
 
+- Release notes (`launcher/desktop/release-notes.json`) are written in Polish
+  and English: every change has `title` and `detail` in Polish and the same
+  under `en`. See `docs/RELEASES.md`.
+
 - This is a Windows game client integration, exposed through standard stdio MCP.
   `run_mcp.py` only starts MCP. Connecting to the game is an explicit `start_bot`
   tool call. Never use that call as a smoke test.

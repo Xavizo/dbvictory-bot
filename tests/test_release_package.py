@@ -33,3 +33,23 @@ def test_no_patch_without_a_usable_base(tmp_path):
     assert release_package.make_patch(stage, {}, tmp_path / "missing.json", "v1.1.0", tmp_path) is None
     (tmp_path / "same.json").write_text(json.dumps({"version": "v1.1.0", "files": {}}))
     assert release_package.make_patch(stage, {}, tmp_path / "same.json", "v1.1.0", tmp_path) is None
+
+
+def test_release_text_lists_the_changes_in_polish_then_english(tmp_path):
+    directory = tmp_path / "launcher" / "desktop"
+    directory.mkdir(parents=True)
+    (directory / "release-notes.json").write_text(json.dumps([{"version": "v1.1.0", "changes": [
+        {"title": "Zmiana", "detail": "Opis.", "en": {"title": "Change", "detail": "Details."}}]}]), encoding="utf-8")
+    text = release_package.notes(tmp_path, "v1.1.0")
+    assert text.index("- **Zmiana** Opis.") < text.index("### English") < text.index("- **Change** Details.")
+
+
+def test_release_text_uses_the_newest_entry_up_to_the_released_version(tmp_path):
+    directory = tmp_path / "launcher" / "desktop"
+    directory.mkdir(parents=True)
+    (directory / "release-notes.json").write_text(json.dumps([
+        {"version": "v1.3.0", "changes": [{"title": "Później", "detail": "Jeszcze nie."}]},
+        {"version": "v1.2.0", "changes": [{"title": "Nowe", "detail": "Opis."}]},
+        {"version": "v1.1.0", "changes": [{"title": "Stare", "detail": "Opis."}]}]), encoding="utf-8")
+    text = release_package.notes(tmp_path, "v1.2.2")
+    assert "**Nowe**" in text and "Stare" not in text and "Później" not in text

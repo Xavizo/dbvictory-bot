@@ -85,7 +85,7 @@ class FakeHost:
     async def check_release(self, root, args):
         return {"state": "current", "message": "", "installed": None}
 
-    def history(self, root, label):
+    def history(self, root, label, language="pl"):
         return []
 
     async def client_support(self, root, folder):
@@ -466,3 +466,26 @@ async def test_a_git_checkout_has_no_update_channel(tmp_path):
     assert launcher.view["channel"] is None
     with pytest.raises(PermissionError):
         await launcher.set_channel("test")
+
+
+def test_release_notes_follow_the_launcher_language(tmp_path):
+    directory = tmp_path / "launcher" / "desktop"
+    directory.mkdir(parents=True)
+    notes = [{"version": "v1.0.0", "changes": [
+        {"title": "Zmiana", "detail": "Opis", "en": {"title": "Change", "detail": "Details"}},
+        {"title": "Tylko po polsku", "detail": "Bez tłumaczenia"}]}]
+    (directory / "release-notes.json").write_text(json.dumps(notes), encoding="utf-8")
+    assert desktop_host.history(tmp_path, "v1.0.0", "pl")[0]["changes"] == [
+        {"title": "Zmiana", "detail": "Opis"}, {"title": "Tylko po polsku", "detail": "Bez tłumaczenia"}]
+    assert desktop_host.history(tmp_path, "v1.0.0", "en")[0]["changes"] == [
+        {"title": "Change", "detail": "Details"}, {"title": "Tylko po polsku", "detail": "Bez tłumaczenia"}]
+    notes[0]["changes"][0]["en"] = {"title": "Change"}
+    (directory / "release-notes.json").write_text(json.dumps(notes), encoding="utf-8")
+    with pytest.raises(ValueError):
+        desktop_host.history(tmp_path, "v1.0.0", "en")
+
+
+def test_every_bundled_release_note_from_now_on_has_an_english_version():
+    notes = json.loads((Path(desktop_host.__file__).parent / "desktop" / "release-notes.json").read_text(encoding="utf-8"))
+    newest = notes[0]
+    assert newest["changes"] and all(isinstance(c.get("en"), dict) for c in newest["changes"])

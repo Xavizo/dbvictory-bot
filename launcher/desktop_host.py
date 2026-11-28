@@ -70,8 +70,20 @@ async def check_release(root, args):
     return report
 
 
-def history(root, label):
-    """Release notes up to the installed version, newest first."""
+def _change_text(item):
+    return isinstance(item, dict) and isinstance(item.get("title"), str) and isinstance(item.get("detail"), str)
+
+
+def _in_language(item, language):
+    """A change in the player's language: Polish is the base, "en" holds the English words."""
+    english = item.get("en")
+    if language == "en" and _change_text(english):
+        return {"title": english["title"], "detail": english["detail"]}
+    return {"title": item["title"], "detail": item["detail"]}
+
+
+def history(root, label, language="pl"):
+    """Release notes up to the installed version, newest first, in the player's language."""
     match = re.match(r"^v(\d+)\.(\d+)\.(\d+)(?:-test\.[0-9a-f]{7})?(?:\s|$)", label or "")
     if not match:
         return []
@@ -87,11 +99,11 @@ def history(root, label):
         if (not isinstance(release, dict) or not isinstance(release.get("version"), str)
                 or not re.fullmatch(r"v\d+\.\d+\.\d+", release["version"])
                 or not isinstance(release.get("changes"), list)
-                or not all(isinstance(item, dict) and isinstance(item.get("title"), str)
-                           and isinstance(item.get("detail"), str) for item in release["changes"])):
+                or not all(_change_text(item) and ("en" not in item or _change_text(item["en"]))
+                           for item in release["changes"])):
             raise ValueError(text("error.notesEntry"))
         if tuple(map(int, release["version"][1:].split("."))) <= installed:
-            kept.append(release)
+            kept.append({**release, "changes": [_in_language(item, language) for item in release["changes"]]})
     return kept
 
 
