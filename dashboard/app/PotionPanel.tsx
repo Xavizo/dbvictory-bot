@@ -1,6 +1,6 @@
 "use client";
 
-import { t, type TextKey } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import Help from "@/app/Help";
 import { useEffect, useState } from "react";
 import { toggleAction, updateActionConfig, setPotionDiagnostics, type ActionInfo, type PotionDiagnosticState } from "@/lib/api";
@@ -8,10 +8,10 @@ import { toggleAction, updateActionConfig, setPotionDiagnostics, type ActionInfo
 const items = [{id:10161,name:"Special Health Potion"},{id:10160,name:"Special Ki Potion"},{id:8465,name:"Senzu"}];
 type Numeric = number | "";
 type Rule = {id:string;enabled:boolean;resource:"hp"|"ki";item_id:number;threshold:Numeric;jitter:Numeric;cooldown:Numeric|null;interval:Numeric;mode:"use"|"self"};
-type Config = {shared_cooldown:Numeric;defer_senzu_ki:boolean;rules:Rule[]};
+type Config = {shared_cooldown:Numeric;rules:Rule[]};
 function readConfig(config:ActionInfo["config"]):Config {
   const c=config ?? {};
-  return {shared_cooldown:c.shared_cooldown ?? 0,defer_senzu_ki:c.defer_senzu_ki === true,rules:Array.isArray(c.rules) ? c.rules.map((r:Rule)=>({...r})) :
+  return {shared_cooldown:c.shared_cooldown ?? 0,rules:Array.isArray(c.rules) ? c.rules.map((r:Rule)=>({...r})) :
     (["health","ki"] as const).map(kind=>({id:kind,enabled:c[`${kind}_enabled`] ?? true,resource:kind==="health" ? "hp" : "ki",
       item_id:kind==="health" ? 10161 : 10160,threshold:c[`${kind}_threshold`] ?? (kind==="health" ? 60 : 40),
       jitter:c[`${kind}_jitter`] ?? 5,cooldown:c[`${kind}_cooldown`] ?? 0,interval:c[`${kind}_interval`] ?? 1,mode:c[`${kind}_mode`] ?? "use"}))};
@@ -74,13 +74,6 @@ export default function PotionPanel({action,diagnostics,paused,onRefresh}:{
       </article>)}
       {!config.rules.length && <p className="rule-empty">{t("potions.empty")}</p>}
     </fieldset>
-    <label className="flex items-center gap-2">
-      <input type="checkbox" disabled={busy} checked={config.defer_senzu_ki}
-        onChange={e=>{setConfig(c=>({...c,defer_senzu_ki:e.target.checked}));setNotice("");}}/>
-      {t("potions.defer")}
-    </label>
-    {config.defer_senzu_ki && <p className="rule-explanation">{t("potions.deferNote")}</p>}
-    {action.running && action.senzu_deferral && <p className="potion-notice" role="status">{t(`potions.deferral.${action.senzu_deferral}` as TextKey)}</p>}
     <div className="rule-footer"><div className="flex gap-2"><button className="secondary-button" disabled={busy || config.rules.length>=32} onClick={()=>add()}>+ {t("potions.addRule")}</button><button className="secondary-button" disabled={busy || config.rules.length>=32} onClick={()=>add(8465)}>+ Senzu</button></div>
       <label>{t("potions.shared")}<Help text={t("potions.cooldownNote")}/> <input aria-label={t("potions.shared")} type="number" min={0} max={3600} step={.1} disabled={busy} value={config.shared_cooldown} onChange={e=>{setConfig(c=>({...c,shared_cooldown:e.target.value==="" ? "" : Number(e.target.value)}));setNotice("");}}/> s</label>
       <button disabled={busy || !dirty} className="primary-button" onClick={()=>perform(()=>updateActionConfig("auto_potions",config),t("potions.saved"))}>{t("potions.save")}</button>

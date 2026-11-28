@@ -41,7 +41,7 @@
   const actions = store.get("actions", [
     { name: "adaptive_cavebot", description: "Cavebot — explicit atlas navigation, loop and local detours.", enabled: true, config: {} },
     { name: "auto_potions", description: "Priority HP/Ki healing rules: Special Health Potion, Special Ki Potion and Senzu.", enabled: true,
-      config: { shared_cooldown: 1, defer_senzu_ki: true, rules: [
+      config: { shared_cooldown: 1, rules: [
         { id: "hp", enabled: true, resource: "hp", item_id: 10161, threshold: 60, jitter: 5, cooldown: 1, interval: 1, mode: "use" },
         { id: "ki", enabled: true, resource: "ki", item_id: 10160, threshold: 40, jitter: 5, cooldown: 1, interval: 1, mode: "use" },
         { id: "senzu", enabled: true, resource: "hp", item_id: 8465, threshold: 25, jitter: 0, cooldown: null, interval: 1, mode: "self" }] } },
