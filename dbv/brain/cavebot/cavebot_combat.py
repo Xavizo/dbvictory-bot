@@ -7,7 +7,7 @@ from dbv.brain.cavebot.cavebot_lure import (MAX_PLACEMENT_STEPS, PursuitTracker,
                           lure_melee_step, lure_stopping_path, placement_terrain, queued_pack_step, room_before_corridor, route_approaches,
                           pack_access_before_choke, walking_distances)
 from dbv.brain.combat.combat_reachability import reachable_tiles, ordinary_terrain
-from dbv.brain.combat.combat_spell_conditions import validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
+from dbv.brain.combat.combat_spell_conditions import SCREEN_RANGE,validate_conditions,spell_reaches,evaluate_spells,evaluate_spell
 from dbv.brain.combat.combat_wave import facing
 
 
@@ -29,11 +29,11 @@ def validate_combat(value=None):
     result=dict(enabled=value.get('enabled',False),mode=value.get('mode','stop'),strategy=value.get('strategy','nearest'),
                 engage=value.get('engage','near'),radius=value.get('radius',5),distance=value.get('distance',1),lure_count=value.get('lure_count',4),
                 lure_seconds=value.get('lure_seconds',8),lure_distance=value.get('lure_distance',3),
-                lure_origin_limit=value.get('lure_origin_limit',12),rules=value.get('rules',[]),spells=value.get('spells',[]))
+                lure_origin_limit=value.get('lure_origin_limit',12),hold_target=value.get('hold_target',False),rules=value.get('rules',[]),spells=value.get('spells',[]))
     if result['engage'] not in {'visible','near'}:raise ValueError('Nieprawidłowy warunek wyboru celu.')
-    if type(result['enabled']) is not bool or result['mode'] not in {'stop','chase','lure'} or result['strategy'] not in {'nearest','lowest_hp','highest_hp','finish'}:
+    if type(result['enabled']) is not bool or type(result['hold_target']) is not bool or result['mode'] not in {'stop','chase','lure'} or result['strategy'] not in {'nearest','lowest_hp','highest_hp','finish'}:
         raise ValueError('Nieprawidłowy sposób walki lub wyboru celu.')
-    for key,lo,hi in [('radius',1,7),('distance',1,7),('lure_count',1,12),('lure_seconds',1,30),('lure_distance',1,7),('lure_origin_limit',1,64)]:
+    for key,lo,hi in [('radius',1,SCREEN_RANGE),('distance',1,7),('lure_count',1,12),('lure_seconds',1,30),('lure_distance',1,7),('lure_origin_limit',1,64)]:
         if type(result[key]) is not int or not lo<=result[key]<=hi:raise ValueError(f'Nieprawidłowe ustawienie: {key}.')
     if not isinstance(result['rules'],list) or len(result['rules'])>32:raise ValueError('Maksymalnie 32 reguły potworów.')
     rules=[]
@@ -118,6 +118,9 @@ def choose_target(candidates,config,current=0):
     return min(candidates,key=order) if candidates else None
 
 
+HOLD_SECONDS=120  # how long Hold target waits for a lost target to come back
+
+
 class CombatRuntime:
     """Single movement owner: chase returns to its route anchor; lure follows route."""
     identity_grace = 1.0
@@ -138,14 +141,19 @@ class CombatRuntime:
         self.engaged_count=0;self.nearby_count=0;self.transition_clear_since=None;self.group_clear_since=None
         self.confirmed_count=0;self.unidentified_contacts={}
         self.stalled_targets={};self.defer_movement=False;self.movement_intent=None
+        self.held_target=0;self.held_lost_at=None
 
     def snapshot(self):
         lure=None
         if self.policy_mode=='lure' and not self.owner.combat_only and self.target is not None:
             lure=dict(following=len(self.pursuit.following),goal=self.config['lure_count'],
                       waiting=self.lure_waiting,stop_reason=self.lure_stop_reason,engaged=self.confirmed_count,nearby=self.nearby_count)
+        held=None
+        if self.held_target:
+            raw=self.owner.state.game_state.creatures.get(self.held_target) or {}
+            held=dict(id=self.held_target,name=raw.get('name','?'),lost=self.held_lost_at is not None)
         return dict(phase=self.phase,target=self.target,enabled=self.config['enabled'],lure=lure,return_anchor=self.anchor,
-                    spells=self.spell_checks,last_spell_attempt=self.last_spell_attempt)
+                    spells=self.spell_checks,last_spell_attempt=self.last_spell_attempt,held=held)
 
     def reset_lure(self):
         self.pursuit.reset();self.lure_started=None;self.lure_waiting=False;self.lure_stop_reason=None;self.engaged_count=0;self.nearby_count=0
@@ -555,12 +563,40 @@ class CombatRuntime:
             # change to a different monster during a transient map/DLL gap.
             if time.monotonic()-self.manual_target_at<.8 or (raw and raw.get('health',0)>0 and time.time()-raw.get('t',0)<1):return None
             self.manual_target=0;self.sent_target=0;self.manual_override=False
-        return choose_target(candidates,self.config,self.sent_target)
+        return self.held_candidate(candidates) or choose_target(candidates,self.config,self.sent_target)
+
+    def held_candidate(self,candidates):
+        """Hold target: the last target again once it is back on screen, before any other.
+
+        A target leaves the candidates when it walks off screen or changes floor.
+        It is waited for (while others may be fought) until it dies or HOLD_SECONDS pass.
+        """
+        if not self.config.get('hold_target') or not self.held_target:return None
+        picked=next((c for c in candidates if c['id']==self.held_target),None)
+        if picked:
+            self.held_lost_at=None
+            return picked
+        raw=self.owner.state.game_state.creatures.get(self.held_target)
+        now=time.monotonic()
+        if raw is not None and raw.get('health',1)==0:
+            self.release_hold();return None
+        if self.held_lost_at is None:self.held_lost_at=now
+        if now-self.held_lost_at>HOLD_SECONDS:self.release_hold()
+        return None
+
+    def hold(self,target):
+        # While the held target is away, another fight does not replace it.
+        if self.config.get('hold_target') and target is not None and (not self.held_target or self.held_lost_at is None):
+            self.held_target=target['id']
+
+    def release_hold(self):
+        self.held_target=0;self.held_lost_at=None
 
     def accept_manual_target(self,cid):
         self.owner.generation+=1  # expire already queued attacks, turns and casts
         self.manual_target=cid;self.manual_target_at=time.monotonic()
         self.sent_target=cid;self.manual_override=True;self.wave_turn=None
+        if self.config.get('hold_target'):self.held_target=cid;self.held_lost_at=None
         self.last_health=None;self.battle_started=None
 
     def wave_allowed(self,spell,cid,origin,direction,after=0,require_facing=False):
@@ -635,6 +671,7 @@ class CombatRuntime:
         candidates=self.candidates(sample)
         blocker=self.blocking_target(candidates,sample)
         current=blocker or self.select_target(candidates)
+        self.hold(current)
         # Never display a vanished target as the current fight. The sent attack
         # identity is separate and survives a short interruption in observations.
         if current is None:self.target=None

@@ -140,6 +140,8 @@ function component(file,imports={}) {
   if (file.endsWith('/MapTools.tsx') || file.endsWith('/ProfilePicker.tsx')) imports['./ActionMenu']=component('../app/ActionMenu.tsx');
   if (file.endsWith('/CavebotRunBar.tsx')) imports['./LureStatus']=component('../app/LureStatus.tsx');
   if (file.endsWith('/AtlasPanel.tsx')) imports['./DraftTags'] = component('../app/DraftTags.tsx');
+  if (file.endsWith('/CavebotWorkspace.tsx') && !imports['./CombatEditor']) imports['./CombatEditor']=component('../app/CombatEditor.tsx',
+    Object.fromEntries(['@/lib/cavebotModel','./MonsterRules','./SpellPicker','./SpellConditions','./LureStatus'].filter(k=>imports[k]).map(k=>[k,imports[k]])));
   const mod={exports:{}};
   new Function('exports','require',ts.transpileModule(fs.readFileSync(require.resolve(file),'utf8'),
     {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)
@@ -411,7 +413,7 @@ test('combat can start with an invalid unsaved sketch only when route movement i
   let nodes=render();nodes.find(n=>n.type===Atlas).props.onEditingChange(true);
   nodes.find(n=>n.props.label==='Aktywuj walkę').props.onChange(true);
   // Supply a matching monster through the actual rule editor callback.
-  nodes=render();nodes.find(n=>Array.isArray(n.props.rules)).props.onChange([{pattern:'Wolf*',action:'attack',priority:50}]);
+  nodes=render();const editor=nodes.find(n=>n.props.combat&&n.props.onChange);editor.props.onChange({...editor.props.combat,rules:[{pattern:'Wolf*',action:'attack',priority:50}]});
   let atlas=render().find(n=>n.type===Atlas);
   assert.equal(render().find(n=>n.props.className==='v2-start').props.disabled,true,'route still requires saved points/configuration');
   const checkbox=atlas.props.routeEnabledControl;
@@ -585,7 +587,7 @@ test('combat profile selection and discard never mutate waypoint geometry',async
   assert.deepEqual(picker.props.config,bound);
   const combatSection=render().find(n=>n.props.className==='v2-combat');
   assert.ok(elements(combatSection).some(n=>n.props.kind==='combat'),'profile belongs to the combat column');
-  render().find(n=>Array.isArray(n.props.rules)).props.onChange([{pattern:'Dragon*',priority:90,action:'attack'}]);
+  const editor=render().find(n=>n.props.combat&&n.props.onChange);editor.props.onChange({...editor.props.combat,rules:[{pattern:'Dragon*',priority:90,action:'attack'}]});
   render().find(n=>n.type==='button'&&n.props.children==='Odrzuć zmiany').props.onClick();
   assert.deepEqual(render().find(n=>n.props.kind==='combat').props.config,current);
   assert.equal(render().find(n=>n.type===Atlas).props.initialDraftId,'route');

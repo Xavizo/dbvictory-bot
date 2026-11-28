@@ -50,8 +50,11 @@
     { name: "barrier_spell", description: "Utrzymuje barierę postaci za pomocą czaru Barrier.", enabled: false, config: {} },
     { name: "speed_up", description: "Speed Up: recasts haste at a random moment before the effect ends.", enabled: true, config: {} },
     { name: "eat_food", description: "Food: eat a red ham every 10 seconds.", enabled: true, config: {} },
-    { name: "auto_targeting", description: "Target selection: always attack the closest living monster.", enabled: false, config: {} },
-    { name: "auto_combat", description: "Automatic combat, checked every 0.2 s, first match wins.", enabled: false, config: {} },
+    { name: "auto_combat", description: "Walka: fight without a route, with the cavebot's combat settings of its own.", enabled: true,
+      config: { combat: { ...combat, enabled: true, mode: "stop", engage: "visible", hold_target: true,
+        rules: [{ pattern: "Mutant Wolf", action: "attack", priority: 80, stance: "inherit", spell_mode: "inherit" },
+          { pattern: "Roco", action: "attack", priority: 50, stance: "inherit", spell_mode: "inherit" }],
+        spells: [spell("darkness blaster", { trigger: "visible", range: 8 })] } } },
     { name: "packet_sniffer", description: "Packet diagnostics: log every packet the client sends.", enabled: false, config: {} },
     { name: "dll_bridge", description: "Internal action: attach the observer DLL and feed its data into the game state.", enabled: true, config: {} },
   ]);
@@ -178,6 +181,11 @@
         vitals_alarm_id: scenario() === "low-hp" ? 3 : null, events: alertEvents() },
       passive_map: playing ? passiveMap(position) : { status: "waiting", passive: true, stale: true, cells: [] },
     };
+    const standalone = actions.find(a => a.name === "auto_combat");
+    state.standalone_combat = !standalone?.enabled || !playing ? { status: "off", reason: "" }
+      : sim.cavebot === "running" ? { status: "yielding", reason: "Cavebot ma pierwszeństwo.", combat: null }
+      : { status: "fighting", reason: "", combat: { target: null, spells: [],
+          held: sim.target ? null : { id: 0x40000077, name: "Mutant Wolf", lost: true } } };
     const route = drafts[0];
     state.adaptive_cavebot = playing && sim.cavebot !== "idle" ? {
       status: sim.cavebot, reason: sim.cavebot === "paused" ? "paused" : "", name: route?.name, draft_id: route?.id, scope: W.SCOPE, mode: "route", loop: true, loops: Math.floor(sim.tick / 400),

@@ -19,6 +19,7 @@ import DashboardChrome, { type WorkspaceView } from "./DashboardChrome";
 import BarrierBandPanel from "./BarrierBandPanel";
 import BarrierSpellPanel from "./BarrierSpellPanel";
 import ItemIdentificationPanel from "./ItemIdentificationPanel";
+import StandaloneCombatPanel from "./StandaloneCombatPanel";
 
 function ActionCard({action,onRefresh}:{action:ActionInfo;onRefresh:()=>void}) {
   const [confirmDelete,setConfirmDelete]=useState<boolean>(false);
@@ -82,7 +83,7 @@ export default function DashboardPage() {
   }
   const potion=state?.actions.find(a=>a.name==="auto_potions");
 
-  const actions=(state?.actions ?? []).filter(a=>!["auto_potions","auto_barrier_band","barrier_spell","speed_up","auto_hunter_knife","adaptive_cavebot"].includes(a.name));
+  const actions=(state?.actions ?? []).filter(a=>!["auto_potions","auto_barrier_band","barrier_spell","speed_up","auto_hunter_knife","adaptive_cavebot","auto_combat"].includes(a.name));
   const shownActions=actions.filter(a=>(`${actionTitle(a.name) ?? ""} ${a.name} ${a.description}`).toLowerCase().includes(search.toLowerCase()) &&
     (actionFilter==="all" || (actionFilter==="running" ? a.running : actionFilter==="enabled" ? a.enabled : !a.enabled)));
 
@@ -93,6 +94,7 @@ export default function DashboardPage() {
       <AutomationStrip state={state} connected={mcpConnected} onRefresh={refresh} onSettings={()=>setView("automation")} onPause={setPause} busy={controlBusy}/>
       {potion ? <PotionPanel action={potion} diagnostics={state?.potion_diagnostics} paused={state?.automation_paused ?? false} onRefresh={refresh}/> :
         <div className="empty-panel"><h2>{t("page.waitingRules")}</h2><p>{t("page.waitingRulesNote")}</p></div>}
+      <StandaloneCombatPanel state={state} onRefresh={refresh}/>
       <BarrierBandPanel state={state} onRefresh={refresh}/>
       <BarrierSpellPanel state={state} onRefresh={refresh}/>
       <SpeedUpPanel state={state} onRefresh={refresh}/>
