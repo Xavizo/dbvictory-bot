@@ -92,7 +92,8 @@ class RollingFile:
 
 class SessionJournal:
     def __init__(self, directory=None, clock=time.time):
-        self.directory = Path(directory or JOURNAL_DIR)
+        self._chosen = Path(directory) if directory else None
+        self.directory = self._chosen or JOURNAL_DIR
         self.clock = clock
         self.enabled = False
         self.include_chat = False
@@ -112,6 +113,8 @@ class SessionJournal:
         self.counts = {name: 0 for name in RING}
         self.enabled, self.include_chat = True, bool(include_chat)
         self.session, self.started_at = session, self.clock()
+        if self._chosen is None:  # the launcher may have moved .codex to .dbvictory since this process started
+            self.directory = paths.state_dir(ROOT) / "journal"
         self.file = RollingFile(self.directory) if write_file else None
         self._row("events", {"kind": "journal_started", "include_chat": self.include_chat})
         return self.status()
