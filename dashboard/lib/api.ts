@@ -120,6 +120,7 @@ export const setAlertsPaused=(paused:boolean)=>control("/api/alerts",{command:"s
 export type LiveMovementPreview = {path:[number,number,number][];stop:[number,number,number]|null};
 
 export interface BotState { // the whole /api/state answer
+  language?: "pl" | "en"; // the launcher's language switch (dbv/language.py)
   commands?: {session:number} | null;
   login_startup?: {phase:"waiting_for_login"|"waiting_for_session"|"activated"|"failed"} | null;
   observation_families?: {

@@ -1,8 +1,9 @@
 "use client";
+import { t } from "@/lib/i18n";
 import {useState} from "react";
 import type {DraftTag} from "@/lib/cavebotModel";
 
-const palette = {mint:"Miętowy", blue:"Niebieski", amber:"Bursztynowy", rose:"Różowy", violet:"Fioletowy"} as const;
+const palette = ["mint", "blue", "amber", "rose", "violet"] as const;
 type Edit = {index:number; tag:DraftTag; original:DraftTag[]};
 
 export default function DraftTags({tags, onSave}:{tags:DraftTag[]; onSave:(next:DraftTag[], previous:DraftTag[])=>Promise<void>}) {
@@ -23,22 +24,22 @@ export default function DraftTags({tags, onSave}:{tags:DraftTag[]; onSave:(next:
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   }
-  return <section className="draft-tags" aria-label="Etykiety szkicu">
+  return <section className="draft-tags" aria-label={t("tags.aria")}>
     <div className="draft-tag-list">
-      {tags.map((tag,i)=><button type="button" className="draft-tag" data-color={tag.color} key={i} disabled={saving} aria-label={`Edytuj etykietę ${tag.text}`} onClick={()=>open(i)}>{tag.text}</button>)}
-      {!edit && tags.length<16 && <button type="button" className="draft-tag-add" onClick={()=>open(tags.length)}>+ Etykieta</button>}
+      {tags.map((tag,i)=><button type="button" className="draft-tag" data-color={tag.color} key={i} disabled={saving} aria-label={t("tags.edit",{text:tag.text})} onClick={()=>open(i)}>{tag.text}</button>)}
+      {!edit && tags.length<16 && <button type="button" className="draft-tag-add" onClick={()=>open(tags.length)}>+ {t("tags.add")}</button>}
     </div>
     {edit && <form className="draft-tag-editor" onSubmit={e=>{e.preventDefault();void save();}}>
-      <input autoFocus aria-label="Treść etykiety" placeholder="Np. 12M XP/h" maxLength={80} value={edit.tag.text} disabled={saving}
+      <input autoFocus aria-label={t("tags.text")} placeholder={t("tags.placeholder")} maxLength={80} value={edit.tag.text} disabled={saving}
         onChange={e=>setEdit({...edit,tag:{...edit.tag,text:e.target.value}})}/>
-      <div className="draft-tag-colors" role="group" aria-label="Kolor etykiety">
-        {(Object.keys(palette) as DraftTag["color"][]).map(color=><button type="button" className="draft-tag-swatch" key={color} data-color={color}
-          aria-label={palette[color]} title={palette[color]} aria-pressed={edit.tag.color===color} disabled={saving}
+      <div className="draft-tag-colors" role="group" aria-label={t("tags.color")}>
+        {(palette as readonly DraftTag["color"][]).map(color=><button type="button" className="draft-tag-swatch" key={color} data-color={color}
+          aria-label={t(`tags.color.${color}`)} title={t(`tags.color.${color}`)} aria-pressed={edit.tag.color===color} disabled={saving}
           onClick={()=>setEdit({...edit,tag:{...edit.tag,color}})}>{edit.tag.color===color?"✓":null}</button>)}
       </div>
-      <button disabled={saving||!edit.tag.text.trim()}>Zatwierdź</button>
-      <button type="button" disabled={saving} onClick={()=>{setEdit(null);setError("");}}>Anuluj</button>
-      {edit.index<edit.original.length && <button type="button" className="draft-tag-remove" disabled={saving} onClick={()=>void save(true)}>Usuń</button>}
+      <button disabled={saving||!edit.tag.text.trim()}>{t("tags.confirm")}</button>
+      <button type="button" disabled={saving} onClick={()=>{setEdit(null);setError("");}}>{t("common.cancel")}</button>
+      {edit.index<edit.original.length && <button type="button" className="draft-tag-remove" disabled={saving} onClick={()=>void save(true)}>{t("common.delete")}</button>}
     </form>}
     {error && <small role="alert">{error}</small>}
   </section>;

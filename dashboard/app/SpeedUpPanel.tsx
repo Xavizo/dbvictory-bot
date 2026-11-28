@@ -1,4 +1,5 @@
 "use client";
+import { t, num } from "@/lib/i18n";
 import {useEffect,useState} from "react";
 import {toggleAction,updateActionConfig,type BotState} from "@/lib/api";
 import {LocalSpellIcon} from "./SpellPicker";
@@ -15,10 +16,10 @@ export default function SpeedUpPanel({state,onRefresh}:{state:BotState|null;onRe
     if(save)await updateActionConfig("speed_up",draft);else await toggleAction("speed_up",!action?.enabled);
     await onRefresh();
   }catch(e){setError(String(e));}finally{setBusy(false);}}
-  return <section className="speed-up-panel" aria-label="Automatyczny Speed Up">
-    <div className="speed-heading"><LocalSpellIcon src="/local-spells/icons/11713.png" size={28}/><strong>Speed Up</strong><span>{action.enabled?(state?.speed_up?.status??"Oczekiwanie"):"Wyłączony"}</span><button className={`action-switch ${action.enabled?"on":""}`} role="switch" aria-checked={action.enabled} aria-label="Automatyczny Speed Up" disabled={busy||dirty||!!state?.automation_paused} onClick={()=>void change(false)}><span/></button></div>
-    <div className="speed-times">{([{key:"duration",label:"Czas efektu (s)"},{key:"before",label:"Maks. przed końcem (s)"},{key:"after",label:"Maks. po końcu (s)"}] as const).map(f=><label key={f.key}>{f.label}<input aria-label={f.label} type="number" min={f.key==="duration"?2:0} max="3600" step="0.1" value={draft[f.key]} disabled={busy||action.enabled} onChange={e=>setDraft({...draft,[f.key]:Number(e.target.value)})}/></label>)}{dirty&&<button className="secondary-button" disabled={busy||action.enabled} onClick={()=>void change(true)}>Zapisz</button>}</div>
-    <small>Losowanie raz na cykl: od −{draft.before} s do +{draft.after} s względem końca efektu. Czas startowy 33,3 s pochodzi z jednego pomiaru.</small>
+  return <section className="speed-up-panel" aria-label={t("speedUp.aria")}>
+    <div className="speed-heading"><LocalSpellIcon src="/local-spells/icons/11713.png" size={28}/><strong>Speed Up</strong><span>{action.enabled?(state?.speed_up?.status??t("speedUp.waiting")):t("barrierSpell.off")}</span><button className={`action-switch ${action.enabled?"on":""}`} role="switch" aria-checked={action.enabled} aria-label={t("speedUp.aria")} disabled={busy||dirty||!!state?.automation_paused} onClick={()=>void change(false)}><span/></button></div>
+    <div className="speed-times">{([{key:"duration",label:"speedUp.duration"},{key:"before",label:"speedUp.before"},{key:"after",label:"speedUp.after"}] as const).map(f=><label key={f.key}>{t(f.label)}<input aria-label={t(f.label)} type="number" min={f.key==="duration"?2:0} max="3600" step="0.1" value={draft[f.key]} disabled={busy||action.enabled} onChange={e=>setDraft({...draft,[f.key]:Number(e.target.value)})}/></label>)}{dirty&&<button className="secondary-button" disabled={busy||action.enabled} onClick={()=>void change(true)}>{t("common.save")}</button>}</div>
+    <small>{t("speedUp.note",{before:num(draft.before),after:num(draft.after),start:num(33.3)})}</small>
     {error&&<p role="alert" className="text-red-300">{error}</p>}
   </section>;
 }
