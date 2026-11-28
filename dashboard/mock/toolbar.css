@@ -1,0 +1,28 @@
+/* The preview's own bar (mock/toolbar.js). */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%} /* no phone font boosting: show the PC sizes */
+[data-mock-page=launcher] body{padding-bottom:calc(var(--dbv-mock-bar,90px) + 12px)!important}
+[data-mock-page=panel] .dashboard-shell,[data-mock-page=editor] .route-editor-window{height:calc(100dvh - var(--dbv-mock-bar,0px))}
+#dbv-mock-bar{position:fixed;left:0;right:0;bottom:0;z-index:2147483000;display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+  padding:6px max(10px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-bottom));background:#0b1222f2;border-top:1px solid #f0b42966;
+  color:#e8eefc;font:13px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif;backdrop-filter:blur(6px)}
+#dbv-mock-bar *{box-sizing:border-box}
+#dbv-mock-bar .dbv-mock-tag{min-height:32px;padding:0 10px;border:0;border-radius:6px;background:#f0b429;color:#1a1200;font-weight:700}
+#dbv-mock-bar .dbv-mock-tag::after{content:" ▾"}
+#dbv-mock-bar.folded{right:auto;padding:6px;border:1px solid #f0b42966;border-radius:0 10px 0 0}
+#dbv-mock-bar.folded>:not(.dbv-mock-tag):not(#dbv-mock-toast){display:none}
+#dbv-mock-bar.folded .dbv-mock-tag::after{content:" ▴"}
+#dbv-mock-bar nav{display:flex;gap:2px;border:1px solid #3a4a66;border-radius:8px;overflow:hidden}
+#dbv-mock-bar nav a{padding:8px 9px;color:#c9d6ef;text-decoration:none}
+#dbv-mock-bar nav a[aria-current]{background:#2a3b5c;color:#fff}
+#dbv-mock-bar select,#dbv-mock-bar button{min-height:32px;border:1px solid #3a4a66;border-radius:8px;background:#141f35;color:#e8eefc;font:inherit;padding:0 8px}
+#dbv-mock-bar select{font-size:16px;max-width:44vw}
+#dbv-mock-bar label{display:flex;align-items:center;gap:6px}
+#dbv-mock-bar .dbv-mock-lang{display:flex}
+#dbv-mock-bar .dbv-mock-lang button{border-radius:0}
+#dbv-mock-bar .dbv-mock-lang button:first-child{border-radius:8px 0 0 8px}
+#dbv-mock-bar .dbv-mock-lang button:last-child{border-radius:0 8px 8px 0;border-left:0}
+#dbv-mock-bar .dbv-mock-lang button[aria-pressed=true]{background:#2a3b5c;color:#fff}
+#dbv-mock-bar .dbv-mock-check input{width:18px;height:18px}
+#dbv-mock-bar :focus-visible{outline:2px solid #f0b429;outline-offset:2px}
+#dbv-mock-toast{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);padding:8px 12px;border-radius:8px;background:#f0b429;color:#1a1200;white-space:nowrap}
+@media(max-width:560px){#dbv-mock-bar .dbv-mock-hide{display:none}}
