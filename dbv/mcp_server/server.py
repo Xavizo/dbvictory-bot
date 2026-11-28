@@ -133,6 +133,7 @@ class BotState:  # one per process: ``state`` below
         self._emergency_stopping = False
         self._adaptive_prepare_token = None
         self._parked_route = None   # a route controller set aside while standalone combat runs
+        self._standalone_halting = False
         self.standalone_combat = {"status": "off", "reason": ""}
         self.band_scheduler = BandScheduler()
         self.barrier_scheduler = None
@@ -752,11 +753,17 @@ async def _halt_standalone(reason="Walka wyłączona."):
     if not getattr(controller, "standalone", False):
         return
     task = state._action_tasks.get("adaptive_cavebot")
-    _stop_action("adaptive_cavebot")
-    if task:
-        await asyncio.gather(task, return_exceptions=True)
-    controller.stop(reason)
-    _unpark_route()
+    # The supervisor must not start another fight while this one unwinds.
+    state._standalone_halting = True
+    try:
+        _stop_action("adaptive_cavebot")
+        if task:
+            await asyncio.gather(task, return_exceptions=True)
+        # Keep the engine journal: it belongs to the parked route, if any.
+        controller.stop(reason, preserve_progress=True)
+        _unpark_route()
+    finally:
+        state._standalone_halting = False
 
 
 def _standalone_status(reason, detail=""):
@@ -767,6 +774,8 @@ def _standalone_status(reason, detail=""):
 async def _standalone_step():
     """One supervisor check. Returns a short status for the panel."""
     controller = getattr(state, "adaptive_cavebot", None)
+    if getattr(state, "_standalone_halting", False):
+        return _standalone_status("yielding", "Cavebot ma pierwszeństwo.")
     if _live(state._action_tasks.get("adaptive_cavebot")):
         if getattr(controller, "standalone", False):
             return _standalone_status("fighting", controller.reason)

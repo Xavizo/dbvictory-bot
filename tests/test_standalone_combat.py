@@ -87,3 +87,28 @@ def test_cavebot_view_sees_the_parked_route_not_standalone_combat(state, tmp_pat
         await server._async_toggle_action('auto_combat', False)
         await asyncio.sleep(.1)
     asyncio.run(scenario())
+
+
+def test_stopping_walka_keeps_the_parked_routes_journal_and_never_starts_twice(state, tmp_path):
+    route, _, draft = setup(state, tmp_path)
+    _quiet(state)
+    saved = []
+    state.game_state.engine_journal = type("Journal", (), {"current": lambda self: True,
+                                                          "save_route": lambda self, plan: saved.append(plan)})()
+    state.settings['actions']['auto_combat'] = {'combat': WOLVES}
+
+    async def scenario():
+        await server._async_toggle_action('auto_combat', True)
+        await _until(server._standalone_running)
+        fighting = state.adaptive_cavebot
+        state._standalone_halting = True       # another stop is unwinding
+        assert await server._standalone_step() == 'yielding'
+        state._standalone_halting = False
+        await server._async_update_action_config('auto_combat', {'combat': {**WOLVES, 'hold_target': False}})
+        assert state.adaptive_cavebot is not fighting and None not in saved
+        await _until(server._standalone_running)
+        assert state.adaptive_cavebot.combat.config['hold_target'] is False
+        await server._async_toggle_action('auto_combat', False)
+        await _until(lambda: not server._live(state._action_tasks.get('adaptive_cavebot')))
+        assert state.adaptive_cavebot is route and None not in saved
+    asyncio.run(scenario())
