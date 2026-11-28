@@ -795,10 +795,14 @@ def _action_catalog(directory, internal):
 
 
 def _knife_corpse_config(st, cfg):
-    from dbv.brain.combat.hunter_knife import DEFAULT_CORPSES, effective_config, with_learned
+    from dbv.brain.combat.hunter_knife import DEFAULT_CORPSES, DEFAULT_MONSTERS, effective_config, with_learned
     learned = getattr(st, "knife_learned", None)
     current = (learned and with_learned(cfg, learned.snapshot())) or effective_config(cfg)
-    return {"corpses": current["corpses"], "default_corpses": [dict(c) for c in DEFAULT_CORPSES]}
+
+    def named(corpse):  # display only: a default corpse saved without a name still shows one
+        name = corpse.get("monster") or DEFAULT_MONSTERS.get(corpse["id"])
+        return {**corpse, "monster": name} if name else dict(corpse)
+    return {"corpses": [named(c) for c in current["corpses"]], "default_corpses": [named(c) for c in DEFAULT_CORPSES]}
 
 
 def _live(task):
