@@ -73,7 +73,6 @@ export interface TransitionLearningState {
 export interface ActionInfo { // one entry of "actions"
   name: string; description: string;
   enabled: boolean; running: boolean; completed?: boolean;
-  senzu_deferral?: string;
   logs?: string[];                 // the action's latest bot.log lines
   config?: Record<string, any>;    // its settings, without "enabled"
 }

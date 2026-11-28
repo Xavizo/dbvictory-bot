@@ -8,13 +8,12 @@ import time
 from collections import deque
 
 from dbv.client_bridge.protocol import build_use_item_packet, build_use_on_creature_packet
-from dbv.brain.state.ki_loss import KI_DROP_WINDOW, KI_HIT_GRACE, KiDropDetector
 
 ITEMS = {10161: "Special Health Potion", 10160: "Special Ki Potion", 8465: "Senzu"}
 STOCK_REPORT = re.compile(r"Using one of (\d{1,9}) (Special Health Potion|Special Ki Potion|Senzu)\.\.\.")
 USE_REFUSAL = re.compile(r"(?:\[(Senzu)\] )?(You are exhausted(?: \([0-9.]+\))?\.?|You cannot use this object\.|You can not use this object\.|You don't have this item\.)")
 POTIONS = {"health": (10161, "hp", "max_hp"), "ki": (10160, "mana", "max_mana")}
-DEFAULTS = {"shared_cooldown": 0.0, "defer_senzu_ki": False}
+DEFAULTS = {"shared_cooldown": 0.0}
 for _kind, _threshold in (("health", 60.0), ("ki", 40.0)):
     DEFAULTS.update({f"{_kind}_enabled": True, f"{_kind}_threshold": _threshold,
                      f"{_kind}_jitter": 5.0, f"{_kind}_interval": 1.0,
@@ -46,8 +45,9 @@ def validate_config(values, *, require_cooldowns=False):
     if not isinstance(values, dict):
         raise ValueError("Healing configuration must be an object")
     cfg = {**DEFAULTS, **values}
-    if type(cfg["defer_senzu_ki"]) is not bool:
-        raise ValueError("defer_senzu_ki must be a boolean")
+    # Postponing Senzu after a sudden Ki loss was removed: it only waited 1 s
+    # and missed drains spread over two readings. Old saves drop the flag.
+    cfg.pop("defer_senzu_ki", None)
     _number(cfg["shared_cooldown"], "shared_cooldown", 0, 3600)
     rules = rules_from_config(cfg)
     if not isinstance(rules, list) or len(rules) > 32:
@@ -75,65 +75,6 @@ def validate_config(values, *, require_cooldowns=False):
     return cfg
 
 
-class SenzuDeferral:
-    """One unexplained drop can spend one Ki attempt. Damage ends the episode."""
-    REPEAT_WINDOW = 30.
-    EMERGENCY_HP = 75
-
-    def __init__(self, identity):
-        self.identity = identity
-        self.detector = KiDropDetector()
-        self.phase = "normal"
-        self.previous_hp = None
-        self.emergency_hp = False
-        self.drop_at = self.watch_until = 0.
-        self.recovery_threshold = 0.
-
-    def observe(self, gs, now, wall, threshold):
-        drop = self.detector.observe(gs, now, wall)
-        hp_fell = self.previous_hp is not None and gs.hp < self.previous_hp
-        self.previous_hp = gs.hp
-        low_hp = gs.hp * 100 <= gs.max_hp * self.EMERGENCY_HP
-        if not low_hp:
-            self.emergency_hp = False
-        if drop is None and self.phase == "normal":
-            return
-        reference = drop.at if self.phase == "normal" else self.drop_at
-        hit = gs.last_incoming_hit
-        confirmed_hit = hit is not None and hit >= reference - KI_DROP_WINDOW
-        if low_hp and (self.phase != "normal" or not confirmed_hit):
-            self.emergency_hp = True
-        if hp_fell or self.emergency_hp or confirmed_hit:
-            self.phase = "normal"
-            return
-        if gs.max_mana <= 0 or not 0 <= gs.mana <= gs.max_mana:
-            return
-        ki = gs.mana * 100 / gs.max_mana
-        if self.phase == "waiting" and ki >= self.recovery_threshold:
-            self.phase = "normal"
-        elif self.phase == "used" and ki >= self.recovery_threshold:
-            self.phase = "watch"
-        if self.phase == "watch" and now > self.watch_until:
-            self.phase = "normal"
-        if drop is None or ki >= threshold:
-            return
-        if self.phase in ("used", "watch") and drop.at <= self.watch_until:
-            self.phase = "held"
-        elif self.phase != "held":
-            self.phase = "waiting"
-            self.drop_at = drop.at
-            self.recovery_threshold = threshold
-
-    def blocks_ki_senzu(self, sample_at):
-        return (self.phase in ("used", "held")
-                or (self.phase == "waiting" and sample_at < self.drop_at + KI_HIT_GRACE))
-
-    def record_attempt(self, now):
-        if self.phase == "waiting":
-            self.phase = "used"
-            self.watch_until = now + self.REPEAT_WINDOW
-
-
 class PotionScheduler:
     """First eligible rule wins. Cooldowns belong to items, never to row IDs."""
     def __init__(self, uniform=random.uniform):
@@ -145,7 +86,6 @@ class PotionScheduler:
         self.last_gap = {}
         self.last_shared = 0.0
         self.last_stats = {}
-        self.deferral = None
 
     def threshold(self, rule):
         rid = rule["id"]
@@ -156,35 +96,13 @@ class PotionScheduler:
             self.threshold_config[rid] = signature
         return self.thresholds[rid]
 
-    def observe_deferral(self, rules, gs, now, wall):
-        senzu_rules = [r for r in rules if r["enabled"] and r["resource"] == "ki" and r["item_id"] == 8465]
-        if not senzu_rules:
-            self.deferral = None
-            return
-        identity = (id(gs), gs.player_id, gs.max_hp)
-        if self.deferral is None or self.deferral.identity != identity:
-            self.deferral = SenzuDeferral(identity)
-        threshold = max(self.threshold(rule) for rule in senzu_rules)
-        self.deferral.observe(gs, now, wall, threshold)
-
     def next_rule(self, cfg, gs, now, wall_time):
-        if not cfg.get("defer_senzu_ki"):
-            self.deferral = None
         stamp = getattr(gs, "stats_updated_at", 0)
         if (not stamp or not 0 <= wall_time - stamp <= 5 or gs.max_hp <= 0 or not 0 < gs.hp <= gs.max_hp):
-            if self.deferral:
-                self.deferral.detector.high = None
-                if stamp and gs.hp == 0 and gs.max_hp > 0:
-                    self.deferral = None
             return None
         rules = rules_from_config(cfg)
-        if cfg.get("defer_senzu_ki"):
-            self.observe_deferral(rules, gs, now, wall_time)
         if now - self.last_any < max(cfg["shared_cooldown"], self.last_shared):
             return None
-        guard = self.deferral
-        if guard and (guard.emergency_hp or guard.phase in ("waiting", "used", "held")):
-            rules = sorted(rules, key=lambda r: r["resource"] != "hp")
         active_ids = {r["id"] for r in rules}
         self.thresholds = {k: v for k, v in self.thresholds.items() if k in active_ids}
         self.threshold_config = {k: v for k, v in self.threshold_config.items() if k in active_ids}
@@ -193,15 +111,11 @@ class PotionScheduler:
                 continue
             item = rule["item_id"]
             threshold = self.threshold(rule)
-            if guard and rule["resource"] == "ki" and item == 8465 and guard.blocks_ki_senzu(now - (wall_time - stamp)):
-                continue
             current, maximum = ("hp", "max_hp") if rule["resource"] == "hp" else ("mana", "max_mana")
             value, cap = getattr(gs, current), getattr(gs, maximum)
             if cap <= 0 or not math.isfinite(value) or not math.isfinite(cap) or value < 0:
                 continue
-            emergency = (guard and guard.emergency_hp and rule["resource"] == "hp"
-                         and value * 100 <= cap * guard.EMERGENCY_HP)
-            if not emergency and value / cap * 100 >= threshold:
+            if value / cap * 100 >= threshold:
                 continue
             # A second condition for the same item cannot shorten its cooldown.
             item_cooldown = max((rule_cooldown(r, cfg) for r in rules if r["enabled"] and r["item_id"] == item), default=0)
@@ -221,8 +135,6 @@ class PotionScheduler:
     def record_item_use(self, item_id, cfg, now, stamp, *, rule=None):
         if item_id not in ITEMS:
             return
-        if item_id == 8465 and self.deferral and cfg.get("defer_senzu_ki"):
-            self.deferral.record_attempt(now)
         relevant = [r for r in rules_from_config(cfg) if r["item_id"] == item_id]
         cooldown = max((rule_cooldown(r, cfg) for r in relevant if r["enabled"]), default=0)
         interval = rule["interval"] if rule else max((r["interval"] for r in relevant if r["enabled"]), default=0)
@@ -248,7 +160,6 @@ async def run_potions(bot):
     from dbv.brain.state.item_observations import observed_inputs, wait_for_inputs
 
     scheduler = bot.state.potion_scheduler
-    scheduler.deferral = None
     restored = None
     while True:
         cursor = observed_inputs(bot.state.game_state, POTION_INPUTS)
@@ -267,8 +178,6 @@ async def run_potions(bot):
             if rule:
                 item_id, stamp = rule["item_id"], gs.stats_updated_at
                 threshold = scheduler.thresholds[rule["id"]]
-                if rule["resource"] == "hp" and scheduler.deferral and scheduler.deferral.emergency_hp:
-                    threshold = max(threshold, scheduler.deferral.EMERGENCY_HP)
                 trigger = f"HP={gs.hp}/{gs.max_hp} Ki={gs.mana}/{gs.max_mana} threshold={threshold:.1f}% snapshot_age_ms={max(0,(time.time()-stamp)*1000):.0f}"
                 if rule["mode"] == "self":
                     packet = build_use_on_creature_packet(0xFFFF, 0, 0, item_id, 0, gs.player_id)

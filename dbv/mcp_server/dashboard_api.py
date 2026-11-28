@@ -813,10 +813,6 @@ def _actions_json(st, internal, tasks):
         running = _live(tasks.get(name))
         row = {"name": name, "enabled": cfg.get("enabled", False), "running": running,
                "description": description, "completed": name in st._action_completed}
-        if name == "auto_potions" and running and cfg.get("defer_senzu_ki"):
-            guard = st.potion_scheduler.deferral
-            if guard and guard.phase != "normal":
-                row["senzu_deferral"] = guard.phase
         extra = {key: value for key, value in cfg.items() if key != "enabled"}
         if extra:
             row["config"] = extra

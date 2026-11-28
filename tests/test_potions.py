@@ -284,3 +284,13 @@ def test_active_observation_does_not_pause_automatic_healing():
         bot.inject_to_server.assert_awaited_once()
         assert diag.snapshot()['rows'][0]['source']=='auto'
     asyncio.run(exercise())
+
+
+def test_old_senzu_postpone_flag_is_dropped_and_senzu_for_ki_is_immediate():
+    saved = {"defer_senzu_ki": True, "rules": [rule("ki", 8465, resource="ki", threshold=30)]}
+    cfg = validate_config(saved, require_cooldowns=True)
+    assert "defer_senzu_ki" not in cfg and "defer_senzu_ki" in saved
+    timer = PotionScheduler()
+    assert timer.next_rule(cfg, stats(hp=100, mana=100), 10, 100) is None
+    # A sudden drop from full Ki to zero with full HP no longer holds the Senzu.
+    assert timer.next_rule(cfg, stats(hp=100, mana=0, stats_updated_at=100.1), 10.1, 100.1)["id"] == "ki"
