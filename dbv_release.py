@@ -48,7 +48,8 @@ def _changes(root, base, revision):
 
 
 def _needs_panel(changes):
-    return any(p.startswith("dashboard/") and not p.startswith(("dashboard/electron/", "dashboard/public/"))
+    # dashboard/mock/ is the phone preview (dashboard/mock/README.md); the panel never loads it.
+    return any(p.startswith("dashboard/") and not p.startswith(("dashboard/electron/", "dashboard/public/", "dashboard/mock/"))
                and not p.endswith((".md", ".test.js", ".test.ts")) for p in changes)
 
 

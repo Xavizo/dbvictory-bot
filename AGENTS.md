@@ -23,6 +23,9 @@
   `requirements-dev.txt`. The MCP smoke test must work without a game or DLL.
 - Validate dashboard changes with `npm test`, `npm run typecheck` and `npm run build` in
   `dashboard/`. Use the lockfile with `npm ci`; check `npm audit` after updates.
+- `dashboard/mock/` builds a phone preview of the launcher and panel with invented data
+  (`node mock/build.mjs`, see `dashboard/mock/README.md`). After a UI change, rebuild it and
+  republish the preview; give a new state field or endpoint a fake value there.
 - The panel window (`dbv/mcp_server/panel_window.py`, pywebview) receives a
   session token from the parent process. Keep HTTP and WebSocket
   authentication, exact Origin checks, loopback binding, and the page-origin
