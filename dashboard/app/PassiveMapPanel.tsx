@@ -1,6 +1,7 @@
 "use client";
 
 import { t, labels } from "@/lib/i18n";
+import Help from "@/app/Help";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LiveMovementPreview, PassiveMapState, PassiveMapCell, MapNavigationFeature } from "@/lib/api";
@@ -260,8 +261,7 @@ export default function PassiveMapPanel({ map, preview, focusPosition }: { map?:
   return <section ref={sectionRef} aria-label={t("map.passive")} className="map-panel">
     <div className="map-panel-header">
       <div>
-        <h2>{t("map.title")} <span>{t("map.passiveBadge")}</span></h2>
-        <p>{t("map.lead")}</p>
+        <h2>{t("map.title")} <span>{t("map.passiveBadge")}</span><Help text={t("map.lead")}/></h2>
       </div>
       <div className="flex items-center gap-2">
       <button className="secondary-button" aria-pressed={showPlan} onClick={()=>setShowPlan(!showPlan)}>{t("map.plan")} {showPlan?"✓":""}</button>
@@ -346,14 +346,13 @@ export default function PassiveMapPanel({ map, preview, focusPosition }: { map?:
       </div>
       <p className="map-caption">{t("map.caption")}</p>
       </div><aside className="map-inspector" aria-label={t("map.inspectorAria")}>
-        <div className="inspector-heading">{t("map.inspector")} {selected && <span>{t("map.pinned")}</span>}</div>
+        <div className="inspector-heading">{t("map.inspector")}<Help text={t("map.menuHint")}/> {selected && <span>{t("map.pinned")}</span>}</div>
         <CellDetails cell={cell} />
         {cell && <div className="mt-3 flex flex-wrap items-center gap-3">
           <button className="copy-cell-button" onClick={()=>copyCell(cell)}>{t("map.copyTile")}</button>
           <button className="secondary-button" onClick={e=>{const rect=e.currentTarget.getBoundingClientRect();openMenu(cell,rect.left,rect.bottom);}}>{t("map.menu")}</button>
           <span role="status" className="text-xs text-gray-400">{copyResult?.key === keyOf(cell) ? copyResult.message : ""}</span>
         </div>}
-        <p className="mt-3 text-xs text-gray-400">{t("map.menuHint")}</p>
         {selected && <button className="mt-2 text-xs text-sky-300 underline" onClick={() => setSelected(null)}>{t("map.release")}</button>}
       </aside></div> : <div className="empty-panel map-empty"><span aria-hidden="true">⌖</span><h2>{t(shown?.status==="waiting" ? "map.waiting" : "map.unavailable")}</h2><p>{shown?.message ?? t("map.afterLogin")}</p></div>}
     {menu && menuCell && <TileContextMenu key={`${menu.key}:${menuCell.items.map(i=>i.id).join(",")}`} position={menu} cell={menuCell} scope={menu.scope}

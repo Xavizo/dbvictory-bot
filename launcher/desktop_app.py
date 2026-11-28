@@ -314,7 +314,7 @@ class Launcher:
         self.old_pending = report.get("pending")
         changes, notes_error = [], False
         try:
-            changes = self.host.history(self.root, report.get("installed_label"))
+            changes = self.host.history(self.root, report.get("installed_label"), texts.language())
         except Exception:
             notes_error = True
         extra = {"revision": report.get("installed"), "version": report.get("installed_label") or "",
@@ -654,6 +654,11 @@ class Launcher:
                      "text": said.again() if isinstance(said, texts.Text) else said}
         if isinstance(self.session_error, texts.Text):
             self.session_error = self.session_error.again()
+        if self.view.get("changes"):
+            try:
+                self.view["changes"] = self.host.history(self.root, self.view.get("version"), language)
+            except Exception:
+                pass  # keep the notes already shown
         progress = self.view.get("progress")
         if progress and isinstance(progress.get("label"), texts.Text):
             self.view["progress"] = {**progress, "label": progress["label"].again()}
