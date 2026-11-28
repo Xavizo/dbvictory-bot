@@ -26,8 +26,8 @@
     alerts: { latest: 2, read: 0, paused: false, events: [] }, recording: false,
   };
   const corpses = [
-    { id: 6080, skinned: 6081, monster: "Mutant Wolf" }, { id: 6324, skinned: 6325, monster: "Fire Elemental" },
-    { id: 6512, skinned: 6513, monster: "Roco" }, { id: 6514, skinned: 6515, monster: "Gunso" },
+    { id: 9068, skinned: 8141, monster: "fire elemental" }, { id: 8548, skinned: 8141, monster: "roco" },
+    { id: 910, skinned: 8141, monster: "gunso" }, { id: 8550, skinned: 8141, monster: "mutant wolf" },
   ];
   const spell = (words, extra) => ({ words, trigger: "distance", cooldown: 2, ki: 10, range: 5, count: 1, aim: "target", ...extra });
   const combat = store.get("combat", {
@@ -170,7 +170,7 @@
         lag_ms: 3, max_lag_ms: 41, last_problem: null, last_applied_age_seconds: 0.1 },
       profile_selection: selection, combat_profile: combat,
       hunter_knife: { status: actions.find(a => a.name === "auto_hunter_knife")?.enabled ? "active" : "off", ...sim.knife, unattributed: 0, from_combat: sim.knife.processed,
-        unassigned_bodies: 0, last_timing_ms: { recognition: 18, wait_for_use: 120, confirmation: 240 }, last_issue: null,
+        unassigned_bodies: 1, last_timing_ms: { recognition: 18, wait_for_use: 120, delivery_wait: 12, confirmation: 240 }, last_issue: { action: "skin", position: [1032, 1018, 7], reason: "corpse covered by another item" },
         corpses: actions.find(a => a.name === "auto_hunter_knife")?.config.corpses ?? corpses, default_corpses: corpses },
       speed_up: { status: playing ? "active" : "waiting", remaining: playing ? 21 : null, offset: 4, effect_active: playing, confirmed: true, attempts: 1 },
       barrier_spell: { status: "off" }, barrier_band: { status: "off", equipped_id: null, stock: 3, attempts: 0 },
