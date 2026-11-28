@@ -16,6 +16,8 @@ MUTANT_WOLF = 8550
 SPENT = 8141
 DEFAULT_CORPSES = tuple({"id": body_id, "skinned": SPENT} for body_id in (FRESH, ROCO, GUNSO, MUTANT_WOLF))
 MAX_CORPSES = 128
+# Names the panel shows for the default corpses (they are saved without one).
+DEFAULT_MONSTERS = {FRESH: "fire elemental", ROCO: "roco", GUNSO: "gunso", MUTANT_WOLF: "mutant wolf"}
 # Updated in place by apply_config, so modules that imported them see the player's list.
 FRESH_BODIES = {c["id"] for c in DEFAULT_CORPSES}
 SKINNED_BY = {c["id"]: c["skinned"] for c in DEFAULT_CORPSES}

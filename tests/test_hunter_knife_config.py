@@ -90,3 +90,13 @@ def test_server_saves_hand_skins_while_automation_is_off(monkeypatch):
     server.state.knife_learned.record(1234, 4321, None)
     server._save_learned_knife_corpses()
     assert {"id": 1234, "skinned": 4321} in saved[0]["actions"]["auto_hunter_knife"]["corpses"]
+
+
+def test_panel_shows_names_for_default_corpses_without_saving_them():
+    from types import SimpleNamespace
+    from dbv.mcp_server.dashboard_api import _knife_corpse_config
+    st = SimpleNamespace(knife_learned=None)
+    shown = _knife_corpse_config(st, {"corpses": [{"id": FRESH}, {"id": 1234, "skinned": 4321, "monster": "big ape"}]})
+    assert [c.get("monster") for c in shown["corpses"]] == ["fire elemental", "big ape"]
+    assert {c["id"]: c["monster"] for c in shown["default_corpses"]}[MUTANT_WOLF] == "mutant wolf"
+    assert validate_config({})["corpses"][0] == {"id": FRESH, "skinned": SPENT}
