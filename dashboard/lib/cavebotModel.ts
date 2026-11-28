@@ -7,8 +7,15 @@ export type CombatSpell={words:string;trigger:"visible"|"distance";cooldown:numb
 export type SpellCheck={words:string;aim:'target'|'self';matched_count:number;ready:boolean;conditions_met:boolean;remaining:number;reason:string;selected:boolean;wave_note?:string|null;wave_direction?:number|null;turn_required?:boolean};
 export type MonsterRule={pattern:string;action:"attack"|"ignore";priority:number;
   stance?:"inherit"|"stop"|"chase"|"lure"|"distance";distance?:number;spell_mode?:"inherit"|"none"|"custom";spell?:CombatSpell|null};
-export type CombatConfig={enabled:boolean;mode:"stop"|"chase"|"lure";strategy:"nearest"|"lowest_hp"|"highest_hp"|"finish";engage:"visible"|"near";radius:number;distance:number;lure_count:number;lure_seconds:number;lure_distance:number;lure_origin_limit?:number;
+export type CombatConfig={enabled:boolean;mode:"stop"|"chase"|"lure";strategy:"nearest"|"lowest_hp"|"highest_hp"|"finish";engage:"visible"|"near";radius:number;distance:number;lure_count:number;lure_seconds:number;lure_distance:number;lure_origin_limit?:number;hold_target?:boolean;
   rules:MonsterRule[];spells:CombatSpell[]};
+/** The client shows 8 tiles to the side of the character: the farthest anything on screen can be. */
+export const SCREEN_RANGE=8;
+/** A whole number between min and max from a number field. An empty or broken field keeps the old value. */
+export function clampInt(value:string|number,min:number,max:number,previous=min):number {
+  const n=Math.round(Number(value));
+  return Number.isFinite(n)&&String(value).trim()!==""?Math.min(max,Math.max(min,n)):previous;
+}
 export const defaultMonsterRule=():MonsterRule=>({pattern:"",action:"attack",priority:50,stance:"inherit",spell_mode:"inherit"});
 export const defaultCombatSpell=():CombatSpell=>({words:"",trigger:"distance",cooldown:1,ki:10,range:5,count:1});
 export function monsterRuleSummary(rule:MonsterRule):string {
@@ -20,7 +27,9 @@ export function monsterRuleSummary(rule:MonsterRule):string {
 }
 export type DraftTag={text:string;color:"mint"|"blue"|"amber"|"rose"|"violet"};
 export type RouteDraft={navigation_revision?:string;id:string;name:string;tags?:DraftTag[];points:Position[];labels:string[];links?:{from_index:number;id:string}[];loop:boolean;updated:number;combat:CombatConfig};
-export const defaultCombat=():CombatConfig=>({enabled:false,mode:"stop",strategy:"nearest",engage:"near",radius:5,distance:1,lure_count:4,lure_seconds:8,lure_distance:3,lure_origin_limit:12,rules:[],spells:[]});
+export const defaultCombat=():CombatConfig=>({enabled:false,mode:"stop",strategy:"nearest",engage:"near",radius:5,distance:1,lure_count:4,lure_seconds:8,lure_distance:3,lure_origin_limit:12,hold_target:false,rules:[],spells:[]});
+/** Walka (standalone combat) selects anything on screen by default. */
+export const defaultStandaloneCombat=():CombatConfig=>({...defaultCombat(),engage:"visible"});
 export type TargetPreview={message:string;targets:{id:number;name:string;health:number;priority:number;distance:number}[];selected:{id:number}|null;spells?:SpellCheck[]};
 export function parseTargetPreview(response:unknown):TargetPreview {
   if(!response || typeof response!=="object")throw Error(t("targets.badReply"));

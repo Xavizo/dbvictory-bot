@@ -132,6 +132,8 @@ class BotState:  # one per process: ``state`` below
         self._proxy_tasks = []
         self._emergency_stopping = False
         self._adaptive_prepare_token = None
+        self._parked_route = None   # a route controller set aside while standalone combat runs
+        self.standalone_combat = {"status": "off", "reason": ""}
         self.band_scheduler = BandScheduler()
         self.barrier_scheduler = None
         self.speed_scheduler = SpeedScheduler()
@@ -164,6 +166,10 @@ class BotState:  # one per process: ``state`` below
         self.recording_active, self.recording_name = False, ""
         self.recording_waypoints = []
         self.recording_start_pos, self.recording_start_time, self._recording_callback = (0, 0, 0), 0, None
+
+    def run_standalone_combat(self, bot):
+        """actions/auto_combat.py: see _run_standalone_combat."""
+        return _run_standalone_combat(bot)
 
     connected = property(lambda self: self.game_proxy is not None and bool(self.ready),
                          doc="A character is in game and packets can be sent.")
@@ -360,6 +366,7 @@ _CONFIG_CHECKS = {
     "auto_potions": lambda cfg: validate_potion_config(cfg, require_cooldowns=True),
     "barrier_spell": lambda cfg: validate_barrier_config(cfg),
     "auto_barrier_band": lambda cfg: validate_band_config(cfg),
+    "auto_combat": lambda cfg: _check_standalone_config(cfg),
 }
 
 
@@ -523,6 +530,8 @@ async def _async_update_action_config(name: str, changes: dict) -> dict:
         cfg = validate_potion_config(cfg, require_cooldowns=cfg.get("enabled", False))
     if name == "auto_barrier_band": cfg = validate_band_config(cfg)
     if name == "barrier_spell": cfg = validate_barrier_config(cfg)
+    if name == STANDALONE:
+        return {"combat": await _async_save_standalone_combat(cfg.get("combat"))}
     if name == "speed_up":
         from dbv.brain.combat.speed_up import validate_config
         cfg = validate_config(cfg)
@@ -585,6 +594,7 @@ async def _async_emergency_stop(*, preserve_enabled=False) -> str:
     state._stopping_tasks = tasks
     state.game_state.lure_active = False  # never leave a lure half done
     if not preserve_enabled:
+        _unpark_route()
         if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Awaryjny STOP — wybierz trasę ponownie.")
         state.potion_diagnostics.set_active(False)
     warning = ""
@@ -703,10 +713,122 @@ async def _async_adaptive_preview(config=None) -> dict:
             'message':'Podgląd niczego nie atakuje. Cel jest rozpoznawany tylko ze świeżego odczytu potwora i pola.'}
 
 
+
+# ── Standalone combat (actions/auto_combat.py) ──────────────────────
+# Fights without a route with the cavebot's own combat engine: it runs the one
+# combat controller in combat-only mode. The cavebot always comes first: its
+# Start/Resume stops standalone combat, which waits and takes over again once
+# the cavebot is no longer running. A route with progress is parked meanwhile.
+
+STANDALONE = "auto_combat"
+
+
+def _standalone_config(cfg=None):
+    from dbv.brain.cavebot.cavebot_combat import validate_combat
+    cfg = state.settings.get("actions", {}).get(STANDALONE, {}) if cfg is None else cfg
+    return validate_combat({"engage": "visible", **(cfg.get("combat") or {}), "mode": "stop"})
+
+
+def _check_standalone_config(cfg):
+    config = _standalone_config(cfg)
+    if not any(r["action"] == "attack" for r in config["rules"]):
+        raise ValueError("Walka: dodaj co najmniej jednego potwora do ataku.")
+
+
+def _standalone_running():
+    controller = getattr(state, "adaptive_cavebot", None)
+    return getattr(controller, "standalone", False) and _live(state._action_tasks.get("adaptive_cavebot"))
+
+
+def _unpark_route():
+    """Put the parked route controller back in place of standalone combat."""
+    if getattr(getattr(state, "adaptive_cavebot", None), "standalone", False):
+        state.adaptive_cavebot = getattr(state, "_parked_route", None)
+        state._parked_route = None
+
+
+async def _halt_standalone(reason="Walka wyłączona."):
+    controller = getattr(state, "adaptive_cavebot", None)
+    if not getattr(controller, "standalone", False):
+        return
+    task = state._action_tasks.get("adaptive_cavebot")
+    _stop_action("adaptive_cavebot")
+    if task:
+        await asyncio.gather(task, return_exceptions=True)
+    controller.stop(reason)
+    _unpark_route()
+
+
+def _standalone_status(reason, detail=""):
+    state.standalone_combat = {"status": reason, "reason": detail}
+    return reason
+
+
+async def _standalone_step():
+    """One supervisor check. Returns a short status for the panel."""
+    controller = getattr(state, "adaptive_cavebot", None)
+    if _live(state._action_tasks.get("adaptive_cavebot")):
+        if getattr(controller, "standalone", False):
+            return _standalone_status("fighting", controller.reason)
+        return _standalone_status("yielding", "Cavebot ma pierwszeństwo.")
+    if state._adaptive_prepare_token is not None:
+        return _standalone_status("yielding", "Cavebot ma pierwszeństwo.")
+    if not state.connected or state.automation_paused:
+        return _standalone_status("waiting", "")
+    try:
+        await _async_adaptive_control("start_combat", {"combat": _standalone_config(), "standalone": True})
+    except (ValueError, RuntimeError) as exc:
+        return _standalone_status("waiting", str(exc))
+    return _standalone_status("fighting", "")
+
+
+async def _run_standalone_combat(bot):
+    """The body of actions/auto_combat.py."""
+    last = None
+    try:
+        while True:
+            status = await _standalone_step()
+            reason = state.standalone_combat.get("reason", "")
+            if (status, reason) != last and status != "fighting":
+                bot.log({"yielding": "[WALKA] Cavebot ma pierwszeństwo — czekam.",
+                         "waiting": f"[WALKA] Czekam: {reason}" if reason else "[WALKA] Czekam na postać."}[status])
+            elif status == "fighting" and (last or ("",))[0] != "fighting":
+                bot.log("[WALKA] Walka aktywna.")
+            last = (status, reason)
+            await asyncio.sleep(.25 if status == "fighting" else .5)
+    finally:
+        state.standalone_combat = {"status": "off", "reason": ""}
+        await _halt_standalone()
+
+
+async def _async_save_standalone_combat(combat) -> dict:
+    """Save the standalone combat settings; a running fight restarts with them."""
+    from dbv.brain.cavebot.cavebot_combat import validate_combat
+    config = validate_combat({"engage": "visible", **(combat or {}), "mode": "stop"})
+    state.settings.setdefault("actions", {}).setdefault(STANDALONE, {})["combat"] = config
+    _persist_settings()
+    if _standalone_running():
+        await _halt_standalone("Nowe ustawienia walki.")  # the supervisor starts it again
+    return config
+
+
 async def _async_adaptive_control(command: str, config: dict | None=None) -> dict:
     from dbv.brain.cavebot.adaptive_cavebot import AdaptiveCavebot,MANUAL_MOVES
     from dbv.brain.cavebot.route_identity import same_route
     name="adaptive_cavebot";controller=getattr(state,name,None)
+    standalone=command=='start_combat' and bool((config or {}).get('standalone'))
+    if not standalone and getattr(controller,'standalone',False):
+        # The cavebot comes first: it takes over from standalone combat.
+        parked=getattr(state,'_parked_route',None)
+        if command in {'pause','stop'}:
+            return parked.snapshot() if parked else {"status":"idle","reason":"Wybierz zapisany szkic."}
+        if command=='discard_progress':
+            if parked:parked.stop('Postęp odrzucony. Zapisana trasa i ustawienia walki pozostają zachowane.')
+            state._parked_route=None
+            return {"status":"idle","reason":"Wybierz zapisany szkic."}
+        if command in {'start','start_combat','resume'}:
+            await _halt_standalone('Cavebot przejmuje walkę.')
+            controller=getattr(state,name,None)
     task=state._action_tasks.get(name,None)
     if command=='configure_combat':
         from dbv.brain.cavebot.cavebot_combat import validate_combat
@@ -755,7 +877,12 @@ async def _async_adaptive_control(command: str, config: dict | None=None) -> dic
                 state.adaptive_cavebot=previous
                 raise ValueError(error)
             controller=candidate
-            state.settings.setdefault("actions",{}).setdefault(name,{})["enabled"]=True
+            if standalone:
+                candidate.standalone=True;candidate.name='Walka'
+                if previous is not None and not getattr(previous,'standalone',False) and previous.path and not previous.combat_only:
+                    state._parked_route=previous  # keep its progress for Resume
+            else:
+                state.settings.setdefault("actions",{}).setdefault(name,{})["enabled"]=True
         finally:
             if proxy:proxy.unregister_client_packet_callback(cancel_preparation)
             if session._adaptive_prepare_token is token:session._adaptive_prepare_token=None
@@ -1090,6 +1217,7 @@ async def _reset_bot():
     history = getattr(state.game_state, "movement_history", None)
     if history:history.close()
     _stop_actions(state._action_tasks)
+    _unpark_route()
     if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Sesja została zresetowana.")
     if getattr(state,"packet_observer",None):
         await state.packet_observer.close()
@@ -1341,6 +1469,8 @@ async def start_bot() -> Reply:
         ended.stats_updated_at, ended.lure_active = 0, False
         for name in tuple(state._action_tasks):
             _stop_action(name)  # The passive reader also belongs to this login.
+        if getattr(getattr(state,"adaptive_cavebot",None),"standalone",False):  # put a parked route back
+            state.adaptive_cavebot,state._parked_route=getattr(state,"_parked_route",None),None
         if getattr(state,"adaptive_cavebot",None):state.adaptive_cavebot.stop("Rozłączono — wymagany ponowny Start.")
         if state._auto_task:
             state._auto_task.cancel()

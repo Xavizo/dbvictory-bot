@@ -142,6 +142,8 @@ export interface BotState { // the whole /api/state answer
   barrier_spell?:{status:string}|null;
   speed_up?:{status:string;remaining:number|null;offset:number|null;effect_active:boolean|null;confirmed:boolean;attempts:number};
   combat_profile?: import("./cavebotModel").CombatConfig;
+  /** Walka (actions/auto_combat.py): fighting, yielding to the cavebot, waiting or off. */
+  standalone_combat?: {status:"fighting"|"yielding"|"waiting"|"off";reason:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];target?:{id:number;name:string;health:number}|null;held?:{id:number;name:string;lost:boolean}|null}|null};
   adaptive_cavebot?: {navigation_wait?:{reason:string;observations:string[];review_in_ms:number}|null;map_preview?: LiveMovementPreview | null;domains?:{movement:{status:string;reason:string|null};combat:{status:string;reason:string|null}}|null;navigation_hold?:string|null;preparing?:boolean;resumable?:boolean;scope?:string;waypoint?:import("./cavebotModel").WaypointProgress;mode?:"route"|"combat";status:string;reason:string;name?:string;index?:number;total?:number;loops?:number;loop?:boolean;position?:[number,number,number];logs?:string[];draft_id?:string;combat?:{spells?:import("./cavebotModel").SpellCheck[];last_spell_attempt?:{words:string;at:number;status:string}|null;lure?:import("./cavebotModel").LureProgress|null;enabled:boolean;phase:string;target?:{id:number;name:string;health:number}|null}};
   passive_map?: PassiveMapState;
   connected: boolean;               // logged in through the game proxy
