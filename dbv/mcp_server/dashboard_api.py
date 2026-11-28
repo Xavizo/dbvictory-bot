@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import uuid4
 
 from dbv import paths
+from dbv.language import LanguageWatch
 from dbv.brain.cavebot.cavebot_combat import validate_combat
 from dbv.brain.navigation.map_atlas import database_busy
 from dbv.brain.state.session_observations import observation_family_status
@@ -38,6 +39,7 @@ ACTIONS_DIR = paths.ACTIONS_DIR
 # Set by start_api(): the MCP server's loop and its BotState.
 _main_loop = None
 _state = None
+_language = LanguageWatch(paths.INSTALL_ROOT)  # the launcher's choice; the panel follows it
 _started = False
 _background_tasks = set()   # tasks started here, referenced until the process ends
 
@@ -931,7 +933,7 @@ def _build_state_json() -> str:
     """The whole state for the panel, as JSON. Reads only; safe from any thread."""
     st = _state  # read once: start_api may replace it from another thread
     if not st:
-        return json.dumps(dict(connected=False, actions=[]))
+        return json.dumps(dict(connected=False, actions=[], language=_language()))
     internal = getattr(sys.modules.get("__main__"), "INTERNAL_ACTIONS", {"dll_bridge"})
     tasks = dict(st._action_tasks)
     proxy = st.game_proxy
@@ -941,6 +943,7 @@ def _build_state_json() -> str:
     observer = _observer_connected(gs)
     return json.dumps(obj={
         "connected": st.connected,  # a character is in game
+        "language": _language(),  # "pl" or "en", from the launcher's switch
         "session_kills": getattr(gs, "session_kills", 0),
         "login_startup": {"phase": st.login_startup.phase} if getattr(st, "login_startup", None) else None,
         "pause_hotkey": _snapshot_of(st, "pause_hotkey"),

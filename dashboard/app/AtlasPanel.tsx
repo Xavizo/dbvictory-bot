@@ -1,4 +1,5 @@
 "use client";
+import { t, locale, language, onLanguage } from "@/lib/i18n";
 import {useEffect,useMemo,useRef,useState,type ReactNode} from "react";
 import {MapTool,MapMore} from "./MapTools";
 import {createPortal} from "react-dom";
@@ -38,25 +39,25 @@ function TransitionAlternatives({current,scope,busy,onChoose}:{current:Plan["tra
     setChoices(null);setError("");
     request(`/api/map/atlas?x=${x}&y=${y}&z=${z}&radius=5`).then((region:Atlas)=>{
       if(closed)return;
-      if(region.scope!==scope || region.error)throw Error(region.error||"Profil atlasu zmienił się podczas odczytu.");
+      if(region.scope!==scope || region.error)throw Error(region.error||t("atlas.profileChanged"));
       setChoices(nearbyTransitions(region.route_transitions??[],current));
     }).catch(e=>{if(!closed)setError(e.message);});
     return ()=>{closed=true;};
   },[current,scope]);
   return <div className="atlas-alternatives">
-    {error?<small role="alert">{error}</small>:choices===null?<small role="status">Szukam przejść…</small>:!choices.length?
-      <small>W promieniu 5 pól brak innego potwierdzonego przejścia na piętro {current.exit[2]}.</small>:
+    {error?<small role="alert">{error}</small>:choices===null?<small role="status">{t("atlas.searching")}</small>:!choices.length?
+      <small>{t("atlas.noAlternative",{floor:current.exit[2]})}</small>:
       choices.map(edge=><button type="button" key={edge.id} disabled={busy} onClick={()=>onChoose(edge)}>
-        Użyj {pointText(edge.entry)}<small>{transitionActions[edge.action as TransitionAction]} · wyjście {pointText(edge.exit)}</small>
+        {t("atlas.use",{place:pointText(edge.entry)})}<small>{transitionActions[edge.action as TransitionAction]} · {t("atlas.exitAt",{place:pointText(edge.exit)})}</small>
       </button>)}
   </div>;
 }
 const huntMilestones = [
-  "Zdobądź XP w pierwszym miejscu.",
-  "Odwiedź kolejną salę lub wróć po następną grupę.",
-  "Trwa szukanie powrotu do odwiedzonych sektorów.",
-  "Wykryto powrót. Możesz zakończyć lub zwiedzać dalej.",
-  "Wykryto powtarzającą się trasę. Możesz zakończyć nagranie.",
+  "atlas.hunt.0",
+  "atlas.hunt.1",
+  "atlas.hunt.2",
+  "atlas.hunt.3",
+  "atlas.hunt.4",
 ] as const;
 const ObjectMap=dynamic(()=>import("./PassiveMapPanel"),{ssr:false});
 function lines(points:Pos[],z:number) {const result:Pos[][]=[];let line:Pos[]=[];for(const p of points){if(p[2]===z)line.push(p);else if(line.length){result.push(line);line=[];}}if(line.length)result.push(line);return result;}
@@ -79,6 +80,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   const [points,setPoints]=useState<Pos[]>([]),[plan,setPlan]=useState<Plan|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const [links,setLinks]=useState<RouteLink[]>([]);
   const [labels,setLabels]=useState<string[]>([]),[lastOptimization,setLastOptimization]=useState<{plan:Plan;labels:string[]}|null>(null);
+  const [shownLanguage,setShownLanguage]=useState(language());useEffect(()=>onLanguage(setShownLanguage),[]); // memoised parts below hold words
   const dirty=useMemo(()=>hasDraftChanges(draftId,savedVersion,draftName,points,labels,links,loop),[draftId,savedVersion,draftName,points,labels,links,loop]);
   const saved=!!draftId && !dirty;
   const [objectView,setObjectView]=useState(false),[rename,setRename]=useState(false);
@@ -105,11 +107,11 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   const huntStage=recorder?.hunt_progress?.stage;
   const recordingStatus=recorder?.active && (recorder.mode==="adaptive" && huntStage!=null
     ? <div className="recording-status hunt-readiness" data-ready={huntStage===4}>
-        <progress aria-label="Gotowość nagrania" value={huntStage} max={4}/>
-        <span role="status"><strong>Etap {huntStage}/4</strong> · {recorder.trace_limited?"Osiągnięto limit zapisu. Zakończ nagranie.":recorder.hunt_progress?.missing_sectors?"W śladzie są niepołączone odcinki.":huntMilestones[huntStage]}</span>
+        <progress aria-label={t("atlas.readiness")} value={huntStage} max={4}/>
+        <span role="status"><strong>{t("atlas.stage",{n:huntStage})}</strong> · {recorder.trace_limited?t("atlas.traceLimit"):recorder.hunt_progress?.missing_sectors?t("atlas.missingSectors"):t(huntMilestones[huntStage])}</span>
         {recorder.hunt_progress?.sectors!=null&&<small>Sektory expowiska: {recorder.hunt_progress.sectors} · z XP: {recorder.hunt_progress.total_areas}</small>}
       </div>
-    : <p role="status" className="recording-status">● {recorder.mode==="adaptive"?"Nagrywanie adaptacyjne":"Nagrywanie"} · {recorder.position_count??0} pozycji{recorder.mode==="adaptive"&&huntStage===null?" · Ocena chwilowo niedostępna":""}</p>);
+    : <p role="status" className="recording-status">● {t(recorder.mode==="adaptive"?"atlas.adaptiveRecording":"atlas.recording")} · {t("atlas.positions",{n:recorder.position_count??0})}{recorder.mode==="adaptive"&&huntStage===null?" · "+t("atlas.noScore"):""}</p>);
   const canRecord=!!state?.connected && !["running","paused","ready"].includes(state?.adaptive_cavebot?.status??"");
   const adaptiveSource=state?.cavebot?.recordings?.some(r=>r.name===recording && r.mode==="adaptive");
   const repairSource=state?.cavebot?.recordings.find(r=>r.name===(recording||draftName))?.name;
@@ -129,7 +131,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   function toggleStage(index:number){setHiddenSegments(old=>old.includes(index)?old.filter(i=>i!==index):[...old,index]);}
   const viewCenter=useRef(center);viewCenter.current=center;
   const transitionOptions=transitionSpot?transitionChoices(compatible?atlas?.route_transitions??[]:[],transitionSpot,insertAfter!==undefined?points[insertAfter]:editSegment!==undefined?points[editSegment]:points.find((p,i)=>points[i+1]?.join(',')===transitionSpot.join(','))??points[nearestInsertion(points,links,transitionSpot)??-1]):[];
-  function transitionChoice(edge:RouteTransition){try{const edit=selectTransition(points,links,edge,editSegment,insertAfter);return {label:edit.mode==='repair'?`Przypisz do odcinka ${edit.from_index+1} → ${edit.from_index+2}`:`Wstaw przejście · punkty ${edit.from_index+1} → ${edit.from_index+2}`,error:''};}catch(e){return {label:'Wybierz właściwy odcinek',error:(e as Error).message};}}
+  function transitionChoice(edge:RouteTransition){try{const edit=selectTransition(points,links,edge,editSegment,insertAfter);return {label:edit.mode==='repair'?t("atlas.assignLeg",{from:edit.from_index+1,to:edit.from_index+2}):t("atlas.insertTransition",{from:edit.from_index+1,to:edit.from_index+2}),error:''};}catch(e){return {label:t("atlas.chooseLeg"),error:(e as Error).message};}}
   const transitionCell=transitionSpot && cells.find(c=>c.x===transitionSpot[0] && c.y===transitionSpot[1] && c.z===transitionSpot[2]);
   const selectedCell=selected && cells.find(c=>c.x===selected[0] && c.y===selected[1] && c.z===selected[2]);
   const menuPosition=tileMenu?.key.split(',').map(Number);
@@ -140,7 +142,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
     const cell=cells.find(c=>c.live && c.x===p[0] && c.y===p[1] && c.z===p[2]);
     setSelected(p);setTileMenu({key:p.join(','),x,y,scope,petRef:cell?.pet_ref});
   }
-  async function copyMenuCell(){if(!menuCell)return;try{if(!window.dbvMap)throw Error('Brak schowka');await window.dbvMap.copyCell(copyCellText(menuCell));}catch{setError('Nie udało się skopiować danych pola.');}}
+  async function copyMenuCell(){if(!menuCell)return;try{if(!window.dbvMap)throw Error(t("atlas.noClipboard"));await window.dbvMap.copyCell(copyCellText(menuCell));}catch{setError(t("atlas.copyFailed"));}}
   const sim=plan && simIndex!==null?simulationStep(plan.path,simIndex,plan.transitions):null;
   function setCenter(p:Pos){viewCenter.current=p;setManual([...p]);setSimPlaying(false);}
   function changeFloor(delta:number){setFollow(false);const p=viewCenter.current;setCenter([p[0],p[1],stepFloor(p[2],delta)]);}
@@ -176,11 +178,11 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
         // Combat can be saved independently while this editor has unsaved points.
         // Refresh only the revision, and only if the persisted route did not change.
         const current=await request("/api/map/drafts"),row:Draft|undefined=current.drafts.find((d:Draft)=>d.id===draftId);
-        if(current.scope!==scope||!row||draftFingerprint(row.name,row.points,row.labels??[],row.links??[],row.loop??true)!==savedVersion)throw Error("Szkic zmienił się w innym oknie. Twoje zmiany pozostają w edytorze — porównaj je przed zapisem.");
+        if(current.scope!==scope||!row||draftFingerprint(row.name,row.points,row.labels??[],row.links??[],row.loop??true)!==savedVersion)throw Error(t("atlas.changedElsewhere"));
         expectedUpdated=row.updated;savedLoop=row.loop??true;
       }
-      const data=await request("/api/map/drafts",{scope,name:draftName.trim()||"Nowa trasa",points,labels,links,loop:savedLoop,...(draftId?{id:draftId,expected_updated:expectedUpdated}:{tags:newTags})});
-      const row:Draft=data.drafts.find((d:Draft)=>d.id===data.saved_id);if(!row)throw Error("Brak potwierdzenia zapisu szkicu.");
+      const data=await request("/api/map/drafts",{scope,name:draftName.trim()||t("atlas.newRoute"),points,labels,links,loop:savedLoop,...(draftId?{id:draftId,expected_updated:expectedUpdated}:{tags:newTags})});
+      const row:Draft=data.drafts.find((d:Draft)=>d.id===data.saved_id);if(!row)throw Error(t("atlas.noSaveConfirm"));
       setDrafts(data.drafts);setDraftId(row.id);setDraftName(row.name);setPoints(row.points);setLabels(row.labels??[]);setLinks(row.links??[]);setLoop(row.loop??true);
       setOptimization(null);setSavedVersion(draftFingerprint(row.name,row.points,row.labels??[],row.links??[],row.loop??true));onEditingChange?.(false);onDraftSaved?.(row.id);
     }catch(e){setError(String(e));}finally{setBusy(false);}}
@@ -203,14 +205,14 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   }
   function append(p:Pos){const old=stroke.current.at(-1);if(stroke.current.length<2048 && (!old || old[2]!==p[2] || Math.max(Math.abs(old[0]-p[0]),Math.abs(old[1]-p[1]))>=4)){stroke.current.push(p);setPoints([...stroke.current]);}}
   function insertPoint(p:Pos,after=insertAfter??nearestInsertion(points,links,p)){
-    if(after===undefined && points.length){setError("Brak waypointu na tym piętrze.");return;}
+    if(after===undefined && points.length){setError(t("atlas.noWaypointHere"));return;}
     const next=after===undefined?[p]:insertAnchor(points,after,p);
-    if(next===points){setError("Ten punkt jest już na wskazanym odcinku.");return;}
+    if(next===points){setError(t("atlas.alreadyOnLeg"));return;}
     const index=(after??-1)+1;
     updatePoints(next,undefined,{labels:[...labels.slice(0,index),"",...labels.slice(index)],
       links:links.map(l=>l.from_index>=index?{...l,from_index:l.from_index+1}:l)});
   }
-  function updatePoints(next:Pos[],before:RouteEdit={points,center,labels,links},inserted?:{labels:string[];links:RouteLink[]}){setRecording("");setSimulation(null);if(next.length>2048){setError("Limit 2048 punktów. Usuń jeden punkt przed domknięciem.");return;}
+  function updatePoints(next:Pos[],before:RouteEdit={points,center,labels,links},inserted?:{labels:string[];links:RouteLink[]}){setRecording("");setSimulation(null);if(next.length>2048){setError(t("atlas.limitClose"));return;}
     if(JSON.stringify(next)!==JSON.stringify(before.points))setHistory(h=>rememberEdit(h,before.points,before.center,before.labels,before.links??links));
     setTransitionSpot(null);setLastOptimization(null);setLabels(inserted?.labels??remapLabels(before.points,next,before.labels??labels));clearPlan();setPoints(next);const chosen=inserted?.links??remapLinks(before.links??links,before.points,next);setLinks(chosen);if(next.length>1)void propose(next,undefined,loop,chosen);}
   function undoEdit(){const previous=history.at(-1);if(!previous)return;setHistory(h=>h.slice(0,-1));setTransitionSpot(null);clearPlan();setLastOptimization(null);setLabels(previous.labels??previous.points.map(()=>""));setPoints(previous.points);setLinks(previous.links??[]);setCenter(previous.center);if(previous.points.length>1)void propose(previous.points,undefined,loop,previous.links??[]);}
@@ -222,17 +224,17 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   async function useTransition(edge:RouteTransition,replace?:RouteLink){if(!scope || !compatible||busy)return;
     const id=++generation.current;setBusy(true);setError("");
     try {const {points:next,links:chosen,sourceIndices,from_index}=replace?replaceFloorLink(points,links,replace,edge):selectTransition(points,links,edge,editSegment,insertAfter);
-      if(next.length>2048)throw Error("Limit 2048 punktów — usuń punkt przed dodaniem przejścia.");
+      if(next.length>2048)throw Error(t("atlas.limitTransition"));
       const result:Plan=await request("/api/map/plan",{scope,points:next,links:chosen,loop});if(id!==generation.current)return;
       if(replace && !result.complete){
         const gap=result.gaps.find(g=>!plan?.gaps.some(old=>pointText(old.from)===pointText(g.from) && pointText(old.to)===pointText(g.to) && old.reason===g.reason));
         if(gap || !editableFloorLinks(result).some(l=>l?.from_index===from_index && l.id===edge.id))
-          throw Error("Nie udało się połączyć trasy przez wybrane przejście. "+(gap?.reason??"Sprawdź sąsiednie waypointy."));
+          throw Error(t("atlas.joinFailed")+" "+(gap?.reason??t("atlas.checkNeighbours")));
       }
-      if(!result.complete)setError("Pozostały odcinek do sprawdzenia: "+(result.gaps[0]?.reason??"sprawdź mapę"));
+      if(!result.complete)setError(t("atlas.legLeft")+": "+(result.gaps[0]?.reason??t("atlas.checkMap")));
       const nextLabels=sourceIndices.map(i=>i===null?"":labels[i]??"");
       setRecording("");setSimulation(null);setHistory(h=>rememberEdit(h,points,center,labels,links));setLabels(remapLabels(next,result.points,nextLabels));setLastOptimization(null);setPoints(result.points);setLinks(result.links??[]);setPlan(result);setCopied(false);setSimPlaying(false);setSimIndex(null);setTransitionSpot(null);if(!replace){setDraw(true);setPanMode(false);}setSelected(edge.entry);setEditSegment(undefined);
-      setReplacement(null);setTransitionExit(edge.exit);setTransitionNotice(replace?`Zmieniono wejście na ${pointText(edge.entry)}. Zapisz szkic lub cofnij zmianę.`:`Przejście przypisane w szkicu: ${edge.entry[2]} → ${edge.exit[2]}. Widok pozostaje bez zmian.`);
+      setReplacement(null);setTransitionExit(edge.exit);setTransitionNotice(replace?t("atlas.entryChanged",{place:pointText(edge.entry)}):t("atlas.transitionAssigned",{from:edge.entry[2],to:edge.exit[2]}));
     }catch(e){if(id===generation.current)setError(e instanceof Error?e.message:String(e));}finally{if(id===generation.current)setBusy(false);}
   }
   function cancelPointer(){const before=editOrigin.current,wasAnchor=anchorDrag.current!==null;editOrigin.current=null;stroke.current=[];pan.current=null;anchorDrag.current=null;dragAt.current=null;setDragPreview(null);
@@ -247,7 +249,7 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
       if(openTransition(p))return;
       const index=points.findIndex(old=>old.every((n,i)=>n===p[i]));
       if(index>=0){editOrigin.current={points,center,labels,links};anchorDrag.current=index;anchorMoved.current=false;dragAt.current=p;e.currentTarget.setPointerCapture(e.pointerId);return;}
-      if(points.length>=2048){setError("Limit 2048 punktów szkicu. Przesuń lub usuń istniejący punkt.");return;}
+      if(points.length>=2048){setError(t("atlas.limitDraft"));return;}
       updatePoints([...points,p]);return;
     }
     editOrigin.current={points:points.map(p=>[...p] as Pos),center:[...center],labels:[...labels],links:[...links]};e.currentTarget.setPointerCapture(e.pointerId);stroke.current=[...points];append(p);clearPlan();
@@ -304,14 +306,14 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
     try {
       const source:Plan=await request("/api/map/plan",{scope,recording:repairSource,optimize:false,loop});
       if(id!==generation.current)return;
-      if(source.scope!==scope||JSON.stringify(source.points)!==JSON.stringify(points))throw Error("Ten szkic ma już inny przebieg niż nagranie. Zachowałem Twoje punkty; nagranie możesz wczytać osobno w szczegółach mapy.");
+      if(source.scope!==scope||JSON.stringify(source.points)!==JSON.stringify(points))throw Error(t("atlas.differsFromRecording"));
       const chosen=[...links,...(source.links??[]).filter(link=>!links.some(old=>old.from_index===link.from_index))].sort((a,b)=>a.from_index-b.from_index);
       const result:Plan=await request("/api/map/plan",{scope,points,links:chosen,loop});
       if(id!==generation.current)return;
       if(JSON.stringify(chosen)!==JSON.stringify(links))setHistory(h=>rememberEdit(h,points,center,labels,links));
       setLinks(result.links??chosen);setPlan(result);setOptimization(null);setRecording("");setLastOptimization(null);
       setSimulation(null);setSimPlaying(false);setSimIndex(null);setDraw(!browseOnly);setObjectView(false);setOverview(false);
-      if(!result.complete)setError("Przejścia z nagrania zostały uzupełnione. "+(result.gaps[0]?.reason??"Sprawdź pozostały odcinek."));
+      if(!result.complete)setError(t("atlas.restored")+" "+(result.gaps[0]?.reason??t("atlas.checkLeftLeg")));
     } catch(e){if(id===generation.current)setError(e instanceof Error?e.message:String(e));}
     finally{if(id===generation.current)setBusy(false);}
   }
@@ -321,17 +323,17 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   const floors=Array.from({length:16},(_,z)=>z);
   const floorTransitions=useMemo(()=>[...(atlas?.route_transitions??[]),...(workingPlan?.transitions??[])].filter(t=>t.entry[2]===center[2]),
     [atlas?.route_transitions,workingPlan?.transitions,center[2]]);
-  const terrainLayer=useMemo(()=>cells.map(c=>{const f=c.navigation?.find(f=>f.kind==="web")??c.navigation?.[0],style=f?navigationStyles[f.kind]:c.web_cut?cutWebStyle:null,destination=f?transitionDestination([c.x,c.y,c.z],floorTransitions):"",names:Record<string,string>={web:"Pajęczyna",stairs:"Schody",ladder:"Drabina",hole:"Dziura",descent:"Zejście",covered_hole:"Odkop",door:"Drzwi",level_gate:"Bramka",teleport:"Teleport",rope_spot:"Rope",passage:destination.startsWith('↓')?'Zejście':destination.startsWith('↑')?'Wejście':'Przejście',floor_change:'Przejście'},detailed=viewport.width/grid.columns>=43,suffix=f?.door_state_hint==="open"?"−":f?.door_state_hint==="closed"?"+":f?.source==="client_hint"?"?":f?.direction_hint==="up"?"↑":f?.direction_hint==="down"?"↓":"";
+  const terrainLayer=useMemo(()=>cells.map(c=>{const f=c.navigation?.find(f=>f.kind==="web")??c.navigation?.[0],style=f?navigationStyles[f.kind]:c.web_cut?cutWebStyle:null,destination=f?transitionDestination([c.x,c.y,c.z],floorTransitions):"",names:Record<string,string>={web:t("atlas.short.web"),stairs:t("atlas.short.stairs"),ladder:t("atlas.short.ladder"),hole:t("atlas.short.hole"),descent:t("atlas.short.descent"),covered_hole:t("atlas.short.covered_hole"),door:t("atlas.short.door"),level_gate:t("atlas.short.level_gate"),teleport:t("atlas.short.teleport"),rope_spot:t("atlas.short.rope_spot"),passage:t(destination.startsWith('↓')?"atlas.short.descent":destination.startsWith('↑')?"atlas.short.up":"atlas.short.passage"),floor_change:t("atlas.short.passage")},detailed=viewport.width/grid.columns>=43,suffix=f?.door_state_hint==="open"?"−":f?.door_state_hint==="closed"?"+":f?.source==="client_hint"?"?":f?.direction_hint==="up"?"↑":f?.direction_hint==="down"?"↓":"";
           return <g key={`${c.x},${c.y}`} opacity={c.live?1:.68}><rect x={c.x-center[0]+ox+.04} y={c.y-center[1]+oy+.04} width={.92} height={.92} fill={tileStyles[c.kind]?.fill ?? "#252331"}/>
             {style && <g pointerEvents="none"><rect x={c.x-center[0]+ox+.08} y={c.y-center[1]+oy+.08} width={.84} height={.84} rx={.10} fill="#131b24" fillOpacity={.68} stroke={style.color} strokeOpacity={.7} strokeWidth={.035}/>
               <text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+(detailed ? .45 : .66)} textAnchor="middle" fontSize={detailed ? .23 : .45} fontWeight="700" fill={style.color}>{detailed?(f?names[f.kind]??style.label:style.label):style.symbol}{!detailed&&suffix}</text>
-              {detailed&&<text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+.78} textAnchor="middle" fontSize={.22} fill={style.color}>{destination|| (f?.door_state_hint==="open"?"otw.":f?.door_state_hint==="closed"?"zamk.":suffix)}</text>}
+              {detailed&&<text x={c.x-center[0]+ox+.5} y={c.y-center[1]+oy+.78} textAnchor="middle" fontSize={.22} fill={style.color}>{destination|| (f?.door_state_hint==="open"?t("atlas.openShort"):f?.door_state_hint==="closed"?t("atlas.closedShort"):suffix)}</text>}
             </g>}
             {c.live && !!c.unidentified_monsters && !c.occupant_types?.pet && <text pointerEvents="none" x={c.x-center[0]+ox+.8} y={c.y-center[1]+oy+.3} textAnchor="middle" fontSize={.32} fontWeight="700" fill={unidentifiedStyle.color}>{unidentifiedStyle.symbol}</text>}
             {c.live && !!c.occupant_types?.pet && <g pointerEvents="none" transform={`translate(${c.x-center[0]+ox+.8} ${c.y-center[1]+oy+.23})`}>
               <circle r={.19} fill="#132d2c" stroke={petStyle.color} strokeWidth={.035}/><text textAnchor="middle" dominantBaseline="central" fontSize={.26} fontWeight="700" fill={petStyle.color}>{petStyle.symbol}</text>
             </g>}
-            <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?"na żywo":"zapis historyczny"} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}${c.live && c.pet_names?.length ? " · Pet: "+petDescription(c) : ""}`}</title></g>;}),[cells,floorTransitions,center[0],center[1],ox,oy,viewport.width,grid.columns]);
+            <title>{`${pointText([c.x,c.y,c.z])} · ${c.live?t("atlas.live"):t("atlas.historical")} · ${c.navigation?.map(f=>navigationStyles[f.kind].label).join(", ")} · ID ${c.items.map(i=>i.id).join(", ")}${c.live && c.pet_names?.length ? " · Pet: "+petDescription(c) : ""}`}</title></g>;}),[cells,floorTransitions,center[0],center[1],ox,oy,viewport.width,grid.columns,shownLanguage]);
   const objectPositions=new Set(cells.filter(c=>c.navigation?.length).map(c=>[c.x,c.y,c.z].join(",")));
   const onFloor=segments.map((s,i)=>({...s,index:i})).filter(s=>s.floor===center[2]&&!hiddenSegments.includes(s.index));
   const storedDraft=drafts.find(d=>d.id===draftId), run=state?.adaptive_cavebot;
@@ -339,17 +341,17 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
   const nextStart=!!storedDraft?.navigation_revision && !!run?.waypoint?.navigation_revision &&
     run.draft_id===draftId && ["running","paused","ready"].includes(run.status) &&
     storedDraft.navigation_revision!==run.waypoint.navigation_revision;
-  const savedNotice="Zapisano na następny start";
-  const waypointList=useMemo(()=><div className="v2-point-scroll" tabIndex={0} role="region" aria-label="Przewijana lista waypointów"><table><thead><tr><th>#</th><th>Współrzędne</th><th>Etykieta</th><th/></tr></thead><tbody>{points.map((p,i)=><tr key={i} aria-current={progress?.current===i?"step":undefined} className={progress?.current===i?"waypoint-current":progress?.last_reached===i?"waypoint-reached":""}><td title={progress?.current===i?"Bieżący cel trasy":progress?.last_reached===i?"Ostatnio zaliczony":undefined}>{progress?.current===i?"▸ ":""}{i+1}</td><td><button className="waypoint-location" title={waypointKind(points,i)} onClick={()=>{setMapOpen(true);setCenter(p);setSelected(p);}}>{p.join(", ")}</button></td><td><input aria-label={`Etykieta waypointu ${i+1}`} placeholder={waypointKind(points,i)} maxLength={60} value={labels[i]??""} disabled={busy||!!optimization||recorder?.active} onChange={e=>labelPoint(i,e.target.value)}/></td><td><button aria-label={`Usuń waypoint ${i+1}`} disabled={busy||!!optimization||recorder?.active} onClick={()=>updatePoints(removeAnchor(points,i))}>×</button></td></tr>)}</tbody></table>{!points.length&&<p className="v2-empty-points">Nagraj ruch lub dodaj punkty na mapie.</p>}</div>,
-    [points,labels,links,busy,optimization,recorder?.active,progress?.current,progress?.last_reached,center[0],center[1],center[2],loop,scope,compatible]);
-  const review=<>{draftWaiting&&<p role="status" className="v2-inline-note">Wczytywanie atlasu…</p>}{draftLoadError&&<p role="alert" className="v2-error">{draftLoadError}</p>}{optimization&&<div className="optimization-review" role="region" aria-label="Porównanie optymalizacji"><strong>{optimization.candidate.complete?`${optimization.before.points.length} → ${optimization.candidate.points.length} waypointów` : "Optymalizacja wymaga sprawdzenia"}{optimization.before.complete&&optimization.candidate.complete?` · ${optimization.before.path.length-1} → ${optimization.candidate.path.length-1} kroków`:""}{optimization.candidate.corridor_repeats&&` · powtórzone odcinki: ${optimization.candidate.corridor_repeats.join(" → ")}`}</strong><button disabled={!optimization.candidate.complete} onClick={acceptOptimization}>Przyjmij</button><button onClick={()=>{setOptimization(null);frameRoute(plan?.path??points);}}>Odrzuć</button>{!optimization.candidate.complete&&optimization.candidate.gaps.map((g,i)=><button key={i} className="atlas-gap" onClick={()=>focusGap(g)}>Sprawdź odcinek {g.segment+1} → {g.segment+2}: {pointText(g.from)} → {pointText(g.to)}. {g.reason}</button>)}</div>}
-    {!browseOnly&&repairSource&&(plan?.gaps.length||optimization?.candidate.gaps.length)?<button className="restore-recorded-transitions" title={`Uzupełnij brakujące przejścia z ${repairSource}; punkty i etykiety zostają bez zmian.`} disabled={busy||recorder?.active} onClick={restoreRecordedTransitions}>Odtwórz przejścia z nagrania</button>:null}
-    {plan?.complete&&plan.requires_action_review&&!plan.requires_path_review&&!!plan.unmatched_recorded_actions&&<div className="recorded-action-review" role="status"><span>{plan.unmatched_recorded_actions} dodatkowe użycie poza przejściami — nie zostanie odtworzone.</span><button disabled={busy} onClick={()=>{setPlan({...plan,requires_action_review:false,ignored_recorded_actions:true});setSimulation(null);}}>Pomiń dodatkowe użycia</button></div>}
-    {plan?.ignored_recorded_actions&&<small>Pominięto dodatkowe użycia; nagranie źródłowe pozostało bez zmian.</small>}
-    {simulation&&<div className={`simulation-result ${simulation.ok?"ok":"review"}`} role="status"><strong>{simulation.ok?"✓ Symulacja zakończona":"Trasa wymaga poprawy"}</strong><span>{simulation.steps} kroków · piętra {simulation.floors.join(" → ")} · {simulation.transitions} przejść</span>{simulation.issues.map((issue,i)=><p key={i}>{issue}</p>)}</div>}
-    {plan?.loop_closed&&plan.return_mode&&plan.return_mode!=="closed"&&<small>Powrót: {plan.return_mode==="reverse"?"waypointami w odwrotnej kolejności":"znaną drogą do początku"}.</small>}
+  const savedNotice=t("atlas.savedForNext");
+  const waypointList=useMemo(()=><div className="v2-point-scroll" tabIndex={0} role="region" aria-label={t("atlas.waypointList")}><table><thead><tr><th>#</th><th>{t("atlas.coordinates")}</th><th>{t("atlas.label")}</th><th/></tr></thead><tbody>{points.map((p,i)=><tr key={i} aria-current={progress?.current===i?"step":undefined} className={progress?.current===i?"waypoint-current":progress?.last_reached===i?"waypoint-reached":""}><td title={progress?.current===i?t("atlas.currentTarget"):progress?.last_reached===i?t("atlas.lastReached"):undefined}>{progress?.current===i?"▸ ":""}{i+1}</td><td><button className="waypoint-location" title={waypointKind(points,i)} onClick={()=>{setMapOpen(true);setCenter(p);setSelected(p);}}>{p.join(", ")}</button></td><td><input aria-label={t("atlas.waypointLabel",{n:i+1})} placeholder={waypointKind(points,i)} maxLength={60} value={labels[i]??""} disabled={busy||!!optimization||recorder?.active} onChange={e=>labelPoint(i,e.target.value)}/></td><td><button aria-label={t("map.removeWaypoint",{n:i+1})} disabled={busy||!!optimization||recorder?.active} onClick={()=>updatePoints(removeAnchor(points,i))}>×</button></td></tr>)}</tbody></table>{!points.length&&<p className="v2-empty-points">{t("atlas.emptyPoints")}</p>}</div>,
+    [points,labels,links,busy,optimization,recorder?.active,progress?.current,progress?.last_reached,center[0],center[1],center[2],loop,scope,compatible,shownLanguage]);
+  const review=<>{draftWaiting&&<p role="status" className="v2-inline-note">{t("atlas.loading")}</p>}{draftLoadError&&<p role="alert" className="v2-error">{draftLoadError}</p>}{optimization&&<div className="optimization-review" role="region" aria-label={t("atlas.optimizationCompare")}><strong>{optimization.candidate.complete?t("atlas.waypointsDelta",{from:optimization.before.points.length,to:optimization.candidate.points.length}) : t("atlas.optimizationCheck")}{optimization.before.complete&&optimization.candidate.complete?" · "+t("atlas.stepsDelta",{from:optimization.before.path.length-1,to:optimization.candidate.path.length-1}):""}{optimization.candidate.corridor_repeats&&` · ${t("atlas.repeatedLegs")}: ${optimization.candidate.corridor_repeats.join(" → ")}`}</strong><button disabled={!optimization.candidate.complete} onClick={acceptOptimization}>{t("atlas.accept")}</button><button onClick={()=>{setOptimization(null);frameRoute(plan?.path??points);}}>{t("atlas.reject")}</button>{!optimization.candidate.complete&&optimization.candidate.gaps.map((g,i)=><button key={i} className="atlas-gap" onClick={()=>focusGap(g)}>{t("atlas.checkLeg",{from:g.segment+1,to:g.segment+2})}: {pointText(g.from)} → {pointText(g.to)}. {g.reason}</button>)}</div>}
+    {!browseOnly&&repairSource&&(plan?.gaps.length||optimization?.candidate.gaps.length)?<button className="restore-recorded-transitions" title={t("atlas.restoreTitle",{source:repairSource})} disabled={busy||recorder?.active} onClick={restoreRecordedTransitions}>{t("atlas.restore")}</button>:null}
+    {plan?.complete&&plan.requires_action_review&&!plan.requires_path_review&&!!plan.unmatched_recorded_actions&&<div className="recorded-action-review" role="status"><span>{t("atlas.unmatched",{n:plan.unmatched_recorded_actions})}</span><button disabled={busy} onClick={()=>{setPlan({...plan,requires_action_review:false,ignored_recorded_actions:true});setSimulation(null);}}>{t("atlas.skipExtra")}</button></div>}
+    {plan?.ignored_recorded_actions&&<small>{t("atlas.skipped")}</small>}
+    {simulation&&<div className={`simulation-result ${simulation.ok?"ok":"review"}`} role="status"><strong>{simulation.ok?"✓ "+t("atlas.simDone"):t("atlas.needsFix")}</strong><span>{t("atlas.simSummary",{steps:simulation.steps,floors:simulation.floors.join(" → "),n:simulation.transitions})}</span>{simulation.issues.map((issue,i)=><p key={i}>{issue}</p>)}</div>}
+    {plan?.loop_closed&&plan.return_mode&&plan.return_mode!=="closed"&&<small>{t("atlas.return")}: {t(plan.return_mode==="reverse"?"atlas.returnReverse":"atlas.returnKnown")}.</small>}
     {error&&<p role="alert" className="v2-error">{error}</p>}</>;
-  const saveButton=<MapTool icon={saved?"check":"save"} label={optimization?"Zapisz oryginał bez optymalizacji":saved?"Zapisano szkic":"Zapisz szkic"} disabled={busy||!dirty||!compatible||points.length<2||recorder?.active} onClick={saveDraft}/>;
+  const saveButton=<MapTool icon={saved?"check":"save"} label={t(optimization?"atlas.saveOriginalFull":saved?"atlas.draftSaved":"atlas.saveDraft")} disabled={busy||!dirty||!compatible||points.length<2||recorder?.active} onClick={saveDraft}/>;
   const tagEditor = !browseOnly && (draftId || points.length>0) && <DraftTags key={`${scope}/${draftId || recording}`}
     tags={draftId ? drafts.find(d=>d.id===draftId)?.tags ?? [] : newTags}
     onSave={async(tags,previous)=>{
@@ -363,11 +365,11 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
         throw e;
       }
     }}/>;
-  const draftControls=!browseOnly&&<div className="map-draft-controls" role="group" aria-label="Zapis szkicu">
-    <input aria-label="Nazwa edytowanego szkicu" maxLength={80} placeholder="Nowa trasa" value={draftName} disabled={busy||recorder?.active} onChange={e=>setDraftName(e.target.value)}/>
-    <span role="status" className={dirty?"is-dirty":""}>{dirty?"Niezapisane zmiany":nextStart?savedNotice:saved?"Zapisano":"Nowy szkic"}</span>
-    <button className="map-save-draft" disabled={busy||!dirty||!compatible||points.length<2||recorder?.active} onClick={saveDraft}>{optimization?"Zapisz oryginał":"Zapisz"}</button>
-    <button disabled={busy||(!dirty&&!optimization)||recorder?.active} onClick={()=>loadDraft(draftId)}>Odrzuć zmiany</button>
+  const draftControls=!browseOnly&&<div className="map-draft-controls" role="group" aria-label={t("atlas.draftSave")}>
+    <input aria-label={t("atlas.editedName")} maxLength={80} placeholder={t("atlas.newRoute")} value={draftName} disabled={busy||recorder?.active} onChange={e=>setDraftName(e.target.value)}/>
+    <span role="status" className={dirty?"is-dirty":""}>{dirty?t("atlas.unsaved"):nextStart?savedNotice:saved?t("atlas.saved"):t("atlas.newDraft")}</span>
+    <button className="map-save-draft" disabled={busy||!dirty||!compatible||points.length<2||recorder?.active} onClick={saveDraft}>{optimization?t("atlas.saveOriginal"):t("common.save")}</button>
+    <button disabled={busy||(!dirty&&!optimization)||recorder?.active} onClick={()=>loadDraft(draftId)}>{t("atlas.discard")}</button>
   </div>;
   const mapBody=active&&mapOpen?(
     <div className="atlas-editing-surface">
@@ -375,40 +377,40 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
     {tagEditor}
     <div className={`atlas-map-workspace ${optimization?"atlas-review-lock":""}`}>
 
-    <div className="atlas-toolbar map-integrated-toolbar" role="group" aria-label="Narzędzia mapy">
+    <div className="atlas-toolbar map-integrated-toolbar" role="group" aria-label={t("atlas.mapTools")}>
       <strong>{pointText(center)}</strong>
-      <div className="map-tool-group"><MapTool icon="up" label="Piętro wyżej, minus 1" disabled={center[2]===0} onClick={()=>changeFloor(-1)}/><select aria-label="Piętro atlasu" title="Piętro · Ctrl + scroll" value={center[2]} onChange={e=>{setFollow(false);setCenter([center[0],center[1],Number(e.target.value)]);}}>{floors.map(z=><option key={z} value={z}>{z}</option>)}</select><MapTool icon="down" label="Piętro niżej, plus 1" disabled={center[2]===15} onClick={()=>changeFloor(1)}/></div>
-      <div className="map-tool-group"><MapTool icon="plus" label="Przybliż mapę · Shift + scroll" disabled={radius<=2} onClick={()=>setRadius(r=>Math.max(2,r-(r>32?8:2)))}/><MapTool icon="minus" label="Oddal mapę · Shift + scroll" disabled={radius>=MAX_ATLAS_RADIUS} onClick={()=>setRadius(r=>Math.min(MAX_ATLAS_RADIUS,r+(r>=32?8:2)))}/><MapTool icon="focus" label="Śledź postać" disabled={simPlaying} aria-pressed={follow} onClick={()=>{setManual([...center]);setFollow(!follow);setDraw(false);}}/></div>
-      <div className="map-tool-group"><MapTool icon="pan" label="Przesuwaj mapę · Ctrl + przeciągnij" aria-pressed={panMode} onClick={()=>{setPanMode(!panMode);setDraw(false);}}/><MapTool icon="edit" label="Edytuj waypointy" disabled={browseOnly||simPlaying||recorder?.active||busy} aria-pressed={draw} onClick={()=>{if(!draw)setCenter(center);setDraw(!draw);setPanMode(false);}}/><MapTool icon="undo" label="Cofnij zmianę · Ctrl + Z" disabled={!history.length||simPlaying} onClick={undoEdit}/></div>
-      <MapTool icon="play" label="Szybka symulacja" disabled={busy||!plan||!!optimization||recorder?.active} onClick={simulate}/>
-      <MapMore><button onClick={()=>{setOverview(draw||!overview);setDraw(false);}}>Cała trasa na wszystkich piętrach</button><button onClick={()=>setSidebar(!sidebar)}>{sidebar?"Ukryj szczegóły pola":"Szczegóły pola i przejść"}</button><button disabled={busy||!plan||!!optimization||recorder?.active} onClick={optimizeRoute}>Optymalizuj trasę</button>{lastOptimization&&<button onClick={undoOptimization}>Cofnij optymalizację</button>}<button disabled={browseOnly||recorder?.active} onClick={()=>{setDraw(true);setPanMode(false);setDrawMode(drawMode==="points"?"freehand":"points");}}>{drawMode==="points"?"Rysuj odręcznie":"Rysuj punktami"}</button></MapMore>
+      <div className="map-tool-group"><MapTool icon="up" label={t("atlas.floorUp")} disabled={center[2]===0} onClick={()=>changeFloor(-1)}/><select aria-label={t("atlas.floor")} title={t("atlas.floorTitle")} value={center[2]} onChange={e=>{setFollow(false);setCenter([center[0],center[1],Number(e.target.value)]);}}>{floors.map(z=><option key={z} value={z}>{z}</option>)}</select><MapTool icon="down" label={t("atlas.floorDown")} disabled={center[2]===15} onClick={()=>changeFloor(1)}/></div>
+      <div className="map-tool-group"><MapTool icon="plus" label={t("atlas.zoomIn")} disabled={radius<=2} onClick={()=>setRadius(r=>Math.max(2,r-(r>32?8:2)))}/><MapTool icon="minus" label={t("atlas.zoomOut")} disabled={radius>=MAX_ATLAS_RADIUS} onClick={()=>setRadius(r=>Math.min(MAX_ATLAS_RADIUS,r+(r>=32?8:2)))}/><MapTool icon="focus" label={t("atlas.follow")} disabled={simPlaying} aria-pressed={follow} onClick={()=>{setManual([...center]);setFollow(!follow);setDraw(false);}}/></div>
+      <div className="map-tool-group"><MapTool icon="pan" label={t("atlas.pan")} aria-pressed={panMode} onClick={()=>{setPanMode(!panMode);setDraw(false);}}/><MapTool icon="edit" label={t("atlas.editWaypoints")} disabled={browseOnly||simPlaying||recorder?.active||busy} aria-pressed={draw} onClick={()=>{if(!draw)setCenter(center);setDraw(!draw);setPanMode(false);}}/><MapTool icon="undo" label={t("atlas.undo")} disabled={!history.length||simPlaying} onClick={undoEdit}/></div>
+      <MapTool icon="play" label={t("atlas.quickSim")} disabled={busy||!plan||!!optimization||recorder?.active} onClick={simulate}/>
+      <MapMore><button onClick={()=>{setOverview(draw||!overview);setDraw(false);}}>{t("atlas.wholeRoute")}</button><button onClick={()=>setSidebar(!sidebar)}>{t(sidebar?"atlas.hideDetails":"atlas.showDetails")}</button><button disabled={busy||!plan||!!optimization||recorder?.active} onClick={optimizeRoute}>{t("atlas.optimize")}</button>{lastOptimization&&<button onClick={undoOptimization}>{t("atlas.undoOptimize")}</button>}<button disabled={browseOnly||recorder?.active} onClick={()=>{setDraw(true);setPanMode(false);setDrawMode(drawMode==="points"?"freehand":"points");}}>{t(drawMode==="points"?"atlas.freehand":"atlas.pointsMode")}</button></MapMore>
     </div>
-    {draw&&<p className="atlas-draw-hint">Kliknij przejście, aby przypisać je do trasy. PPM: obiekt / waypoint.</p>}
-    <details className="atlas-shortcuts"><summary>Skróty i legenda</summary><p className="atlas-help">Ctrl + przeciągnij: przesuwanie · Shift + scroll: zoom · Ctrl + scroll: piętro (w górę = −1) · {follow?"śledzenie postaci":"widok swobodny"}</p>
-    {draw && <p className="atlas-help">{drawMode==="points"?"Klikaj puste pole, by dodać punkt na końcu, albo linię, by wstawić go między punktami. Przeciągnij punkt, by go przesunąć; PPM otwiera menu pola z usuwaniem waypointu i oznaczaniem obiektów. Kliknij pierwszy punkt ponownie, aby domknąć pętlę. Schody, dziury i teleporty dodawaj jako przejścia. Kliknij schody i wybierz wyjście; Ctrl + Z cofa zmianę.":"Przeciągnij po mapie, aby narysować szkic."} Planer połączy punkty przez znane pola i przejścia.</p>}
+    {draw&&<p className="atlas-draw-hint">{t("atlas.drawHint")}</p>}
+    <details className="atlas-shortcuts"><summary>{t("atlas.shortcuts")}</summary><p className="atlas-help">{t("atlas.shortcutsHelp")} · {t(follow?"atlas.following":"atlas.freeView")}</p>
+    {draw && <p className="atlas-help">{t(drawMode==="points"?"atlas.pointsHelp":"atlas.freehandHelp")} {t("atlas.plannerJoins")}</p>}
     </details>
-    {!!segments.length && <div className="atlas-segments atlas-stage-toggles" aria-label="Etapy trasy i widoczność"><strong>Etapy</strong>{segments.map((s,i)=><div key={i} className={hiddenSegments.includes(i)?"stage-chip is-hidden":"stage-chip"} style={{borderColor:routeColor(i)}}>
-      <input type="checkbox" aria-label={`Widoczność etapu ${i+1}`} checked={!hiddenSegments.includes(i)} onChange={()=>toggleStage(i)} style={{accentColor:routeColor(i)}}/>
-      <button style={{color:routeColor(i)}} aria-pressed={i===segmentIndex} onClick={()=>showStage(i,s.points)} title={`Pokaż etap ${i+1} · piętro ${s.floor}`}>{i+1} · {s.floor}</button>
-    </div>)}{hiddenSegments.length>0&&<button className="show-all-stages" onClick={()=>setHiddenSegments([])}>Pokaż wszystkie</button>}<label><input type="checkbox" checked={showTrace} onChange={e=>setShowTrace(e.target.checked)}/> Ślad oryginalny</label></div>}
+    {!!segments.length && <div className="atlas-segments atlas-stage-toggles" aria-label={t("atlas.stagesAria")}><strong>{t("atlas.stages")}</strong>{segments.map((s,i)=><div key={i} className={hiddenSegments.includes(i)?"stage-chip is-hidden":"stage-chip"} style={{borderColor:routeColor(i)}}>
+      <input type="checkbox" aria-label={t("atlas.stageVisible",{n:i+1})} checked={!hiddenSegments.includes(i)} onChange={()=>toggleStage(i)} style={{accentColor:routeColor(i)}}/>
+      <button style={{color:routeColor(i)}} aria-pressed={i===segmentIndex} onClick={()=>showStage(i,s.points)} title={t("atlas.showStage",{n:i+1,floor:s.floor})}>{i+1} · {s.floor}</button>
+    </div>)}{hiddenSegments.length>0&&<button className="show-all-stages" onClick={()=>setHiddenSegments([])}>{t("atlas.showAll")}</button>}<label><input type="checkbox" checked={showTrace} onChange={e=>setShowTrace(e.target.checked)}/> {t("atlas.originalTrace")}</label></div>}
     {overview && !draw && <AtlasRouteOverview segments={segments} hidden={hiddenSegments} floor={center[2]} onFloor={route=>{setFollow(false);frameRoute(route,true);}}/>}
     <div className={`atlas-layout ${sidebar?"":"map-expanded"}`}><div className="atlas-map-column">
 
-      {transitionSpot && <div className="atlas-transition-backdrop" onClick={e=>{if(e.target===e.currentTarget&&!busy)setTransitionSpot(null);}}><div className="atlas-transition-picker" role="dialog" aria-modal="true" aria-label={pointDialog?"Wstaw waypoint":"Dodaj przejście między poziomami"} onKeyDown={e=>{if(e.key==='Escape'&&!busy){e.stopPropagation();setTransitionSpot(null);}}}><header><strong>{pointDialog?"Waypoint":"Przejście"} {pointText(transitionSpot)}</strong><button autoFocus disabled={busy} onClick={()=>setTransitionSpot(null)} aria-label="Zamknij wybór przejścia">×</button></header>
+      {transitionSpot && <div className="atlas-transition-backdrop" onClick={e=>{if(e.target===e.currentTarget&&!busy)setTransitionSpot(null);}}><div className="atlas-transition-picker" role="dialog" aria-modal="true" aria-label={t(pointDialog?"atlas.insertWaypoint":"atlas.addLevelTransition")} onKeyDown={e=>{if(e.key==='Escape'&&!busy){e.stopPropagation();setTransitionSpot(null);}}}><header><strong>{t(pointDialog?"atlas.waypoint":"atlas.short.passage")} {pointText(transitionSpot)}</strong><button autoFocus disabled={busy} onClick={()=>setTransitionSpot(null)} aria-label={t("atlas.closePicker")}>×</button></header>
         
-        {!!points.length && <label>Wstaw po waypoincie <select aria-label="Wstaw po waypoincie" value={insertAfter??""} onChange={e=>setInsertAfter(e.target.value===""?undefined:Number(e.target.value))}>
+        {!!points.length && <label>{t("atlas.insertAfter")} <select aria-label={t("atlas.insertAfter")} value={insertAfter??""} onChange={e=>setInsertAfter(e.target.value===""?undefined:Number(e.target.value))}>
           <option value="">Automatycznie · dopasuj odcinek</option>
           {points.map((p,i)=>p[2]===transitionSpot[2] && !links.some(l=>l.from_index===i) && <option key={i} value={i}>#{i+1} · {pointText(p)}{labels[i]?" · "+labels[i]:""}</option>)}
         </select></label>}
-        {pointDialog?null:transitionOptions.length?transitionOptions.map(t=>{const choice=transitionChoice(t);return <button key={t.id} data-transition-choice={t.id} disabled={busy||!!choice.error} title={choice.error||undefined} onClick={()=>useTransition(t)}>{choice.label} · {t.exit[2]<t.entry[2]?"↑":t.exit[2]>t.entry[2]?"↓":"→"} {t.exit[2]}<small>{choice.error||(t.action==="use_with_then_step"?`Odkop, jeśli zasypana, i wejdź · narzędzia ${(t.tool_ids??[t.tool_id]).map(id=>id===3457?"łopata":`AiO (${id})`).join(" / ")}`:transitionActions[t.action as TransitionAction])} · wyjście {pointText(t.exit)}</small></button>;}):<p role="status">Brak przejścia pasującego do zapisanej mapy. Podejdź do obiektu, aby odświeżyć pole. Jeśli wyjście nie było jeszcze obserwowane, przejdź ręcznie i zatrzymaj się na chwilę po drugiej stronie.</p>}
-        {!pointDialog&&!!transitionOptions.length&&<small>Zmienia tylko szkic. Piętro i zoom pozostają bez zmian.</small>}
-        {(pointDialog || transitionCell?.kind==="clear" && transitionCell.navigation?.every(f=>["rope_spot","ladder"].includes(f.kind))) && <button disabled={busy} onClick={()=>insertPoint(transitionSpot)}>{pointDialog?"Wstaw waypoint":"Dodaj zwykły punkt na tym polu"}</button>}
+        {pointDialog?null:transitionOptions.length?transitionOptions.map(edge=>{const choice=transitionChoice(edge);return <button key={edge.id} data-transition-choice={edge.id} disabled={busy||!!choice.error} title={choice.error||undefined} onClick={()=>useTransition(edge)}>{choice.label} · {edge.exit[2]<edge.entry[2]?"↑":edge.exit[2]>edge.entry[2]?"↓":"→"} {edge.exit[2]}<small>{choice.error||(edge.action==="use_with_then_step"?t("atlas.digIn",{tools:(edge.tool_ids??[edge.tool_id]).map(id=>id===3457?t("atlas.shovel"):`AiO (${id})`).join(" / ")}):transitionActions[edge.action as TransitionAction])} · {t("atlas.exitAt",{place:pointText(edge.exit)})}</small></button>;}):<p role="status">{t("atlas.noMatch")}</p>}
+        {!pointDialog&&!!transitionOptions.length&&<small>{t("atlas.draftOnly")}</small>}
+        {(pointDialog || transitionCell?.kind==="clear" && transitionCell.navigation?.every(f=>["rope_spot","ladder"].includes(f.kind))) && <button disabled={busy} onClick={()=>insertPoint(transitionSpot)}>{t(pointDialog?"atlas.insertWaypoint":"atlas.plainPoint")}</button>}
         {error && <p role="alert">{error}</p>}
       </div></div>}
-      {transitionNotice&&<p className="atlas-transition-notice" role="status">{transitionNotice}{transitionExit&&<button onClick={()=>focusIssue(transitionExit)}>Pokaż wyjście · {transitionExit[2]}</button>}<button aria-label="Zamknij informację o przejściu" onClick={()=>setTransitionNotice("")}>×</button></p>}
+      {transitionNotice&&<p className="atlas-transition-notice" role="status">{transitionNotice}{transitionExit&&<button onClick={()=>focusIssue(transitionExit)}>{t("atlas.showExit")+" · "}{transitionExit[2]}</button>}<button aria-label={t("atlas.closeNotice")} onClick={()=>setTransitionNotice("")}>×</button></p>}
       {!!executionIssues.length&&<details open className="atlas-execution-issues"><summary>Wykonanie trasy: {executionIssues.length} {executionIssues.length===1?'miejsce do poprawy':'miejsc do poprawy'}</summary><div>{executionIssues.map(issue=><button key={issue.key} onClick={()=>focusIssue(issue.pos)}>{issue.message}</button>)}</div></details>}
-      {plan && !plan.complete && plan.gaps.map((g,i)=><button key={i} className="atlas-route-gap" onClick={()=>focusGap(g)}>Sprawdź odcinek {g.segment+1} → {g.segment+2} · {pointText(g.from)} → {pointText(g.to)}: {g.reason}</button>)}
-      <svg ref={svg} className={`atlas-canvas ${draw?"drawing":""}`} viewBox={`0 0 ${grid.columns} ${grid.rows}`} preserveAspectRatio="none" aria-label="Zapisana mapa, Ctrl i przeciąganie przesuwa widok" role="img"
+      {plan && !plan.complete && plan.gaps.map((g,i)=><button key={i} className="atlas-route-gap" onClick={()=>focusGap(g)}>{t("atlas.checkLeg",{from:g.segment+1,to:g.segment+2})} · {pointText(g.from)} → {pointText(g.to)}: {g.reason}</button>)}
+      <svg ref={svg} className={`atlas-canvas ${draw?"drawing":""}`} viewBox={`0 0 ${grid.columns} ${grid.rows}`} preserveAspectRatio="none" aria-label={t("atlas.canvasAria")} role="img"
         onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
         onContextMenu={e=>{e.preventDefault();const p=locate(e as unknown as React.PointerEvent);if(!p)return;openTileMenu(p,e.clientX,e.clientY);}}
         onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer}>
@@ -421,36 +423,36 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
             {(plan || recorder?.active?routeLines(s.points,center[2]):lines(s.points,center[2])).map((line,i)=><g key={i}>
               <polyline points={line.map(xy).join(" ")} fill="none" stroke="#13111a" strokeWidth={.18} strokeOpacity={.4}/>
               <polyline points={line.map(xy).join(" ")} fill="none" stroke={color} strokeWidth={s.index===segmentIndex ? .11 : .09} strokeOpacity={.72} strokeDasharray={undefined}/>
-              {directionMarkers(line).map((arrow,j)=><path key={j} d="M-.17-.13 L.04 0 L-.17 .13" transform={`translate(${arrow.x-center[0]+ox+.5} ${arrow.y-center[1]+oy+.5}) rotate(${arrow.angle})`} fill="none" stroke={color} strokeWidth={.065} opacity={.9} pointerEvents="none" aria-label="Kierunek trasy"/>)}
+              {directionMarkers(line).map((arrow,j)=><path key={j} d="M-.17-.13 L.04 0 L-.17 .13" transform={`translate(${arrow.x-center[0]+ox+.5} ${arrow.y-center[1]+oy+.5}) rotate(${arrow.angle})`} fill="none" stroke={color} strokeWidth={.065} opacity={.9} pointerEvents="none" aria-label={t("atlas.direction")}/>)}
             </g>)}
           </g>;
         })}
-        {approaches.map(a=><g key={`approach-${a.index}`} pointerEvents="none" aria-label={`Dojście do T${a.index+1}`}>
+        {approaches.map(a=><g key={`approach-${a.index}`} pointerEvents="none" aria-label={t("atlas.approach",{n:a.index+1})}>
           <line x1={a.from[0]-center[0]+ox+.5} y1={a.from[1]-center[1]+oy+.5} x2={a.to[0]-center[0]+ox+.5} y2={a.to[1]-center[1]+oy+.5} stroke={routeColor(a.stage)} strokeWidth={.09} strokeDasharray=".12 .10" opacity={.8}/>
           <path d="M-.13-.10 L.02 0 L-.13 .10" transform={`translate(${(a.from[0]+a.to[0])/2-center[0]+ox+.5} ${(a.from[1]+a.to[1])/2-center[1]+oy+.5}) rotate(${a.angle})`} stroke={routeColor(a.stage)} strokeWidth={.055} fill="none"/>
-          <title>{`T${a.index+1}: krok ${pointText(a.from)} → ${pointText(a.to)}, potem zmiana piętra`}</title>
+          <title>{t("atlas.approachTitle",{n:a.index+1,from:pointText(a.from),to:pointText(a.to)})}</title>
         </g>)}
         {!draw&&endpoints.map(m=>{const color=routeColor(m.stage),label=m.labels.join(' · '),width=Math.max(.65,label.length*.16+.2);return <g key={`endpoint-${m.pos.join(',')}`} transform={`translate(${m.pos[0]-center[0]+ox+.5} ${m.pos[1]-center[1]+oy+.5})`} pointerEvents="none">
           <circle r={.10} fill={color}/><rect x={-.3} y={.27} width={width} height={.34} rx={.07} fill="#1b1722" fillOpacity={.92} stroke={color} strokeWidth={.025}/>
-          <text x={-.2} y={.52} fontSize={.24} fill={color}>{label}</text><title>{`${label} · ${pointText(m.pos)} · A: początek etapu, B: koniec`}</title>
+          <text x={-.2} y={.52} fontSize={.24} fill={color}>{label}</text><title>{`${label} · ${pointText(m.pos)} · ${t("atlas.endpoints")}`}</title>
         </g>;})}
         {plan && unresolvedLegs(plan).flatMap((leg,i)=>hiddenSegments.includes(pointStages[(plan.gaps[0]?.segment??0)+i])?[]:lines(leg,center[2]).filter(line=>line.length>1).map((line,j)=><polyline key={`unresolved${i}-${j}`} points={line.map(xy).join(" ")} fill="none" stroke="#e2b174" strokeWidth={.1} strokeDasharray=".2 .2" opacity={.65}><title>Odcinek bez wyznaczonej drogi</title></polyline>))}
         {draw && drawMode==="points" && plan?.legs?.filter(leg=>!hiddenSegments.includes(pointStages[leg.from_index])).flatMap(leg=>routeLines(plan.path.slice(leg.start,leg.end+1),center[2]).map((line,i)=><polyline key={`insert${leg.from_index}-${i}`} points={line.map(xy).join(" ")} fill="none" stroke="transparent" strokeWidth={.6} pointerEvents="stroke" style={{cursor:"copy"}}
           onPointerDown={e=>{if(e.button!==0 || e.ctrlKey || panMode || busy)return;const p=locate(e);if(!p || points.some(a=>a.every((n,i)=>n===p[i])))return;e.stopPropagation();if(openTransition(p,leg.from_index))return;if(!links.some(l=>l.from_index===leg.from_index))insertPoint(p,leg.from_index);}}>
-          <title>{`Kliknij, aby wstawić punkt między ${leg.from_index+1} i ${leg.to_index+1}`}</title>
+          <title>{t("atlas.insertBetween",{from:leg.from_index+1,to:leg.to_index+1})}</title>
         </polyline>))}
-        {!draw&&transfers.map((m,i)=>{const ids=m.indices.map(n=>`T${n+1}`).join('/'),direction=m.out?(m.target[2]<m.pos[2]?'↑':m.target[2]>m.pos[2]?'↓':'→'):'z ',label=`${ids} ${direction}${m.target[2]}`;
+        {!draw&&transfers.map((m,i)=>{const ids=m.indices.map(n=>`T${n+1}`).join('/'),direction=m.out?(m.target[2]<m.pos[2]?'↑':m.target[2]>m.pos[2]?'↓':'→'):t("atlas.fromShort")+' ',label=`${ids} ${direction}${m.target[2]}`;
           const row=transfers.slice(0,i).filter(other=>other.pos.join(',')===m.pos.join(',')).length;
-          return <g key={`transfer-${ids}-${m.out}`} role="button" tabIndex={0} aria-label={`${ids}: ${m.out?'wyjście na':'przyjście z'} piętro ${m.target[2]}`} style={{cursor:'pointer'}}
+          return <g key={`transfer-${ids}-${m.out}`} role="button" tabIndex={0} aria-label={t(m.out?"atlas.transferOut":"atlas.transferIn",{ids,floor:m.target[2]})} style={{cursor:'pointer'}}
             onPointerDown={e=>{e.stopPropagation();setFollow(false);setSelected(m.target);setCenter([...m.target]);}} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setFollow(false);setSelected(m.target);setCenter([...m.target]);}}}>
             <rect x={m.pos[0]-center[0]+ox+.1} y={m.pos[1]-center[1]+oy+.1} width={.8} height={.8} rx={.08} fill="none" stroke="#fff0b3" strokeWidth={.025}/>
             <rect x={m.pos[0]-center[0]+ox+.97} y={m.pos[1]-center[1]+oy+.04+row*.34} width={label.length*.15+.18} height={.31} rx={.05} fill="#17131f" fillOpacity={.9}/>
             <text x={m.pos[0]-center[0]+ox+1.05} y={m.pos[1]-center[1]+oy+.27+row*.34} fontSize={.23} fill="#fff0b3">{label}</text>
-            <title>{`${ids}: ${m.out?'wejście':'wyjście'} ${pointText(m.pos)} · ${m.out?'prowadzi do':'przyjście z'} ${pointText(m.target)} · ${transitionActions[m.action as TransitionAction]}. Kliknij, aby pokazać drugą stronę.`}</title>
+            <title>{t(m.out?"atlas.transferOutTitle":"atlas.transferInTitle",{ids,pos:pointText(m.pos),target:pointText(m.target),action:transitionActions[m.action as TransitionAction]})}</title>
           </g>;
         })}
         {draw && points.map((p,i)=>p[2]===center[2] && !hiddenSegments.includes(pointStages[i]) && !(isRouteClosed(points) && i===points.length-1) && <g key={`anchor${i}`}><title>{`${labels[i]||`Waypoint ${i+1}`} · ${pointText(p)}`}</title><circle cx={p[0]-center[0]+ox+(objectPositions.has(p.join(","))?.82:.5)} cy={p[1]-center[1]+oy+(objectPositions.has(p.join(","))?.16:.5)} r={objectPositions.has(p.join(","))?.20:.29} fill="#f3d496" fillOpacity={.78} stroke="#17131f" strokeOpacity={.7} strokeWidth={.045}/><text x={p[0]-center[0]+ox+(objectPositions.has(p.join(","))?.82:.5)} y={p[1]-center[1]+oy+(objectPositions.has(p.join(","))?.23:.60)} textAnchor="middle" fill="#17131f" fontSize={objectPositions.has(p.join(","))?.21:.29}>{i+1}</text></g>)}
-        {dragPreview && anchorDrag.current!==null && <g pointerEvents="none" aria-label="Podgląd przesuwanego waypointu">
+        {dragPreview && anchorDrag.current!==null && <g pointerEvents="none" aria-label={t("atlas.dragPreview")}>
           {[points[anchorDrag.current-1],points[anchorDrag.current+1]].map((p,i)=>p && p[2]===dragPreview[2] &&
             <polyline key={i} points={[p,dragPreview].map(xy).join(" ")} fill="none" stroke="#ffe0a9" strokeWidth={.08} strokeDasharray=".15 .15"/>)}
           <g transform={`translate(${dragPreview[0]-center[0]+ox+.5} ${dragPreview[1]-center[1]+oy+.5})`}>
@@ -463,74 +465,74 @@ export default function AtlasPanel({state,active,onRefresh,initialPosition,initi
       </svg>
     </div><aside className="atlas-plan" hidden={!sidebar}>
       {!embedded&&waypointList}
-      {selected && <details open className="atlas-inspector"><summary>Pole {pointText(selected)}</summary>{selectedCell?<>
-        <small>{selectedCell.live?"Odczyt na żywo":`Ostatnio widziane: ${selectedCell.seen_at?new Date(selectedCell.seen_at*1000).toLocaleString():"czas nieznany"}`}</small>
+      {selected && <details open className="atlas-inspector"><summary>{t("atlas.tile",{place:pointText(selected)})}</summary>{selectedCell?<>
+        <small>{selectedCell.live?t("atlas.liveRead"):`${t("atlas.lastSeen")}: ${selectedCell.seen_at?new Date(selectedCell.seen_at*1000).toLocaleString(locale()):t("atlas.timeUnknown")}`}</small>
         <p>{tileStyles[selectedCell.kind]?.label} · ID {selectedCell.items.map(i=>i.id).join(", ")}</p>
         {selectedCell.live && !!selectedCell.unidentified_monsters && <p style={{color:unidentifiedStyle.color}}>{unidentifiedStyle.label} · {selectedCell.unidentified_monsters}</p>}
         {selectedCell.live && !!selectedCell.occupant_types?.pet && <p style={{color:petStyle.color}}>{petStyle.label} · {petDescription(selectedCell) ?? selectedCell.occupant_types.pet}</p>}
-        <button onClick={e=>{const box=e.currentTarget.getBoundingClientRect();openTileMenu(selected,box.left,box.bottom);}}>Opcje pola</button>
-        {!selectedCell.live && <small>Stan drzwi i przeszkód może już być inny.</small>}
+        <button onClick={e=>{const box=e.currentTarget.getBoundingClientRect();openTileMenu(selected,box.left,box.bottom);}}>{t("atlas.tileOptions")}</button>
+        {!selectedCell.live && <small>{t("atlas.stateMayDiffer")}</small>}
         {selectedCell.web_cut&&<small>{cutWebStyle.label} · ID 189</small>}
         {selectedCell.navigation?.map((feature,i)=><NavigationDetails key={i} feature={feature} historical={!selectedCell.live}/>)}
-        {selectedCell.transitions?.map(t=><button key={t.id} onClick={()=>setCenter(t.exit)}>Wyjście {pointText(t.exit)}<small>{transitionActions[t.action]} · {t.count}×</small></button>)}
-        {!selectedCell.navigation?.length && <small>Brak rozpoznanego przejścia na tym polu.</small>}
+        {selectedCell.transitions?.map(link=><button key={link.id} onClick={()=>setCenter(link.exit)}>{t("atlas.exit",{place:pointText(link.exit)})}<small>{transitionActions[link.action]} · {link.count}×</small></button>)}
+        {!selectedCell.navigation?.length && <small>{t("atlas.noTransitionHere")}</small>}
       </>:<p>Brak zapisanych danych pola w tym widoku.</p>}</details>}
-      {!embedded&&<><h3>Szkice</h3><select aria-label="Zapisany szkic" disabled={busy} value={draftId} onChange={e=>loadDraft(e.target.value)}><option value="">Nowy szkic</option>{drafts.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></>}
-      <details className="v2-options"><summary>Wczytaj wcześniejsze nagranie</summary>
-      <select aria-label="Nagranie do planowania" value={recording} onChange={e=>setRecording(e.target.value)}><option value="">Wybierz zapisane nagranie</option>{state?.cavebot?.recordings.map(r=><option key={r.name} value={r.name}>{r.name}</option>)}</select>
+      {!embedded&&<><h3>{t("atlas.drafts")}</h3><select aria-label={t("atlas.savedDraft")} disabled={busy} value={draftId} onChange={e=>loadDraft(e.target.value)}><option value="">{t("atlas.newDraft")}</option>{drafts.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></>}
+      <details className="v2-options"><summary>{t("atlas.loadRecording")}</summary>
+      <select aria-label={t("atlas.planRecording")} value={recording} onChange={e=>setRecording(e.target.value)}><option value="">{t("atlas.chooseRecording")}</option>{state?.cavebot?.recordings.map(r=><option key={r.name} value={r.name}>{r.name}</option>)}</select>
       <button disabled={!recording || busy || recorder?.active} onClick={()=>propose([],recording)}>Wczytaj nagranie</button>
-      {adaptiveSource&&<button disabled={busy||recorder?.active} onClick={()=>propose([],recording,loop,[],true)}>Wczytaj pełny ślad</button>}
+      {adaptiveSource&&<button disabled={busy||recorder?.active} onClick={()=>propose([],recording,loop,[],true)}>{t("atlas.fullTrace")}</button>}
       </details>
-      {busy && <p role="status">Przygotowuję podgląd…</p>}
+      {busy && <p role="status">{t("atlas.preparing")}</p>}
       {mapWaiting&&<p role="status">Wczytywanie atlasu…</p>}{loadError && <p role="alert" className="text-amber-200">{loadError}</p>}{error && <p role="alert" className="text-red-300">{error}</p>}{atlas?.error && <p role="alert">{atlas.error}</p>}
-      {atlas && <small>Zapamiętane pola: {atlas.total.toLocaleString("pl-PL")}</small>}
-      {plan && <><h3>{plan.complete && !plan.requires_action_review&&!executionIssues.length?"Propozycja gotowa":"Plan do sprawdzenia"}</h3><p>{plan.path.length} pól · {plan.transitions.length} przejść · {plan.points.length} punktów szkicu</p><p className="atlas-help">{plan.warning}</p>
-        {simIndex!==null && <p role="status" className="atlas-simulation">Symulacja · {simIndex+1}/{plan.path.length} · {sim?.current && pointText(sim.current)}<small>{sim?.transition?`${transitionActions[sim.transition.action as TransitionAction]} → ${pointText(sim.transition.exit)}`:sim?.next?"Krok po znanym polu":plan.complete?"Koniec propozycji":"Zatrzymano przed luką w trasie"}</small></p>}
-        <small>Symulacja porusza wyłącznie znacznikiem. Nie sprawdza działania serwera ani dostępności bramki dla postaci.</small>
-        {plan.transitions.map((t,i)=>{
+      {atlas && <small>{t("atlas.remembered",{n:atlas.total.toLocaleString(locale())})}</small>}
+      {plan && <><h3>{plan.complete && !plan.requires_action_review&&!executionIssues.length?t("atlas.proposalReady"):t("atlas.planToCheck")}</h3><p>{t("atlas.planSummary",{tiles:plan.path.length,n:plan.transitions.length,points:plan.points.length})}</p><p className="atlas-help">{plan.warning}</p>
+        {simIndex!==null && <p role="status" className="atlas-simulation">{t("atlas.simulation")} · {simIndex+1}/{plan.path.length} · {sim?.current && pointText(sim.current)}<small>{sim?.transition?`${transitionActions[sim.transition.action as TransitionAction]} → ${pointText(sim.transition.exit)}`:t(sim?.next?"atlas.knownStep":plan.complete?"atlas.proposalEnd":"atlas.stoppedAtGap")}</small></p>}
+        <small>{t("atlas.simNote")}</small>
+        {plan.transitions.map((step,i)=>{
           const link=editableLinks[i],open=replacement?.plan===plan && replacement.row===i;
           return <div key={i} className="atlas-transition-row">
-            <button className="atlas-transition" onClick={()=>focusIssue(t.entry)}>T{i+1} · {pointText(t.entry)} → {pointText(t.exit)}<small>{transitionActions[t.action as TransitionAction]}{t.tool_id ? ` · narzędzie ${t.tool_id}`:""}{t.item_id?` · obiekt ${t.item_id}`:""}</small></button>
-            {link && scope && !optimization && !recorder?.active && <button disabled={busy||!compatible} aria-expanded={open} aria-label={`Zmień przejście T${i+1}`} onClick={()=>setReplacement(open?null:{plan,row:i})}>{open?"Anuluj":"Zmień"}</button>}
-            {open && link && scope && !optimization && !recorder?.active && <TransitionAlternatives current={t} scope={scope} busy={busy} onChoose={edge=>useTransition(edge,link)}/>}
+            <button className="atlas-transition" onClick={()=>focusIssue(step.entry)}>T{i+1} · {pointText(step.entry)} → {pointText(step.exit)}<small>{transitionActions[step.action as TransitionAction]}{step.tool_id ? ` · ${t("atlas.tool",{n:step.tool_id})}`:""}{step.item_id?` · ${t("atlas.object",{n:step.item_id})}`:""}</small></button>
+            {link && scope && !optimization && !recorder?.active && <button disabled={busy||!compatible} aria-expanded={open} aria-label={t("atlas.changeTransition",{n:i+1})} onClick={()=>setReplacement(open?null:{plan,row:i})}>{t(open?"common.cancel":"common.change")}</button>}
+            {open && link && scope && !optimization && !recorder?.active && <TransitionAlternatives current={step} scope={scope} busy={busy} onChoose={edge=>useTransition(edge,link)}/>}
           </div>;
         })}
         {plan.gaps.map((g,i)=><button key={i} className="atlas-gap" onClick={()=>focusGap(g)}>{g.reason}: {pointText(g.from)} → {pointText(g.to)}</button>)}
-        {!!plan.recorded_actions?.length && <details><summary>Czynności z nagrania ({plan.recorded_actions.length})</summary>{plan.recorded_actions.map((a,i)=><p key={i}>{a.type} · ID {a.item_id ?? "?"} · {a.player_pos?.join(", ")} · {a.matched_transition!=null?`Przejście T${a.matched_transition+1} — potwierdzone`:"Do sprawdzenia"}</p>)}</details>}
-        <details><summary>Dane planu</summary><button onClick={async()=>{try{if(!window.dbvMap)throw new Error();await window.dbvMap.copyPlan(JSON.stringify(plan,null,2));setCopied(true);}catch{setError("Nie udało się skopiować planu.");}}}>{copied?"Skopiowano plan JSON":"Kopiuj plan JSON"}</button></details>
+        {!!plan.recorded_actions?.length && <details><summary>{t("atlas.recordedActions",{n:plan.recorded_actions.length})}</summary>{plan.recorded_actions.map((a,i)=><p key={i}>{a.type} · ID {a.item_id ?? "?"} · {a.player_pos?.join(", ")} · {a.matched_transition!=null?t("atlas.matched",{n:a.matched_transition+1}):t("atlas.toCheck")}</p>)}</details>}
+        <details><summary>{t("atlas.planData")}</summary><button onClick={async()=>{try{if(!window.dbvMap)throw new Error();await window.dbvMap.copyPlan(JSON.stringify(plan,null,2));setCopied(true);}catch{setError(t("atlas.copyPlanFailed"));}}}>{t(copied?"atlas.planCopied":"atlas.copyPlan")}</button></details>
       </>}
     </aside></div>
     </div></div>
   ):null;
-  return <section className={`atlas-panel ${embedded?"atlas-embedded":""} ${browseOnly?"atlas-browse":""}`} aria-label="Waypointy i edytor trasy">
+  return <section className={`atlas-panel ${embedded?"atlas-embedded":""} ${browseOnly?"atlas-browse":""}`} aria-label={t("atlas.panelAria")}>
     {tileMenu && menuCell && <TileContextMenu key={`${tileMenu.key}:${menuCell.items.map(i=>i.id).join(',')}`} position={tileMenu} cell={menuCell} scope={scope} editable={canAnnotate} onClose={()=>setTileMenu(null)} onCopy={copyMenuCell}
       waypoints={browseOnly?[]:points.flatMap((p,i)=>p.join(',')===tileMenu.key?[i]:[])}
       onInsertWaypoint={!browseOnly&&menuCell.kind==="clear"?()=>{setPointDialog(true);setInsertAfter(undefined);setTransitionSpot([menuCell.x,menuCell.y,menuCell.z]);}:undefined}
       onRemoveWaypoint={browseOnly?undefined:index=>updatePoints(removeAnchor(points,index))}
       onTransition={!browseOnly&&(menuCell.navigation?.some(f=>f.kind!=="web")||atlas?.route_transitions?.some(t=>t.entry.join(',')===tileMenu.key))?()=>openTransition([menuCell.x,menuCell.y,menuCell.z]):undefined}
       routeLocked={busy||!!optimization||!!recorder?.active||simPlaying}/>}
-    <div className="route-workflow route-icon-toolbar" role="group" aria-label="Narzędzia waypointów"><div className="route-toolbar-heading">{routeEnabledControl??<strong>Waypointy</strong>}{points.length>0&&<small>{points.length} pkt</small>}</div>
-      {embedded&&<MapTool icon="map" label="Otwórz mapę" disabled={recorder?.active} onClick={editHere}/>}
-      <MapTool icon={recorder?.active?"stop":"record"} label={recorder?.active?"Zakończ nagranie":"Nagrywaj waypointy"} className={recorder?.active?"recording-button":"record-button"} disabled={busy||(!recorder?.active&&!canRecord)} onClick={()=>recordToggle()}/>
-      {saveButton}<MapTool icon="play" label="Szybka symulacja" disabled={busy||!plan?.path.length||recorder?.active||!!optimization} onClick={simulate}/>
-      <MapTool icon="loop" label={loop?"Powtarzanie trasy włączone":"Powtarzanie trasy wyłączone"} aria-pressed={loop} disabled={busy||!!optimization||recorder?.active||!!state?.adaptive_cavebot?.preparing||(state?.adaptive_cavebot?.draft_id===draftId&&["running","paused","ready"].includes(state?.adaptive_cavebot?.status??""))} onClick={()=>void toggleLoop()}/>
+    <div className="route-workflow route-icon-toolbar" role="group" aria-label={t("atlas.waypointTools")}><div className="route-toolbar-heading">{routeEnabledControl??<strong>{t("atlas.waypoints")}</strong>}{points.length>0&&<small>{t("atlas.pointsShort",{n:points.length})}</small>}</div>
+      {embedded&&<MapTool icon="map" label={t("atlas.openMap")} disabled={recorder?.active} onClick={editHere}/>}
+      <MapTool icon={recorder?.active?"stop":"record"} label={t(recorder?.active?"atlas.finishRecording":"atlas.recordWaypoints")} className={recorder?.active?"recording-button":"record-button"} disabled={busy||(!recorder?.active&&!canRecord)} onClick={()=>recordToggle()}/>
+      {saveButton}<MapTool icon="play" label={t("atlas.quickSim")} disabled={busy||!plan?.path.length||recorder?.active||!!optimization} onClick={simulate}/>
+      <MapTool icon="loop" label={t(loop?"atlas.loopOn":"atlas.loopOff")} aria-pressed={loop} disabled={busy||!!optimization||recorder?.active||!!state?.adaptive_cavebot?.preparing||(state?.adaptive_cavebot?.draft_id===draftId&&["running","paused","ready"].includes(state?.adaptive_cavebot?.status??""))} onClick={()=>void toggleLoop()}/>
       <MapMore>{moreActions}
-        {!browseOnly&&<button disabled={busy||!scope||!canRecord||dirty||!!optimization||recorder?.active} title={dirty?"Najpierw zapisz lub odrzuć bieżące zmiany szkicu.":"Zaproponuj trasę na podstawie ruchu i przyrostów XP."} onClick={()=>recordToggle("adaptive")}>Nagrywanie adaptacyjne</button>}
-        <button onClick={()=>setRename(!rename)}>Zmień nazwę szkicu</button><button disabled={busy||!plan||recorder?.active||!!optimization} onClick={optimizeRoute}>Optymalizuj trasę</button>{lastOptimization&&<button disabled={busy||!!optimization} onClick={undoOptimization}>Cofnij optymalizację</button>}</MapMore>
+        {!browseOnly&&<button disabled={busy||!scope||!canRecord||dirty||!!optimization||recorder?.active} title={t(dirty?"atlas.saveFirst":"atlas.adaptiveTitle")} onClick={()=>recordToggle("adaptive")}>{t("atlas.adaptiveRecording")}</button>}
+        <button onClick={()=>setRename(!rename)}>{t("atlas.rename")}</button><button disabled={busy||!plan||recorder?.active||!!optimization} onClick={optimizeRoute}>{t("atlas.optimize")}</button>{lastOptimization&&<button disabled={busy||!!optimization} onClick={undoOptimization}>{t("atlas.undoOptimize")}</button>}</MapMore>
     </div>
     {routePicker}
     {embedded&&!mapOpen&&nextStart&&<small role="status" className="v2-inline-note">{savedNotice}</small>}
     {embedded && !mapOpen && tagEditor}
-    {(rename||(!draftId&&(points.length>0||recorder?.active)))&&<div className="route-save-row"><input aria-label="Nazwa szkicu" maxLength={80} placeholder="Nazwa trasy" value={draftName} onChange={e=>{setDraftName(e.target.value);}}/></div>}
+    {(rename||(!draftId&&(points.length>0||recorder?.active)))&&<div className="route-save-row"><input aria-label={t("atlas.draftName")} maxLength={80} placeholder={t("atlas.routeName")} value={draftName} onChange={e=>{setDraftName(e.target.value);}}/></div>}
     {(!embedded||!mapOpen)&&recordingStatus}
     {plan?.adaptive_evidence&&<p className="v2-inline-note">Sektory w trasie: {plan.adaptive_evidence.covered??plan.adaptive_evidence.areas} z {plan.adaptive_evidence.sectors??plan.adaptive_evidence.total_areas??plan.adaptive_evidence.areas} · Pozycje w nagraniu: {plan.adaptive_evidence.total_samples}</p>}
     {!!plan?.adaptive_evidence?.species?.length&&<details><summary>Spotkane potwory</summary>
-      {plan.adaptive_evidence.species.map(m=><p key={m.name}><strong>{m.name}</strong> · spotkania {m.seen} · śmierć celu przy XP {m.target_xp} · pozostałe śmierci przy XP {m.nearby_xp} · ostatni kontakt {pointText(m.last_seen)}</p>)}
+      {plan.adaptive_evidence.species.map(m=><p key={m.name}><strong>{m.name}</strong> · {t("atlas.evidence",{seen:m.seen,target:m.target_xp,nearby:m.nearby_xp,last:pointText(m.last_seen)})}</p>)}
     </details>}
-    {embedded&&progress&&progress.current!==null&&<div className="waypoint-progress" role="status">{state?.adaptive_cavebot?.status==='running'?'Do waypointu':state?.adaptive_cavebot?.status==='complete'?'Zakończono na waypointcie':'Zapamiętany waypoint'} <strong>{progress.current+1}/{progress.total}</strong>{progress.last_reached!==null&&<small> · zaliczony {progress.last_reached+1}</small>}</div>}
+    {embedded&&progress&&progress.current!==null&&<div className="waypoint-progress" role="status">{t(state?.adaptive_cavebot?.status==='running'?"atlas.toWaypoint":state?.adaptive_cavebot?.status==='complete'?"atlas.endedAt":"atlas.rememberedWaypoint")} <strong>{progress.current+1}/{progress.total}</strong>{progress.last_reached!==null&&<small> · {t("atlas.reached",{n:progress.last_reached+1})}</small>}</div>}
     {embedded&&waypointList}
 
     {review}
-    {embedded?mapBody&&createPortal(<div className="route-map-overlay" role="dialog" aria-modal="true" aria-label="Mapa i edycja trasy"><header><strong>{draftName||"Nowa trasa"}</strong><span>{pointText(center)}</span><MapTool icon="layers" label={objectView?"Pokaż trasę":"Obiekty na żywo"} aria-pressed={objectView} onClick={()=>setObjectView(!objectView)}/><MapTool icon="close" label="Zamknij mapę" autoFocus onClick={()=>{setMapOpen(false);setSimPlaying(false);}}/></header>{objectView?<div className="route-object-view"><ObjectMap map={state?.passive_map} preview={state?.adaptive_cavebot?.map_preview}/></div>:mapBody}<footer>{recordingStatus}{review}</footer></div>,document.body):mapBody}
+    {embedded?mapBody&&createPortal(<div className="route-map-overlay" role="dialog" aria-modal="true" aria-label={t("atlas.overlayAria")}><header><strong>{draftName||t("atlas.newRoute")}</strong><span>{pointText(center)}</span><MapTool icon="layers" label={t(objectView?"atlas.showRoute":"atlas.liveObjects")} aria-pressed={objectView} onClick={()=>setObjectView(!objectView)}/><MapTool icon="close" label={t("atlas.closeMap")} autoFocus onClick={()=>{setMapOpen(false);setSimPlaying(false);}}/></header>{objectView?<div className="route-object-view"><ObjectMap map={state?.passive_map} preview={state?.adaptive_cavebot?.map_preview}/></div>:mapBody}<footer>{recordingStatus}{review}</footer></div>,document.body):mapBody}
   </section>;
 }

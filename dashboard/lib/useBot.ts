@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type BotState, fetchState } from "./api";
 import { getDashboardToken } from "./auth";
 import { PanelSession } from "./panelSession";
+import { language, setLanguage, t } from "@/lib/i18n";
+
+const LANGUAGE_KEY = "dbv.language"; // the last language seen, for the first frame before the bot answers
 
 const WS_PORT = 8090;
 const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
@@ -36,8 +39,15 @@ export function useBot(): BotConnection {
   const request = useRef<{controller:AbortController; timeout:ReturnType<typeof setTimeout>} | null>(null);
   const active = useRef(false);
 
+  const [, setShownLanguage] = useState(language());
+
   const accept = useCallback((data: BotState) => {
     const now = performance.now();
+    // Before the new state renders, so the whole panel switches in one frame.
+    if (setLanguage(data.language)) {
+      setShownLanguage(data.language!);
+      try { localStorage.setItem(LANGUAGE_KEY, data.language!); } catch { /* storage off: next start waits for the bot */ }
+    }
     session.current ??= new PanelSession();
     setState(session.current.observe(data, now / 1000));
     received.current = now;
@@ -69,9 +79,15 @@ export function useBot(): BotConnection {
 
   const refresh = useCallback(() => readStatus(true), [readStatus]);
 
+  useEffect(function rememberedLanguage() {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(LANGUAGE_KEY); } catch { /* storage off */ }
+    if (received.current === -Infinity && setLanguage(saved)) setShownLanguage(language());
+  }, []);
+
   useEffect(function connectToBot() {
     if (!window.dbvAuth) {
-      setDashboardError("Otwórz panel Electron ze skrótu DBVictory.");
+      setDashboardError(t("panel.openFromShortcut"));
       return;
     }
     active.current = true;

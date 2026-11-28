@@ -1,12 +1,13 @@
 "use client";
+import { t } from "@/lib/i18n";
 import {useState} from "react";
 import {toggleAction, updateActionConfig, type BotState} from "@/lib/api";
 import {LocalSpellIcon} from "./SpellPicker";
 
 const fields = [
-  {key: "duration", label: "Czas bariery (s)", fallback: 200},
-  {key: "min_before", label: "Min. wyprzedzenie (s)", fallback: 5},
-  {key: "max_before", label: "Maks. wyprzedzenie (s)", fallback: 30},
+  {key: "duration", label: "barrierSpell.duration", fallback: 200},
+  {key: "min_before", label: "barrierSpell.minBefore", fallback: 5},
+  {key: "max_before", label: "barrierSpell.maxBefore", fallback: 30},
 ] as const;
 
 export default function BarrierSpellPanel({state, onRefresh}: {state: BotState | null; onRefresh: () => void}) {
@@ -24,7 +25,7 @@ export default function BarrierSpellPanel({state, onRefresh}: {state: BotState |
     try {
       if (save) {
         const values = fields.map(f => [f.key, draft[f.key] ?? saved(f)] as const);
-        if (values.some(([, value]) => value.trim() === "")) throw new Error("Uzupełnij wszystkie czasy.");
+        if (values.some(([, value]) => value.trim() === "")) throw new Error(t("barrierSpell.fillTimes"));
         await updateActionConfig("barrier_spell", Object.fromEntries(values.map(([key, value]) => [key, Number(value)])));
       } else {
         await toggleAction("barrier_spell", !enabled);
@@ -37,18 +38,18 @@ export default function BarrierSpellPanel({state, onRefresh}: {state: BotState |
       setBusy(false);
     }
   }
-  return <section className="speed-up-panel" aria-label="Automatyczny czar Barrier">
+  return <section className="speed-up-panel" aria-label={t("barrierSpell.aria")}>
     <div className="speed-heading">
       <LocalSpellIcon src="/local-spells/icons/11740.png" size={28}/>
-      <strong>Barrier</strong><span>{enabled ? state?.barrier_spell?.status ?? "Czekam na postać" : "Wyłączony"}</span>
+      <strong>Barrier</strong><span>{enabled ? state?.barrier_spell?.status ?? t("common.waitingForCharacter") : t("barrierSpell.off")}</span>
       <button className={`action-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled}
-        aria-label="Automatyczny czar Barrier" disabled={busy || dirty || !!state?.automation_paused} onClick={() => void change(false)}><span/></button>
+        aria-label={t("barrierSpell.aria")} disabled={busy || dirty || !!state?.automation_paused} onClick={() => void change(false)}><span/></button>
     </div>
-    <div className="speed-times">{fields.map(f => <label key={f.key}>{f.label}
+    <div className="speed-times">{fields.map(f => <label key={f.key}>{t(f.label)}
       <input type="number" min={f.key === "duration" ? 2 : 0} max={3600} step="0.1" value={draft[f.key] ?? saved(f)}
         disabled={busy || enabled} onChange={e => setDraft({...draft, [f.key]: e.target.value})}/>
-    </label>)}{dirty && <button className="secondary-button" disabled={busy || enabled} onClick={() => void change(true)}>Zapisz</button>}</div>
-    <small>Termin odnowienia jest losowany raz na cykl. Po utracie bariery czar jest rzucany ponownie.</small>
+    </label>)}{dirty && <button className="secondary-button" disabled={busy || enabled} onClick={() => void change(true)}>{t("common.save")}</button>}</div>
+    <small>{t("barrierSpell.note")}</small>
     {error && <p role="alert" className="text-red-300">{error}</p>}
   </section>;
 }

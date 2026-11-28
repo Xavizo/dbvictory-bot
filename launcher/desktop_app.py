@@ -18,11 +18,12 @@ import threading
 import time
 from uuid import uuid4
 
+from dbv.language import read_language, write_language
 from dbv.paths import migrate_state_dir, state_dir
 from launcher import desktop_host as host_module
+from launcher import texts
+from launcher.texts import text
 
-WAITING_FOR_LIST = ("Zaloguj się na konto i pozostaw otwartą listę postaci. Gdy będziesz gotowy, kliknij "
-                    "„Połącz z grą”. Nie wchodź jeszcze na postać.")
 ACTIVE_PHASES = ("running", "prepared", "connecting", "starting", "panel", "waiting")
 TITLE = "DBVictory Launcher"
 ICON = Path(__file__).resolve().parent / "desktop.ico"
@@ -45,11 +46,11 @@ def settings_file():
     return Path(base) / "DBVictory Launcher" / "client.json"  # the Electron launcher's file: choices carry over
 
 
-STAGES = {"download": "Pobieranie", "extract": "Rozpakowywanie", "apply": "Instalowanie"}
+STAGES = ("download", "extract", "apply")
 
 
 def _megabytes(n):
-    return f"{n / 1e6:.1f}".replace(".", ",")
+    return texts.number(n / 1e6)
 
 
 def _duration(seconds):
@@ -72,15 +73,15 @@ def describe_progress(report, now):
     done = min(max(done, 0), total)
     elapsed, rate = max(now - started, 0.0), ""
     if stage == "download":
-        what = "łatki" if report.get("kind") == "patch" else "pełnego wydania"
-        label = f"Pobieranie {what}: {_megabytes(done)} z {_megabytes(total)} MB"
+        what = text("progress.patch" if report.get("kind") == "patch" else "progress.full")
+        label = text("progress.downloading", what=what, done=_megabytes(done), total=_megabytes(total))
         if elapsed >= 1 and done:
             speed = done / elapsed
             rate = f"{_megabytes(speed)} MB/s"
             if done < total:
-                rate += f" · ok. {_duration((total - done) / speed)}"
+                rate += " · " + text("progress.eta", time=_duration((total - done) / speed))
     else:
-        label = f"{STAGES[stage]}: {done} z {total} plików"
+        label = text("progress.files", stage=text(f"progress.{stage}"), done=done, total=total)
     step = {"download": 1, "extract": 2, "apply": 3}[stage]
     return {"stage": stage, "step": step, "steps": 3, "percent": round(100 * done / total), "label": label,
             "rate": rate}
@@ -225,9 +226,10 @@ class Launcher:
         self.awaiting_start = False
         self.awaiting_connection = False
         self.recheck_on_close = False
-        self.view = {"phase": "checking", "text": "Sprawdzanie lokalnej kolejki wydań…", "version": "",
+        texts.use(read_language(self.root))
+        self.view = {"phase": "checking", "text": text("state.checkingQueue"), "version": "",
                      "changes": [], "folder": "", "installed": False, "clientOpen": False, "canDefer": False,
-                     "readOnly": read_only, "channel": None}
+                     "readOnly": read_only, "channel": None, "language": texts.language()}
 
     # ── helpers ───────────────────────────────────────────────────────
     def _every(self, seconds, callback):
@@ -275,30 +277,28 @@ class Launcher:
     def show_start(self, info=None):
         info = info or {}
         open_ = info.get("clientOpen", self.view.get("clientOpen"))
-        text = ("Kliknij Start, a następnie na liście postaci wybierz „Połącz z grą”." if open_
-                else "Start otworzy klienta. Na liście postaci wybierz „Połącz z grą”.")
-        self.set("ready", text, **info)
+        self.set("ready", text("state.startOpen" if open_ else "state.startClosed"), **info)
 
     # ── releases ──────────────────────────────────────────────────────
     async def check(self, defer=None, install=None):
-        self.set("checking", "Sprawdzanie lokalnej kolejki wydań…")
+        self.set("checking", text("state.checkingQueue"))
         report = await self.host.check_release(self.root, ["preflight", "--check"])
         github = report.get("source") == "github"
         if (not self.read_only and defer and report["state"] == "available" and defer == report.get("pending")
                 and self.host.valid_sha(defer)):
-            self.set("applying", "Odkładanie wybranego wydania…")
+            self.set("applying", text("state.deferring"))
             report = await self.host.check_release(self.root, ["defer", defer])
         elif (not self.read_only and install and github and report["state"] == "available"
               and install == report.get("pending") and self.host.valid_sha(install)):
-            label = report.get("pending_label") or "nowej wersji"
-            self.set("applying", f"Przygotowywanie aktualizacji do {label}…", version=report.get("installed_label"))
+            label = report.get("pending_label") or text("state.newVersion")
+            self.set("applying", text("state.preparingUpdate", label=label), version=report.get("installed_label"))
             watch = self.every(0.5, lambda: self._show_install_progress(label))
             try:
                 report = await self.host.check_release(self.root, ["install", install])
             finally:
                 watch.cancel()
             if report["state"] == "updated" and report.get("restart"):
-                self.set("applying", "Zainstalowano aktualizację. Ponowne uruchamianie launchera…")
+                self.set("applying", text("state.restarting"))
                 await asyncio.sleep(0.9)
                 # The new launcher must load the new code; start it through the EXE after this process exits.
                 self.quitting = True
@@ -327,12 +327,12 @@ class Launcher:
                  "channel": report.get("channel", self.view.get("channel")) if github else None}
         if report["state"] in ("updated", "current"):
             if self.read_only:
-                self.set("ready", "Sprawdzenie zakończone.", **extra)
+                self.set("ready", text("state.checkDone"), **extra)
             else:
-                self.set("preparing", "Przygotowywanie launchera…", **extra)
+                self.set("preparing", text("state.preparingLauncher"), **extra)
                 await self.prepare_prompt()
         else:
-            queued = (" W kolejce: " + report["pending_label"] + "."
+            queued = (text("state.queued", label=report["pending_label"])
                       if report["state"] == "busy" and report.get("pending_label") else "")
             state = report["state"] if report["state"] in ("busy", "available", "recovery") else "problem"
             self.set(state, report["message"] + queued, **extra)
@@ -340,7 +340,7 @@ class Launcher:
     async def _show_install_progress(self, label):
         progress = read_progress(state_dir(self.root) / "updates" / "github" / "progress.json")
         if progress and self.view["phase"] == "applying" and progress != self.view.get("progress"):
-            self.set("applying", f"Aktualizacja do {label}", progress=progress)
+            self.set("applying", text("state.updatingTo", label=label), progress=progress)
 
     # ── engine session ────────────────────────────────────────────────
     def start_deadline(self, proc):
@@ -349,11 +349,10 @@ class Launcher:
 
         def expire():
             if self.child is proc and self.view["phase"] == "connecting":
-                self.set("waiting", "Silnik nie potwierdził połączenia z klientem.")
+                self.set("waiting", text("state.engineNoConnection"))
                 return
             if self.child is proc and self.view["phase"] in ("starting", "panel"):
-                self.set("waiting", "Główne okno nie potwierdziło gotowości." if self.checking_panel
-                         else "Silnik nie potwierdził gotowości.",
+                self.set("waiting", text("state.panelNotReady" if self.checking_panel else "state.engineNotReady"),
                          failedStep="panel" if self.checking_panel else "engine")
         self.deadline = self.call_later(75, expire)
 
@@ -385,7 +384,7 @@ class Launcher:
                     self.checking_panel = False
                     if self.deadline is not None:
                         self.deadline.cancel()
-                    self.set("running", "Panel gotowy. Stan zalogowania i odczyty postaci zobaczysz w głównym oknie.")
+                    self.set("running", text("state.running"))
                     self.window.hide()
             except Exception:
                 pass  # A temporarily unavailable process listing does not end the session.
@@ -405,10 +404,10 @@ class Launcher:
         elif line == "OCZEKIWANIE NA POŁĄCZENIE" and self.awaiting_connection:
             if self.deadline is not None:
                 self.deadline.cancel()
-            self.set("prepared", WAITING_FOR_LIST)
+            self.set("prepared", text("state.waitingForList"))
         elif line.startswith("GOTOWE"):
             self.checking_panel = True
-            self.set("panel", "Silnik gotowy. Oczekiwanie na główne okno…")
+            self.set("panel", text("state.engineReady"))
         elif line.startswith("BŁĄD:") or line.startswith("Błąd launchera:"):
             self.session_error = line[:440]
 
@@ -429,7 +428,7 @@ class Launcher:
 
         def no_prompt():
             if self.child is proc and not self.awaiting_start:
-                self.session_error = "Proces przygotowania nie zgłosił gotowości."
+                self.session_error = text("state.noPrompt")
                 proc.end()
                 self.set("problem", self.session_error)
         self.deadline = self.call_later(30, no_prompt)
@@ -438,7 +437,7 @@ class Launcher:
         try:
             code = await proc.wait()
         except Exception:
-            self.session_error = "Nie udało się otworzyć procesu sesji."
+            self.session_error = text("state.sessionOpenFailed")
             code = 1
         self.session_closed(proc, code)
 
@@ -460,28 +459,28 @@ class Launcher:
             return
         self.reveal()
         if code == 75:
-            self.set("problem", "Pojawiło się nowsze wydanie. Sprawdź aktualizację ponownie.")
+            self.set("problem", text("state.newerRelease"))
         elif code or self.session_error:
-            self.set("problem", self.session_error or "Proces sesji zakończył się błędem.", failedStep=failed_step)
+            self.set("problem", self.session_error or text("state.sessionFailed"), failedStep=failed_step)
         else:
-            self.set("closed", "Sesja została zamknięta.")
+            self.set("closed", text("state.sessionClosed"))
 
     async def find_or_launch_client(self, proc):
         folder = self.view["folder"]
 
         def current():
             return not self.quitting and proc is self.child and self.awaiting_start
-        self.set("detecting", "Wykrywanie klienta DBVictory…")
+        self.set("detecting", text("state.detectingClient"))
         existing = await self.host.open_window_pid(folder)
         if not current():
             return None
         if existing:
             return existing
-        self.set("detecting", "Uruchamianie klienta DBVictory…", clientOpen=False, windowPid=None)
+        self.set("detecting", text("state.launchingClient"), clientOpen=False, windowPid=None)
         await self.host.open_client(folder)
         if not current():
             return None
-        self.set("detecting", "Oczekiwanie na okno klienta DBVictory…")
+        self.set("detecting", text("state.waitingForWindow"))
         until = time.monotonic() + 60
         while current():
             pid = await self.host.open_window_pid(folder)
@@ -491,8 +490,7 @@ class Launcher:
                 return pid
             remaining = until - time.monotonic()
             if remaining <= 0:
-                raise RuntimeError("Okno DBVictory nie pojawiło się w ciągu minuty. "
-                                   "Po aktualizacji klienta możesz ponowić próbę.")
+                raise RuntimeError(text("state.windowTimeout"))
             await asyncio.sleep(min(0.75, remaining))
         return None
 
@@ -513,29 +511,29 @@ class Launcher:
                   and not self.read_only):
                 # Close the idle session prompt; its close handler checks for a new release.
                 self.recheck_on_close = True
-                self.set("closing", "Sprawdzanie aktualizacji…")
+                self.set("closing", text("state.checkingUpdates"))
                 self.child.end()
             elif name == "start" and self.awaiting_start and phase in ("ready", "clientError") and not self.read_only:
                 await self._start()
             elif name == "connect" and self.awaiting_connection and phase == "prepared" and not self.read_only:
                 await self._connect()
             elif name == "cancel" and self.child and phase == "waiting":
-                self.set("closing", "Zamykanie uruchamianej sesji…")
+                self.set("closing", text("state.closingSession"))
                 self.child.end()
             elif name == "folder" and self.awaiting_start and phase in ("ready", "clientError") and not self.read_only:
                 await self._choose_folder()
         except Exception as error:
             if self.awaiting_start:
-                self.set("clientError", str(error), failedStep="client")
+                self.set("clientError", _said(error), failedStep="client")
             else:
-                self.set("problem", str(error))
+                self.set("problem", _said(error))
         finally:
             self.locked = False
 
     async def set_channel(self, channel):
         """Switch test builds on or off, then look for releases again when nothing else is running."""
         if self.read_only or self.view.get("channel") is None:
-            raise PermissionError("Kanał aktualizacji można zmienić tylko w instalacji z paczki wydania.")
+            raise PermissionError(text("state.channelOnlyPackage"))
         await self.host.set_channel(self.root, channel)
         self.view = {**self.view, "channel": channel}
         self.window.send(self.view)
@@ -563,10 +561,10 @@ class Launcher:
             self.awaiting_connection = True
         except Exception as error:
             if not self.quitting and proc is self.child:
-                self.set("clientError", str(error), failedStep="client")
+                self.set("clientError", _said(error), failedStep="client")
             return
         self.awaiting_start = False
-        self.set("starting", "Uruchamianie silnika…", clientOpen=True, windowPid=self.client_pid)
+        self.set("starting", text("state.startingEngine"), clientOpen=True, windowPid=self.client_pid)
         self.watch_session(proc)
         proc.write("prepare-login\n")
 
@@ -580,19 +578,17 @@ class Launcher:
             if self.quitting or proc is not self.child or not self.awaiting_connection or self.view["phase"] != "prepared":
                 return
             if not pid:
-                raise RuntimeError("Nie znaleziono otwartego okna klienta. Otwórz klienta z wybranego folderu i "
-                                   "ponownie kliknij „Połącz z grą” na liście postaci.")
+                raise RuntimeError(text("state.noClientWindow"))
             self.client_pid = pid
             if pid != confirmed:
-                self.set("prepared", "Klient został ponownie uruchomiony. Na jego liście postaci kliknij jeszcze "
-                         "raz „Połącz z grą”.", windowPid=pid)
+                self.set("prepared", text("state.clientRestarted"), windowPid=pid)
                 return
         except Exception as error:
             if not self.quitting and proc is self.child:
-                self.set("prepared", str(error))
+                self.set("prepared", _said(error))
             return
         self.awaiting_connection = False
-        self.set("connecting", "Łączenie z klientem DBVictory…")
+        self.set("connecting", text("state.connecting"))
         self.start_deadline(proc)
         proc.write("connect\n")
 
@@ -602,7 +598,7 @@ class Launcher:
             return
         info = await self.client_info(folder)
         if not info["installed"]:
-            self.set("ready", "W tym katalogu brakuje dbvStart.exe lub dbvStart_gl.exe.")
+            self.set("ready", text("state.folderMissingClient"))
             return
         self.settings.parent.mkdir(parents=True, exist_ok=True)
         temp = self.settings.with_name(self.settings.name + ".tmp")
@@ -644,7 +640,31 @@ class Launcher:
             self.view = {**self.view, **await self.client_info(folder or "")}
             await self.action("retry")
         except Exception as error:
-            self.set("problem", str(error))
+            self.set("problem", _said(error))
+
+    def set_language(self, language):
+        """Switch the launcher's (and the panel's) words; says the current message again."""
+        if language not in texts.LANGUAGES:
+            raise ValueError(text("error.unknownLanguage"))
+        if not self.read_only:
+            write_language(language, self.root)
+        texts.use(language)
+        said = self.view.get("text")
+        self.view = {**self.view, "language": language,
+                     "text": said.again() if isinstance(said, texts.Text) else said}
+        if isinstance(self.session_error, texts.Text):
+            self.session_error = self.session_error.again()
+        progress = self.view.get("progress")
+        if progress and isinstance(progress.get("label"), texts.Text):
+            self.view["progress"] = {**progress, "label": progress["label"].again()}
+        self.window.send(self.view)
+        return texts.texts(language)
+
+
+def _said(error):
+    """An error's message, still translatable when the launcher raised it from a text key."""
+    message = error.args[0] if len(error.args) == 1 else None
+    return message if isinstance(message, texts.Text) else str(error)
 
 
 def is_page_url(url, page):
@@ -670,7 +690,7 @@ class LauncherApi:
 
     def _trusted(self):
         if not self._launcher.window.current_url_is(self._page):
-            raise PermissionError("Nieznane okno.")
+            raise PermissionError(text("error.unknownWindow"))
 
     def _run(self, coroutine, timeout=None):
         return asyncio.run_coroutine_threadsafe(coroutine, self._launcher.loop).result(timeout)
@@ -685,21 +705,35 @@ class LauncherApi:
     def act(self, name):
         self._trusted()
         if not isinstance(name, str):
-            raise ValueError("Nieznana akcja.")
+            raise ValueError(text("error.unknownAction"))
         self._run(self._launcher.action(name))
         return None
 
     def channel(self, channel):
         self._trusted()
         if channel not in ("stable", "test"):
-            raise ValueError("Nieznany kanał aktualizacji.")
+            raise ValueError(text("error.unknownChannel"))
         return self._run(self._launcher.set_channel(channel), 120)
 
     def mcp(self, operation, target=None):
         self._trusted()
         if self._launcher.read_only and operation != "status":
-            raise PermissionError("Tryb tylko do odczytu.")
+            raise PermissionError(text("error.readOnly"))
         return self._run(self._launcher.host.mcp_clients(self._launcher.root, operation, target), 120)
+
+    def texts(self):
+        """The page's words in the current language, and that language."""
+        self._trusted()
+        return {"language": texts.language(), "texts": texts.texts(texts.language())}
+
+    def language(self, language):
+        self._trusted()
+        if language not in texts.LANGUAGES:
+            raise ValueError(text("error.unknownLanguage"))
+
+        async def switch():
+            return self._launcher.set_language(language)
+        return {"language": language, "texts": self._run(switch(), 10)}
 
 
 class WebviewWindow:

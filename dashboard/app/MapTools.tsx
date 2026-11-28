@@ -1,4 +1,5 @@
 "use client";
+import { t } from "@/lib/i18n";
 import type {ButtonHTMLAttributes,ReactNode} from "react";
 import ActionMenu from "./ActionMenu";
 
@@ -24,5 +25,5 @@ export function MapIcon({name}:{name:ToolIcon}){return <svg aria-hidden="true" f
 export function MapTool({icon,label,className="",...props}:{icon:ToolIcon;label:string}&ButtonHTMLAttributes<HTMLButtonElement>){return <button type="button" {...props} className={`map-tool ${className}`} aria-label={label} title={label}><MapIcon name={icon}/></button>;}
 export function MapMore({children}:{children:ReactNode}) {
   return <ActionMenu className="map-more" triggerClass="map-tool" contentClass="map-more-menu"
-    label="Więcej opcji trasy" title="Więcej opcji trasy" icon={<MapIcon name="more"/>}>{children}</ActionMenu>;
+    label={t("mapTools.more")} title={t("mapTools.more")} icon={<MapIcon name="more"/>}>{children}</ActionMenu>;
 }

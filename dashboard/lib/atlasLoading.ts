@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 /** Retry a read while the atlas initializes after login. Never retry mutations. */
 export async function readAtlasWhenReady<T>(read:()=>Promise<T>,waiting:(value:boolean)=>void,cancelled:()=>boolean,
   wait:()=>Promise<void>=()=>new Promise(resolve=>setTimeout(resolve,1500))):Promise<T|undefined> {
@@ -35,7 +36,7 @@ export function createAtlasRegionReader<T extends Chunk>(read:(center:AtlasPosit
         const key=`${scope}:${q.center.join(',')}:${q.radius}`,cached=cache.get(key);
         if(queries.length>1&&cached&&now()-cached.at<10000){cache.delete(key);cache.set(key,cached);return cached.data;}
         const data=await read(q.center,q.radius);if(cancelled())return;
-        if(scope&&data.scope!==scope)throw Error('Profil atlasu zmienił się podczas odczytu.');
+        if(scope&&data.scope!==scope)throw Error(t('atlas.scopeChanged'));
         if(!data.error){cache.delete(key);cache.set(key,{at:now(),data});while(cache.size>24)cache.delete(cache.keys().next().value!);}
         return data;
       }));
@@ -46,7 +47,7 @@ export function createAtlasRegionReader<T extends Chunk>(read:(center:AtlasPosit
     const cells=new Map<string,T['cells'][number]>(),edges=new Map<string,NonNullable<T['route_transitions']>[number]>();
     const actualScope=results[0].scope;
     for(const data of results){
-      if(data.scope!==actualScope)throw Error('Fragmenty atlasu mają różne profile.');
+      if(data.scope!==actualScope)throw Error(t('atlas.mixedScopes'));
       for(const cell of data.cells){const key=`${cell.x},${cell.y},${cell.z}`,old=cells.get(key);if(!old||(cell.seen_at??0)>=(old.seen_at??0))cells.set(key,cell);}
       for(const edge of data.route_transitions??[])edges.set(JSON.stringify([edge.id,edge.origin,edge.entry,edge.exit]),edge);
     }

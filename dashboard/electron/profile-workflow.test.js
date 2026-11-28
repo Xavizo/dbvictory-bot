@@ -10,7 +10,7 @@ function workspace(){
  const stub=()=>null;
  const imports={react,'@/lib/cavebotModel':model,'@/lib/auth':{authenticatedFetch:async(url,init)=>{const body=init&&JSON.parse(init.body);calls.push({url,body});return {ok:true,json:async()=>url.endsWith('/drafts')?{drafts:routes,scope:'scope'}:{message:{config:combat}}};}}};
  const exported={};
- new Function('exports','require','window','setInterval','clearInterval',compile('../app/CavebotWorkspace.tsx'))(exported,name=>imports[name]??(name==='react/jsx-runtime'?require(name):{default:stub}),{addEventListener(){},removeEventListener(){}},()=>1,()=>{});
+ new Function('exports','require','window','setInterval','clearInterval',compile('../app/CavebotWorkspace.tsx'))(exported,name=>imports[name]??(name==='react/jsx-runtime'||name==='@/lib/i18n'?require(name):{default:stub}),{addEventListener(){},removeEventListener(){}},()=>1,()=>{});
  let state={connected:true,actions:[],combat_profile:combat,profile_selection:{routes:{'scope:two':'bound'}},adaptive_cavebot:{status:'idle'},cavebot:{recording:{active:false}}};
  function render(){cursor=0;return exported.default({state,active:true,onRefresh:async()=>{}});}
  function nodes(root){if(!root||typeof root!=='object')return [];return [root,...Object.values(root.props??{}).flat(Infinity).flatMap(nodes)];}
