@@ -1,5 +1,11 @@
 [
   {
+    "version":"v3.6.2",
+    "changes":[
+      {"title":"Czytelniejsza Automatyka","detail":"Sekcje w Automatyce są domyślnie zwinięte; kliknij nagłówek, żeby je rozwinąć. Nagłówek ⚔ Walka jest wyrównany do lewej jak pozostałe, a ikony (?) zostały tylko tam, gdzie ustawienie naprawdę wymaga wyjaśnienia.","en":{"title":"A tidier Automation tab","detail":"Automation sections start collapsed; click a heading to open one. The ⚔ Combat heading is left-aligned like the others, and (?) icons remain only where a setting really needs explaining."}}
+    ]
+  },
+  {
     "version":"v3.4.0",
     "changes":[
       {"title":"Polski albo angielski","detail":"Launcher i panel działają po polsku albo po angielsku. Język zmienisz przyciskami PL / EN obok ⚙, a panel podąża za tym wyborem.","en":{"title":"Polish or English","detail":"The launcher and the panel speak Polish or English. Switch with the PL / EN buttons next to ⚙, and the panel follows."}},

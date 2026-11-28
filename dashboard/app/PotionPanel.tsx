@@ -2,6 +2,7 @@
 
 import { t } from "@/lib/i18n";
 import Help from "@/app/Help";
+import {useFold} from "@/app/Fold";
 import { useEffect, useState } from "react";
 import { toggleAction, updateActionConfig, setPotionDiagnostics, type ActionInfo, type PotionDiagnosticState } from "@/lib/api";
 
@@ -20,6 +21,7 @@ export default function PotionPanel({action,diagnostics,paused,onRefresh}:{
   action:ActionInfo;diagnostics?:PotionDiagnosticState;paused:boolean;onRefresh:()=>void;
 }) {
   const [rowLimit,setRowLimit]=useState(100);
+  const fold=useFold(t("potions.title"));
   const [config,setConfig]=useState<Config>(()=>readConfig(action.config));
   const [error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
   const saved=JSON.stringify(action.config ?? {});
@@ -40,12 +42,13 @@ export default function PotionPanel({action,diagnostics,paused,onRefresh}:{
   }
   const unknown=config.rules.some(r=>r.enabled && Number(r.cooldown ?? config.shared_cooldown)<=0);
   return <section className="potion-panel healing-panel">
-    <div className="potion-panel-header"><div><h2>{t("potions.title")}<Help text={t("potions.order")}/></h2><p>{t(action.running ? "potions.running" : action.enabled ? "potions.waiting" : "page.filterOff")}{dirty && " · "+t("potions.unsaved")}</p></div>
+    <div className="potion-panel-header fold-heading" onClick={fold.onHeading}>{fold.arrow}<div className="mr-auto"><h2>{t("potions.title")}<Help text={t("potions.order")}/></h2><p>{t(action.running ? "potions.running" : action.enabled ? "potions.waiting" : "page.filterOff")}{dirty && " · "+t("potions.unsaved")}</p></div>
       <button className={`potion-toggle ${action.enabled ? "is-enabled" : ""}`}
         disabled={busy || (!action.enabled && (paused || unknown || !config.rules.some(r=>r.enabled)))}
         onClick={()=>perform(async()=>{if(!action.enabled) await updateActionConfig("auto_potions",config);await toggleAction("auto_potions",!action.enabled);},t(action.enabled ? "potions.turnedOff" : "potions.turnedOn"))}>
         {t(action.enabled ? "potions.turnOff" : "potions.turnOn")}</button>
     </div>
+    <div className="fold-body" hidden={!fold.open}>
     <fieldset disabled={busy} className="rule-list">
       {config.rules.map((r,i)=><article key={r.id} className={`healing-rule ${r.enabled ? "" : "rule-disabled"}`}>
         <div className="rule-main">
@@ -75,20 +78,21 @@ export default function PotionPanel({action,diagnostics,paused,onRefresh}:{
       {!config.rules.length && <p className="rule-empty">{t("potions.empty")}</p>}
     </fieldset>
     <div className="rule-footer"><div className="flex gap-2"><button className="secondary-button" disabled={busy || config.rules.length>=32} onClick={()=>add()}>+ {t("potions.addRule")}</button><button className="secondary-button" disabled={busy || config.rules.length>=32} onClick={()=>add(8465)}>+ Senzu</button></div>
-      <label>{t("potions.shared")}<Help text={t("potions.cooldownNote")}/> <input aria-label={t("potions.shared")} type="number" min={0} max={3600} step={.1} disabled={busy} value={config.shared_cooldown} onChange={e=>{setConfig(c=>({...c,shared_cooldown:e.target.value==="" ? "" : Number(e.target.value)}));setNotice("");}}/> s</label>
+      <label>{t("potions.shared")} <input aria-label={t("potions.shared")} type="number" min={0} max={3600} step={.1} disabled={busy} value={config.shared_cooldown} onChange={e=>{setConfig(c=>({...c,shared_cooldown:e.target.value==="" ? "" : Number(e.target.value)}));setNotice("");}}/> s</label>
       <button disabled={busy || !dirty} className="primary-button" onClick={()=>perform(()=>updateActionConfig("auto_potions",config),t("potions.saved"))}>{t("potions.save")}</button>
     </div>
-    {unknown && <p className="potion-notice">{t("potions.unknownCooldown")}</p>}
-    {error && <p role="alert" className="text-sm text-red-300">{error}</p>}{notice && <p role="status" className="text-xs text-emerald-300">{notice}</p>}
     <details className="border-t border-gray-700 pt-3" open={diagnostics?.active || undefined}>
       <summary>{t("potions.measure")}<Help text={t("potions.measureNote")}/> {diagnostics?.active ? `· ${diagnostics.remaining_seconds ?? 0} s` : ""}</summary>
       <div className="flex gap-3 items-center flex-wrap"><button className="secondary-button" disabled={busy} onClick={()=>perform(()=>setPotionDiagnostics(!diagnostics?.active),t(diagnostics?.active ? "potions.measureStopped" : "potions.measureStarted"))}>{t(diagnostics?.active ? "potions.stopMeasure" : "potions.startMeasure")}</button>
         <label className="text-xs">{t("potions.rows")} <select aria-label={t("potions.rowsAria")} value={rowLimit} onChange={e=>setRowLimit(Number(e.target.value))}>{[50,100,250,500].map(n=><option key={n} value={n}>{n}</option>)}</select></label>
-        <span className="text-xs text-gray-400">{t("potions.attempts",{n:diagnostics?.rows.length ?? 0,max:diagnostics?.capacity ?? 500})}<Help text={t("potions.measureFooter")}/></span></div>
+        <span className="text-xs text-gray-400">{t("potions.attempts",{n:diagnostics?.rows.length ?? 0,max:diagnostics?.capacity ?? 500})}</span></div>
       <div className="overflow-auto mt-3 max-h-96"><table className="w-full text-xs text-left"><thead className="sticky top-0 bg-[#25232d]"><tr><th>{t("itemId.time")}</th><th>{t("potions.col.item")}</th><th>{t("potions.col.result")}</th><th>{t("potions.col.gap")}</th><th>{t("potions.col.count")}</th><th>{t("potions.col.age")}</th><th>Δ HP / Ki</th></tr></thead>
         <tbody>{diagnostics?.rows.slice(-rowLimit).reverse().map((row,i)=><tr key={row.id ?? i} className="border-t border-gray-700 align-top"><td className="py-2 whitespace-nowrap">{row.time}</td><td className="py-2">{items.find(x=>x.id===row.item_id)?.name ?? row.item_id}<small className="block text-gray-400">{t(row.source==="auto" ? "potions.byRule" : "potions.byHand")} · {row.mode}</small></td>
           <td className="py-2 max-w-72"><span className={row.status==="rejected" ? "text-red-300" : row.status==="consumption_observed" ? "text-emerald-300" : "text-amber-200"}>{t(`potions.status.${(["pending","unconfirmed","ambiguous","server_reported","consumption_observed","rejected"] as const).find(s=>s===row.status) ?? "unconfirmed"}`)}</span>{row.response && <small className="block text-gray-400">{row.response}</small>}</td>
           <td className="py-2">{row.gap_seconds ?? "—"} s</td><td className="py-2">{row.reported_count ?? "—"}{row.stock_delta!=null && <small className="block">Δ {row.stock_delta}</small>}</td><td className="py-2">{row.stats_age_ms==null ? "—" : `${row.stats_age_ms} ms`}</td><td className="py-2">{row.hp_delta} / {row.ki_delta}</td></tr>)}</tbody></table></div>
     </details>
+    </div>
+    {unknown && <p className="potion-notice">{t("potions.unknownCooldown")}</p>}
+    {error && <p role="alert" className="text-sm text-red-300">{error}</p>}{notice && <p role="status" className="text-xs text-emerald-300">{notice}</p>}
   </section>;
 }

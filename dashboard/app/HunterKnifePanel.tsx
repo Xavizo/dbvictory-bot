@@ -66,7 +66,7 @@ export default function HunterKnifePanel({ state, onRefresh }: {
   const issueText = issue ? `${t(issue.action === "skin" ? "knife.skin" : "knife.move")} · (${issue.position.join(", ")}) · ${issue.reason}`
     + (issue.spell ? ` · ${t("knife.sinceSpell", { ms: issue.since_spell_ms ?? "—", spell: issue.spell })}` : "") : "";
   return <section className="barrier-band-panel knife-panel" aria-label="Hunter Knife">
-    <div><strong>Hunter Knife <HelpTip text={t("knife.help")}/></strong>
+    <div><strong>Hunter Knife</strong>
       {info && <small>{t("knife.stats", { done: info.processed, loot: info.personal_loot })} {details && <HelpTip text={details} label={t("knife.details")}/>}
         {issue && <> · <span className="knife-issue">{t("knife.lastIssue")}</span> <HelpTip text={issueText} label={t("knife.lastIssue")}/></>}</small>}
     </div>
