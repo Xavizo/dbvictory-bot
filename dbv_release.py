@@ -12,7 +12,7 @@ import stat
 from uuid import uuid4
 
 from dbv_revision import VERSION_PATTERN, git_executable, git_output as _git, revision_label, version_for
-from dbv.paths import INSTALL_ROOT
+from dbv.paths import INSTALL_ROOT, state_dir
 
 
 def _path(path):
@@ -57,7 +57,7 @@ def _check_supported(changes):
         key = path.casefold()
         name = Path(key).name
         if (key in {".env", "bot_settings.json"} or key.startswith((
-                ".codex/", "local_data/", ".venv/", "venv/", "dashboard/public/local-spells/",
+                ".codex/", ".dbvictory/", "local_data/", ".venv/", "venv/", "dashboard/public/local-spells/",
                 "dashboard/.next", "dashboard/node_modules/", "recordings/atlas_", "recordings/exp_"))):
             raise ValueError(f"Wydanie próbuje zmienić lokalne dane instalacji ({path}).")
         if (key.startswith("dll/") and not name.startswith("test") and not name.endswith(".md")
@@ -69,7 +69,7 @@ def _check_supported(changes):
 
 
 def _lock_path(root):
-    return _local_child(root / ".codex", "standalone.lock")
+    return _local_child(_local_child(root, state_dir(root).name), "standalone.lock")
 
 
 @contextmanager
@@ -104,7 +104,7 @@ def _ports_busy():
 
 
 def _updates(root):
-    return _local_child(_local_child(root, ".codex"), "updates")
+    return _local_child(_local_child(root, state_dir(root).name), "updates")
 
 
 def _write_json(path, data):

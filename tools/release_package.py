@@ -60,7 +60,7 @@ def notes(stage, version):
     if entry:
         lines += [f"- **{c['title']}** {c['detail']}" for c in entry.get("changes", [])]
     lines += ["", "Pobierz `DBVictory-Bot-" + version + ".zip`, rozpakuj do krótkiej ścieżki (np. `C:\\DBVictory-Bot`) "
-              "i uruchom `DBVictory.exe`. Instrukcja: README → Instalacja dla graczy."]
+              "i uruchom `DBVictory.exe`. Instrukcja: README.pl.md → Pierwsze kroki."]
     return "\n".join(lines) + "\n"
 
 

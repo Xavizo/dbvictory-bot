@@ -15,7 +15,7 @@ def test_desktop_handoff_holds_lock_and_uses_reviewed_version(tmp_path, monkeypa
     reviewed = "a" * 40
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git/HEAD").write_text("b" * 40 if changed == "revision" else reviewed)
-    feed = tmp_path / ".codex/updates"
+    feed = tmp_path / ".dbvictory/updates"
     feed.mkdir(parents=True)
     if changed.endswith(".json"):
         (feed / changed).touch()
@@ -23,11 +23,11 @@ def test_desktop_handoff_holds_lock_and_uses_reviewed_version(tmp_path, monkeypa
 
     async def interactive(args, env, *, on_confirm):
         assert args.start is False
-        with launcher_lock(tmp_path / ".codex/standalone.lock"):
+        with launcher_lock(tmp_path / ".dbvictory/standalone.lock"):
             pass  # Idle launcher must not block a newer release.
         on_confirm()
         assert changed == "none"
-        with pytest.raises(RuntimeError), launcher_lock(tmp_path / ".codex/standalone.lock"):
+        with pytest.raises(RuntimeError), launcher_lock(tmp_path / ".dbvictory/standalone.lock"):
             pytest.fail("another session acquired the installation lock")
         return 0
 
@@ -77,7 +77,7 @@ def test_cold_start_initializes_the_engine_once_before_manual_connection(tmp_pat
         assert calls==before
         if last_line:
             yield last_line
-    (tmp_path/'.codex').mkdir()
+    (tmp_path/'.dbvictory').mkdir()
     monkeypatch.setattr(launcher,'ROOT',tmp_path)
     monkeypatch.setattr(mcp.client.stdio,'stdio_client',transport)
     monkeypatch.setattr(mcp,'ClientSession',Session)

@@ -1,4 +1,5 @@
 "use client";
+import { t } from "@/lib/i18n";
 import {useEffect,useState} from "react";
 import {authenticatedFetch} from "./auth";
 import {mergeWorldZones, type WorldZones} from "./atlasWildlife";
@@ -23,7 +24,7 @@ export function useWorldZones(active:boolean) {
           current=next;
           setError("");
         }
-      }catch{if(!ctl.signal.aborted)setError("Nie udało się odświeżyć stref.");}
+      }catch{if(!ctl.signal.aborted)setError(t("zones.refreshFailed"));}
       finally{loading=false;}
     }
     void refresh();

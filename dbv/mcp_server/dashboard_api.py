@@ -6,6 +6,7 @@ the WebSocket server runs on that loop and pushes the whole state to every
 authenticated panel ten times a second.
 """
 import asyncio
+import itertools
 import json
 import logging
 import os
@@ -21,12 +22,13 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import uuid4
 
 from dbv import paths
+from dbv.language import LanguageWatch
 from dbv.brain.cavebot.cavebot_combat import validate_combat
 from dbv.brain.navigation.map_atlas import database_busy
 from dbv.brain.state.session_observations import observation_family_status
 from dbv.mcp_server.dashboard_security import DASHBOARD_ORIGIN, allowed_origin, valid_token
 
-log = logging.getLogger("dashboard_api")
+log = logging.getLogger(name="dashboard_api")
 
 API_PORT, WS_PORT = 8089, 8090
 WS_PUSH_INTERVAL = 0.1     # seconds between state pushes
@@ -37,7 +39,9 @@ ACTIONS_DIR = paths.ACTIONS_DIR
 # Set by start_api(): the MCP server's loop and its BotState.
 _main_loop = None
 _state = None
+_language = LanguageWatch(paths.INSTALL_ROOT)  # the launcher's choice; the panel follows it
 _started = False
+_background_tasks = set()   # tasks started here, referenced until the process ends
 
 
 def _submit(method, *args):
@@ -49,19 +53,30 @@ def _action_name_ok(name):
     return all(c.isalnum() or c == "_" for c in name)
 
 
-class _Handler(BaseHTTPRequestHandler):
+_COMMON_HEADERS = (("Vary", "Origin"), ("Cache-Control", "no-store"),
+                   ("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS"),
+                   ("Access-Control-Allow-Headers", "Content-Type, Authorization"))
+NOT_STARTED = {"error": "bot not started"}
+
+
+class _Handler(BaseHTTPRequestHandler):  # one instance per request, on the server's thread
     """Routes /api/... requests. Every request is checked by _authorize first."""
 
-    def log_message(self, fmt, *args):
-        log.debug(fmt, *args)  # never to stderr's access log format
+    def log_message(self, format, *args):
+        log.debug(format, *args)  # never to stderr's access log format
 
-    def _cors_headers(self):
+    def _cors_headers(self) -> None:
         if allowed_origin(self.headers.get("Origin")):
             self.send_header("Access-Control-Allow-Origin", DASHBOARD_ORIGIN)
-        self.send_header("Vary", "Origin")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        for header, value in _COMMON_HEADERS:
+            self.send_header(header, value)
+
+    def _not_started(self, need_state=False):
+        """Answer 503 and return True when the bot (or its state) is not there yet."""
+        if _main_loop is None or (need_state and _state is None):
+            self._json_response(NOT_STARTED, 503)
+            return True
+        return False
 
     def _authorize(self, preflight=False):
         # Validate Host as well as Origin to reject DNS-rebinding requests.
@@ -81,17 +96,17 @@ class _Handler(BaseHTTPRequestHandler):
         return True
 
 
-    def do_OPTIONS(self):
+    def do_OPTIONS(self) -> None:
         if self._authorize(preflight=True):
             self._send(204, b"", None)
 
     def _send(self, status, body: bytes, content_type="application/json"):
-        self.send_response(status)
+        self.send_response(code=status)
         if content_type:
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-        self._cors_headers()
-        self.end_headers()
+        self._cors_headers()   # also on errors, so the panel can read them
+        self.end_headers()     # headers are flushed here, the body follows
         if body:
             self.wfile.write(body)
 
@@ -116,17 +131,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._drain_rejected_body()
         self._send(status, json.dumps(data).encode())
 
-    def _read_body(self) -> dict:
+    def _read_body(self):
         """The request's JSON body; {} when it has none."""
         size = int(self.headers.get("Content-Length", 0))
-        if not size:
-            return {}
+        if size == 0:
+            return dict()
         raw = self.rfile.read(size)
         self._body_read = True
         return json.loads(raw)
 
     # ── routes ──────────────────────────────────────────────────────
-    def do_GET(self):
+    def do_GET(self) -> None:
         if not self._authorize():
             return
         if self.path == "/api/profiles":
@@ -204,7 +219,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_route_export()
         return self._named_route("GET")
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         if not self._authorize():
             return
         if self.path == "/api/movement-history":
@@ -303,13 +318,13 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_route_import()
         return self._named_route("POST")
 
-    def do_DELETE(self):
+    def do_DELETE(self) -> None:
         if self._authorize():
             self._named_route("DELETE")
 
     def _named_route(self, method):
         """Routes that carry a name: /api/actions/<name>/..., /api/recordings/<name>/..."""
-        parts = self.path.strip("/").split("/")
+        parts = self.path.strip("/").split(sep="/")
         kind, rest = (parts[1], parts[2:]) if len(parts) >= 3 and parts[0] == "api" else (None, [])
         if kind == "actions" and len(rest) == (2 if method == "POST" else 1) and method != "GET":
             name = rest[0]
@@ -337,8 +352,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _run_control(self, method, *args):
         """Answer with the result of an MCP server command: ValueError is the caller's fault (400)."""
-        if _main_loop is None or _state is None:
-            return self._json_response({"error": "bot not started"}, 503)
+        if self._not_started(need_state=True):
+            return None
         future = _submit(method, *args)
         try:
             self._json_response({"ok": True, "message": future.result(timeout=CALL_TIMEOUT)})
@@ -348,8 +363,8 @@ class _Handler(BaseHTTPRequestHandler):
             future.cancel()
             self._json_response({"error": str(exc)}, 500)
 
-    def _handle_get_state(self):
-        self._send(200, _build_state_json().encode())
+    def _handle_get_state(self) -> None:
+        self._send(200, _build_state_json().encode("utf-8"))
 
     def _hunt_areas(self, save=False, route=False, discovered=False, zones=False):
         import sqlite3
@@ -557,7 +572,7 @@ class _Handler(BaseHTTPRequestHandler):
                     optimize = True
                 points,original,links,adjusted=atlas.recording_route(recording,observations,optimize)
             else:points=body.get("points")
-            loop=body.get("loop",False)
+            loop=body.get("loop") if "loop" in body else False
             if type(loop)is not bool:raise ValueError("Nieprawidłowa opcja pętli.")
             result=atlas.plan(points,observations,original,loop=loop,links=links)
             if hunt is not None:
@@ -622,12 +637,12 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json_response({"error":"Nie udało się przygotować planu."},500)
 
     # ── actions ─────────────────────────────────────────────────────
-    def _handle_toggle(self, name: str):
+    def _handle_toggle(self, name):
         enabled = self._read_body().get("enabled", True)
         log.info("Toggle request: %s -> enabled=%s", name, enabled)
-        if _main_loop is None:
-            log.warning("Toggle failed: _main_loop is None")
-            return self._json_response({"error": "bot not started"}, 503)
+        if self._not_started():
+            log.warning("Toggle failed: the bot is not started")
+            return None
         try:
             result = _submit("_async_toggle_action", name, enabled).result(timeout=CALL_TIMEOUT)
         except Exception as exc:
@@ -636,28 +651,32 @@ class _Handler(BaseHTTPRequestHandler):
         log.info("Toggle result: %s", result)
         if result.startswith("Error:"):
             return self._json_response({"error": result}, 409)
-        self._json_response({"ok": True, "message": result})
+        self._ok(result)
 
-    def _handle_restart(self, name: str):
-        if _main_loop is None:
-            return self._json_response({"error": "bot not started"}, 503)
+    def _ok(self, message):
+        """Answer 200 with a human-readable message."""
+        self._json_response(dict(ok=True, message=message))
+
+    def _handle_restart(self, name):
+        if self._not_started():
+            return None
         try:
             message = _submit("_async_restart_action", name).result(timeout=CALL_TIMEOUT)
         except Exception as exc:
             return self._json_response({"error": str(exc)}, 500)
         self._json_response({"ok": True, "message": message})
 
-    def _handle_action_config(self, name: str):
+    def _handle_action_config(self, name):
         changes = self._read_body()
         if not changes:
             return self._json_response({"error": "empty body"}, 400)
         return self._run_control("_async_update_action_config", name, changes)
 
-    def _handle_delete(self, name: str):
+    def _handle_delete(self, name):
         script = ACTIONS_DIR / f"{name}.py"
         if not script.exists():
             return self._json_response({"error": f"action '{name}' not found"}, 404)
-        if _main_loop is not None:
+        if _main_loop:
             try:  # stop it first; the file goes either way
                 _submit("_async_toggle_action", name, False).result(timeout=CALL_TIMEOUT)
             except Exception:
@@ -667,25 +686,25 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             return self._json_response({"error": str(exc)}, 500)
         log.info("Deleted action: %s", name)
-        self._json_response({"ok": True, "message": f"Deleted {name}"})
+        self._ok(f"Deleted {name}")
 
     # ── route recording ─────────────────────────────────────────────
-    def _handle_cavebot_record_start(self):
-        body = self._read_body()
-        name = body.get("name", "").strip()
-        if not name:
+    def _handle_cavebot_record_start(self) -> None:
+        request = self._read_body()
+        name = request.get("name", "").strip()
+        if name == "":
             return self._json_response({"error": "name is required"}, 400)
-        if _main_loop is None or _state is None:
-            return self._json_response({"error": "bot not started"}, 503)
+        if self._not_started(need_state=True):
+            return None
         from dbv.brain.cavebot import cavebot
-        refusal = cavebot.start_recording(_state, name, mode=body.get("mode", "manual"))
+        refusal = cavebot.start_recording(_state, name, mode=request.get("mode", "manual"))
         if refusal:
             return self._json_response({"error": refusal}, 400)
-        self._json_response({"ok": True, "message": f"Recording '{name}' started"})
+        self._ok(f"Recording '{name}' started")
 
-    def _handle_cavebot_record_stop(self):
-        if _state is None:
-            return self._json_response({"error": "bot not started"}, 503)
+    def _handle_cavebot_record_stop(self) -> None:
+        if not _state:
+            return self._json_response(NOT_STARTED, 503)
         discard = self._read_body().get("discard", False)
         from dbv.brain.cavebot import cavebot
         saved = cavebot.stop_recording(_state, discard=discard)
@@ -699,19 +718,23 @@ class _Handler(BaseHTTPRequestHandler):
         from dbv.brain.cavebot import cavebot
         found = cavebot.load_recording(name)
         if found is None:
-            self._json_response({"error": f"Recording '{name}' not found"}, 404)
+            self._recording_missing(name)
         return found
 
-    def _handle_list_recordings(self):
+    def _recording_missing(self, name):
+        message = f"Recording '{name}' not found"
+        self._json_response({"error": message}, 404)
+
+    def _handle_list_recordings(self) -> None:
         from dbv.brain.cavebot import cavebot
         self._json_response({"recordings": cavebot.list_recordings()})
 
-    def _handle_get_recording(self, name: str):
+    def _handle_get_recording(self, name):
         found = self._recording_or_404(name)
         if found is not None:
             self._json_response(found)
 
-    def _handle_get_actions_map(self, name: str):
+    def _handle_get_actions_map(self, name):
         from dbv.brain.cavebot import cavebot
         found = self._recording_or_404(name)
         if found is None:
@@ -720,21 +743,21 @@ class _Handler(BaseHTTPRequestHandler):
         self._json_response({"name": name, "actions_map": nodes,
                              "text_preview": cavebot.actions_map_to_text(nodes), "node_count": len(nodes)})
 
-    def _handle_remove_waypoints(self, name: str):
+    def _handle_remove_waypoints(self, name):
         indices = self._read_body().get("indices", [])
-        if not isinstance(indices, list):
+        if not isinstance(indices, list):  # a JSON array of waypoint numbers
             return self._json_response({"error": "indices must be a list"}, 400)
         from dbv.brain.cavebot import cavebot
         updated = cavebot.remove_waypoints(name, indices)
         if updated is None:
-            return self._json_response({"error": f"Recording '{name}' not found"}, 404)
+            return self._recording_missing(name)
         self._json_response({"waypoints": updated.get("waypoints", [])})
 
-    def _handle_delete_recording(self, name: str):
+    def _handle_delete_recording(self, name):
         from dbv.brain.cavebot import cavebot
         if not cavebot.delete_recording(name):
-            return self._json_response({"error": f"Recording '{name}' not found"}, 404)
-        self._json_response({"ok": True, "message": f"Deleted '{name}'"})
+            return self._recording_missing(name)
+        self._ok(f"Deleted '{name}'")
 
 
 # ── the state pushed to the panel ───────────────────────────────────
@@ -772,13 +795,10 @@ def _action_catalog(directory, internal):
 
 
 def _knife_corpse_config(st, cfg):
-    from dbv.brain.combat.hunter_knife import DEFAULT_MONSTERS, effective_config
-    current = effective_config(cfg)
-    suggestions = getattr(st, "knife_suggestions", None)
-    return {"monsters": current["monsters"],
-            "default_monsters": [{"name": m["name"], "corpses": [dict(c) for c in m["corpses"]]} for m in DEFAULT_MONSTERS],
-            "ignored_suggestions": current["ignored_suggestions"],
-            "suggestions": suggestions.pending(cfg) if suggestions else []}
+    from dbv.brain.combat.hunter_knife import DEFAULT_CORPSES, effective_config, with_learned
+    learned = getattr(st, "knife_learned", None)
+    current = (learned and with_learned(cfg, learned.snapshot())) or effective_config(cfg)
+    return {"corpses": current["corpses"], "default_corpses": [dict(c) for c in DEFAULT_CORPSES]}
 
 
 def _live(task):
@@ -875,7 +895,7 @@ def _cavebot_json(st):
     trace = getattr(st, "recording_observed_path", [])
     return {"recording": {
                 "active": active,
-                "name": st.recording_name,
+                "name": st.recording_name,  # "" when nothing is recorded
                 "mode": getattr(st, "recording_mode", "manual"),
                 "hunt_progress": getattr(st, "recording_hunt_progress", None) if active else None,
                 "waypoint_count": len(steps),
@@ -911,9 +931,9 @@ def _snapshot_of(owner, name):
 
 def _build_state_json() -> str:
     """The whole state for the panel, as JSON. Reads only; safe from any thread."""
-    st = _state
-    if st is None:
-        return json.dumps({"connected": False, "actions": []})
+    st = _state  # read once: start_api may replace it from another thread
+    if not st:
+        return json.dumps(dict(connected=False, actions=[], language=_language()))
     internal = getattr(sys.modules.get("__main__"), "INTERNAL_ACTIONS", {"dll_bridge"})
     tasks = dict(st._action_tasks)
     proxy = st.game_proxy
@@ -921,8 +941,9 @@ def _build_state_json() -> str:
     from_client = proxy.packets_from_client if proxy else 0
     gs = st.game_state
     observer = _observer_connected(gs)
-    return json.dumps({
-        "connected": st.connected,
+    return json.dumps(obj={
+        "connected": st.connected,  # a character is in game
+        "language": _language(),  # "pl" or "en", from the launcher's switch
         "session_kills": getattr(gs, "session_kills", 0),
         "login_startup": {"phase": st.login_startup.phase} if getattr(st, "login_startup", None) else None,
         "pause_hotkey": _snapshot_of(st, "pause_hotkey"),
@@ -958,10 +979,10 @@ def _build_state_json() -> str:
 
 # ── WebSocket push ──────────────────────────────────────────────────
 
-_ws_clients: set = set()
+_ws_clients: set[object] = set()   # authenticated panel connections
 
 
-async def _ws_handler(websocket):
+async def _ws_handler(websocket) -> None:
     """One panel connection: authenticate, then only receive pushes."""
     # No state is sent or broadcast until the first message authenticates.
     try:
@@ -974,16 +995,17 @@ async def _ws_handler(websocket):
     except Exception:
         await websocket.close(code=1008, reason="authentication required")
         return
-    _ws_clients.add(websocket)
-    log.info("WS client connected (%d total)", len(_ws_clients))
+    clients = _ws_clients
+    clients.add(websocket)
+    log.info("WS client connected (%d total)", len(clients))
     try:
-        await websocket.send(_build_state_json())
-        async for _ in websocket:
+        await websocket.send(_build_state_json())  # the first state without waiting for a push
+        async for _message in websocket:
             pass  # the panel sends nothing after its token; this waits for it to leave
     except Exception:
         pass
     finally:
-        _ws_clients.discard(websocket)
+        clients.discard(websocket)
         log.info("WS client disconnected (%d total)", len(_ws_clients))
 
 
@@ -998,11 +1020,13 @@ async def _push_to(clients, message):
     return failed
 
 
-async def _ws_push_loop():
-    while True:
-        if _ws_clients:
-            _ws_clients.difference_update(await _push_to(list(_ws_clients), _build_state_json()))
-        await asyncio.sleep(WS_PUSH_INTERVAL)
+async def _ws_push_loop() -> None:
+    """Push the state to every panel connection, forever; dead connections are dropped."""
+    clients = _ws_clients
+    for _ in itertools.count():
+        if clients:
+            clients.difference_update(await _push_to(list(clients), _build_state_json()))
+        await asyncio.sleep(delay=WS_PUSH_INTERVAL)
 
 
 async def _create_ws_server():
@@ -1013,7 +1037,7 @@ async def _create_ws_server():
     )
 
 
-async def _start_ws_server():
+async def _start_ws_server() -> None:
     try:
         server = await _create_ws_server()
     except ImportError:
@@ -1023,8 +1047,9 @@ async def _start_ws_server():
     except Exception as exc:
         return log.error("WebSocket server failed: %s", exc)
     log.info("WebSocket server listening on ws://127.0.0.1:%s", WS_PORT)
-    asyncio.create_task(_ws_push_loop())
-    await server.wait_closed()
+    pusher = asyncio.create_task(_ws_push_loop())
+    _background_tasks.add(pusher)   # keep a reference so the task is not collected
+    await server.wait_closed()  # serves until the process ends
 
 
 def _start_game_monitors(loop, bot_state):
@@ -1049,20 +1074,19 @@ def _start_game_monitors(loop, bot_state):
 
 def start_api(loop: asyncio.AbstractEventLoop, bot_state, *, panel_only=False) -> bool:
     """Serve the local panel. Game monitors belong to the connected session."""
-    global _main_loop, _state, _started
+    global _main_loop, _state, _started  # the handlers read these from their own thread
     _main_loop, _state = loop, bot_state
     if not panel_only:
         _start_game_monitors(loop, bot_state)
-    if _started:
-        return True
-    _started = True  # before binding, so a second call cannot bind twice
-    try:
-        server = HTTPServer(("127.0.0.1", API_PORT), _Handler)
-    except OSError as exc:
-        log.error("Failed to start HTTP server on port %s: %s", API_PORT, exc)
-        _started = False
-        return False
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    log.info("Dashboard API listening on http://127.0.0.1:%s", API_PORT)
-    asyncio.run_coroutine_threadsafe(_start_ws_server(), loop)
+    if not _started:
+        _started = True  # before binding, so a second call cannot bind twice
+        try:
+            server = HTTPServer(("127.0.0.1", API_PORT), _Handler)  # loopback only
+        except OSError as exc:
+            log.error("Failed to start HTTP server on port %s: %s", API_PORT, exc)
+            _started = False  # a later call may try the port again
+            return False
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        log.info("Dashboard API listening on http://127.0.0.1:%s", API_PORT)
+        asyncio.run_coroutine_threadsafe(coro=_start_ws_server(), loop=loop)
     return True

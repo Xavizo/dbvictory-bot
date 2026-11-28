@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import type {PassiveMapCell,PassiveMapState} from "./api";
 export type Pos=[number,number,number];
 export type RouteTransition={id:string;origin:Pos;entry:Pos;exit:Pos;action:string;item_id?:number|null;tool_id?:number|null;prepared_item_id?:number|null;tool_ids?:number[];count?:number};
@@ -79,7 +80,7 @@ export function replaceFloorLink(points:Pos[],links:RouteLink[],selected:RouteLi
   const i=selected.from_index;
   if(!points[i+1] || !links.some(l=>l.from_index===i && l.id===selected.id) ||
      edge.origin[2]!==points[i][2] || edge.entry[2]!==points[i][2] || edge.exit[2]!==points[i+1][2] || edge.entry[2]===edge.exit[2])
-    throw Error('To przejście nie pasuje do wybranego odcinka szkicu.');
+    throw Error(t('atlasModel.wrongSegment'));
   // Shared anchors still belong to the adjacent transition or the closed loop.
   const closed=isRouteClosed(points);
   const keepStart=positionKey(points[i])!==positionKey(edge.origin) && (links.some(l=>l.from_index===i-1)||(closed && i===0));
@@ -152,12 +153,12 @@ export function selectTransition(points:Pos[],links:RouteLink[],edge:RouteTransi
   const same=(a:Pos|undefined,b:Pos)=>!!a&&positionKey(a)===positionKey(b);
   const adjacent=(p:Pos)=>p[2]===edge.entry[2]&&Math.max(Math.abs(p[0]-edge.entry[0]),Math.abs(p[1]-edge.entry[1]))<=1;
   const candidates=points.flatMap((p,i)=>same(p,edge.entry)||(same(p,edge.origin)||adjacent(p))&&same(points[i+1],edge.exit)?[i]:[]);
-  if(after!==undefined && (!points[after] || points[after][2]!==edge.entry[2] || links.some(l=>l.from_index===after)))throw Error('Wybierz waypoint na piętrze wejścia poza istniejącym przejściem.');
+  if(after!==undefined && (!points[after] || points[after][2]!==edge.entry[2] || links.some(l=>l.from_index===after)))throw Error(t('atlasModel.chooseWaypoint'));
   const preferred=after!==undefined?(candidates.includes(after)?after:undefined):segment===undefined?undefined:[segment,segment+1].find(i=>candidates.includes(i));
   const unlinked=candidates.filter(i=>!links.some(l=>l.from_index===i));
-  if(after===undefined&&preferred===undefined&&(unlinked.length>1||!unlinked.length&&candidates.length>1))throw Error('To pole występuje w trasie kilka razy. Najpierw kliknij komunikat konkretnego błędnego odcinka.');
+  if(after===undefined&&preferred===undefined&&(unlinked.length>1||!unlinked.length&&candidates.length>1))throw Error(t('atlasModel.ambiguous'));
   const existing=preferred??(after===undefined?(unlinked[0]??(candidates.length===1?candidates[0]:undefined)):undefined);
-  if(after===undefined&&segment!==undefined&&preferred===undefined)throw Error('To przejście nie pasuje do wskazanego odcinka. Nie dopisano punktów na końcu trasy.');
+  if(after===undefined&&segment!==undefined&&preferred===undefined)throw Error(t('atlasModel.noMatch'));
   let next=points.map(p=>[...p] as Pos),sourceIndices:(number|null)[]=points.map((_,i)=>i),index:number;
   if(existing!==undefined){
     index=existing;
@@ -172,7 +173,7 @@ export function selectTransition(points:Pos[],links:RouteLink[],edge:RouteTransi
     if(!same(next[index+1],edge.exit)){next.splice(index+1,0,[...edge.exit]);sourceIndices.splice(index+1,0,null);}
   }else{
     const anchor=after??nearestInsertion(points,links,edge.origin);
-    if(anchor===undefined && points.length)throw Error('Brak waypointu na piętrze wejścia. Dodaj punkt podejścia.');
+    if(anchor===undefined && points.length)throw Error(t('atlasModel.noAnchor'));
     index=anchor??-1;
     if(!same(next[index],edge.origin)){index++;next.splice(index,0,[...edge.origin]);sourceIndices.splice(index,0,null);}
     if(!same(next[index+1],edge.exit)){next.splice(index+1,0,[...edge.exit]);sourceIndices.splice(index+1,0,null);}
@@ -180,7 +181,7 @@ export function selectTransition(points:Pos[],links:RouteLink[],edge:RouteTransi
   // Map by occurrence, not just coordinates: a loop can visit the same stairs twice.
   const kept=links.flatMap(link=>{const i=sourceIndices.indexOf(link.from_index);
     return i>=0&&sourceIndices[i+1]===link.from_index+1&&same(next[i],points[link.from_index])&&same(next[i+1],points[link.from_index+1])?[{...link,from_index:i}]:[];});
-  if(links.some(l=>l.from_index!==existing&&!kept.some(k=>k.id===l.id&&sourceIndices[k.from_index]===l.from_index)))throw Error('Ta zmiana rozdzieliłaby inne przejście. Wybierz sąsiedni waypoint.');
+  if(links.some(l=>l.from_index!==existing&&!kept.some(k=>k.id===l.id&&sourceIndices[k.from_index]===l.from_index)))throw Error(t('atlasModel.split'));
   return {points:next,sourceIndices,from_index:index,mode:existing===undefined?'append' as const:'repair' as const,links:[...kept.filter(l=>l.from_index!==index),{from_index:index,id:edge.id}].sort((a,b)=>a.from_index-b.from_index)};
 }
 export function rememberEdit(history:RouteEdit[],points:Pos[],center:Pos,labels?:string[],links?:RouteLink[]):RouteEdit[] {
@@ -257,11 +258,11 @@ export function supportedTransition(t:Partial<DisplayTransition>&{action:string}
 }
 export function routeExecutionIssues(plan:{transitions:DisplayTransition[];avoid_tiles?:Pos[]}){
   const issues:{key:string;message:string;pos:Pos}[]=[];
-  plan.transitions.forEach((t,i)=>{
-    const supported=supportedTransition(t);
-    if(!supported)issues.push({key:`transition-${i}`,pos:t.entry,message:`T${i+1}: ${t.action==='use_with'?`użycie narzędzia${t.tool_id?` ${t.tool_id}`:''}`:'ten rodzaj przejścia'} — wykonanie nieobsługiwane w V2. (${t.entry.join(', ')}) → (${t.exit.join(', ')})`});
+  plan.transitions.forEach((link,i)=>{
+    const supported=supportedTransition(link);
+    if(!supported)issues.push({key:`transition-${i}`,pos:link.entry,message:t('atlasModel.unsupported',{n:i+1,what:link.action==='use_with'?t('atlasModel.toolUse')+(link.tool_id?` ${link.tool_id}`:''):t('atlasModel.thisKind'),entry:link.entry.join(', '),exit:link.exit.join(', ')})});
   });
-  const seen=new Set<string>();for(const p of plan.avoid_tiles??[]){const key=positionKey(p);if(seen.has(key))continue;seen.add(key);issues.push({key:`avoid-${key}`,pos:p,message:`Pole (${p.join(', ')}) jest oznaczone jako omijane i blokuje uruchomienie trasy.`});}
+  const seen=new Set<string>();for(const p of plan.avoid_tiles??[]){const key=positionKey(p);if(seen.has(key))continue;seen.add(key);issues.push({key:`avoid-${key}`,pos:p,message:t('atlasModel.avoided',{place:p.join(', ')})});}
   return issues;
 }
 export function atlasCenter(follow:boolean,manual:Pos,live?:Pos):Pos {
@@ -293,8 +294,8 @@ export function simulationStep(path:Pos[],index:number,transitions:{origin:Pos;e
 export function simulationReport(plan:{path:Pos[];complete:boolean;loop_closed?:boolean;return_error?:string|null;gaps:{reason:string;from?:Pos;to?:Pos;segment?:number}[];transitions:(Partial<DisplayTransition>&{action:string})[];requires_action_review?:boolean;requires_path_review?:boolean;recorded_actions?:{item_id?:number;x?:number;y?:number;z?:number;to_x?:number;to_y?:number;to_z?:number;matched_transition?:number|null}[]},loop:boolean,points:Pos[]) {
   const unsupported=plan.transitions.filter(t=>!supportedTransition(t));
   const unmatched=plan.recorded_actions?.filter(a=>a.matched_transition==null)??[];
-  const actionIssues=plan.requires_action_review&&unmatched.length?unmatched.slice(0,3).map(a=>`Dodatkowe użycie ID ${a.item_id??'?'} na (${[a.x??a.to_x,a.y??a.to_y,a.z??a.to_z].join(', ')}): nie jest częścią zaplanowanych przejść.`):[];
-  const issues=[...plan.gaps.map(g=>g.from&&g.to?`Odcinek ${(g.segment??0)+1} → ${(g.segment??0)+2}: (${g.from.join(", ")}) → (${g.to.join(", ")}). ${g.reason}`:g.reason),...(unsupported.length?[`${unsupported.length} przejść wymaga nieobsługiwanego jeszcze narzędzia lub czaru.`]:[]),...(loop&&plan.complete&&!(plan.loop_closed??isRouteClosed(points))?[plan.return_error??"Brak znanego powrotu do początku trasy."]:[]),...actionIssues,...((plan.requires_path_review??(plan.requires_action_review&&!actionIssues.length))?["Pola lub ciągłość odczytu pozycji wymagają sprawdzenia."]:[]),...(plan.path.length<2?["Brak ruchu w trasie."]:[])];
+  const actionIssues=plan.requires_action_review&&unmatched.length?unmatched.slice(0,3).map(a=>t('atlasModel.extraUse',{id:a.item_id??'?',place:[a.x??a.to_x,a.y??a.to_y,a.z??a.to_z].join(', ')})):[];
+  const issues=[...plan.gaps.map(g=>g.from&&g.to?t("atlasModel.gap",{from:(g.segment??0)+1,to:(g.segment??0)+2,start:g.from.join(", "),end:g.to.join(", "),reason:g.reason}):g.reason),...(unsupported.length?[t("atlasModel.unsupportedCount",{n:unsupported.length})]:[]),...(loop&&plan.complete&&!(plan.loop_closed??isRouteClosed(points))?[plan.return_error??t("atlasModel.noReturn")]:[]),...actionIssues,...((plan.requires_path_review??(plan.requires_action_review&&!actionIssues.length))?[t("atlasModel.pathReview")]:[]),...(plan.path.length<2?[t("atlasModel.noMovement")]:[])];
   return {ok:plan.complete&&!issues.length,issues,steps:Math.max(0,plan.path.length-1),floors:routeSegments(plan.path).map(s=>s.floor),transitions:plan.transitions.length};
 }
 // Animation is only an illustration: the whole plan is checked synchronously.

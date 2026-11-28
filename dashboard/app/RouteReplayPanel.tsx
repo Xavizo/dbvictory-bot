@@ -1,5 +1,6 @@
 "use client";
 
+import { t, plural } from "@/lib/i18n";
 import {useEffect,useRef,useState} from "react";
 import type {BotState} from "@/lib/api";
 import {RouteReplay} from "@/lib/routeReplay";
@@ -31,18 +32,18 @@ export default function RouteReplayPanel({state,online}:{state:BotState|null;onl
     const url=URL.createObjectURL(new Blob([run.serialize()],{type:"application/json"}));
     const a=document.createElement("a");
     a.href=url;
-    a.download="obieg-"+new Date(run.startedAt).toISOString().replace(/[:.]/g,"-")+".json";
+    a.download=t("replay.filePrefix")+new Date(run.startedAt).toISOString().replace(/[:.]/g,"-")+".json";
     a.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   return <div className="diagnostic-section">
-    <div className="section-caption"><h2>Zapis obiegu</h2>
-      {mode!=="idle" && <span>{replay.current?.full?"Osiągnięto limit zapisu · ":""}{count} próbek</span>}</div>
-    {mode==="idle"&&<button className="secondary-button" onClick={start}>Nagraj obieg</button>}
-    {mode==="recording"&&<button className="secondary-button" onClick={finish}>Zakończ nagranie</button>}
+    <div className="section-caption"><h2>{t("replay.title")}</h2>
+      {mode!=="idle" && <span>{replay.current?.full?t("replay.limit")+" · ":""}{plural("replay.samples",count)}</span>}</div>
+    {mode==="idle"&&<button className="secondary-button" onClick={start}>{t("replay.record")}</button>}
+    {mode==="recording"&&<button className="secondary-button" onClick={finish}>{t("replay.finish")}</button>}
     {mode==="finished"&&<div className="action-toolbar">
-      <button className="secondary-button" onClick={save}>Zapisz JSON</button>
-      <button className="secondary-button" onClick={start} title="Rozpocznij nowy obieg. Poprzedni zapis w pamięci zostanie zastąpiony.">Nagraj obieg</button>
+      <button className="secondary-button" onClick={save}>{t("replay.save")}</button>
+      <button className="secondary-button" onClick={start} title={t("replay.restartTitle")}>{t("replay.record")}</button>
     </div>}
   </div>;
 }

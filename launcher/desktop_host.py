@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import subprocess
 
+from launcher.texts import text
+
 CLIENT_NAMES = ("dbvStart.exe", "dbvStart_gl.exe")
 MCP_TARGETS = ("codex", "claude-desktop", "claude-code")
 REPORT_STATES = ("current", "updated", "available", "recovery", "busy", "error")
@@ -51,20 +53,20 @@ async def check_release(root, args):
     try:
         code, output = await _run([python_exe(root), "-B", "-X", "utf8", "launcher_files.py", *args], root)
     except OSError as error:
-        raise RuntimeError("Nie udało się wykonać lokalnego aktualizatora. Sprawdź instalację Pythona.") from error
+        raise RuntimeError(text("error.updaterFailedToRun")) from error
     try:
         report = json.loads(output)
     except ValueError as error:
         if not output:
-            raise RuntimeError("Nie udało się wykonać lokalnego aktualizatora. Sprawdź instalację Pythona.") from error
-        raise RuntimeError("Niepoprawna odpowiedź aktualizatora.") from error
+            raise RuntimeError(text("error.updaterFailedToRun")) from error
+        raise RuntimeError(text("error.updaterBadReply")) from error
     if code and (not isinstance(report, dict) or report.get("state") != "error"):
-        raise RuntimeError("Aktualizator zakończył się błędem.")
+        raise RuntimeError(text("error.updaterFailed"))
     if (not isinstance(report, dict) or report.get("state") not in REPORT_STATES
             or (report.get("installed") is not None and not valid_sha(report["installed"]))
             or (report.get("pending") is not None and not valid_sha(report["pending"]))
             or not isinstance(report.get("message"), str)):
-        raise RuntimeError("Niepoprawna odpowiedź aktualizatora.")
+        raise RuntimeError(text("error.updaterBadReply"))
     return report
 
 
@@ -79,7 +81,7 @@ def history(root, label):
         file = DESKTOP_DIR / "release-notes.json"
     notes = json.loads(file.read_text(encoding="utf-8"))
     if not isinstance(notes, list):
-        raise ValueError("Niepoprawny format historii wydań.")
+        raise ValueError(text("error.notesFormat"))
     kept = []
     for release in notes:
         if (not isinstance(release, dict) or not isinstance(release.get("version"), str)
@@ -87,7 +89,7 @@ def history(root, label):
                 or not isinstance(release.get("changes"), list)
                 or not all(isinstance(item, dict) and isinstance(item.get("title"), str)
                            and isinstance(item.get("detail"), str) for item in release["changes"])):
-            raise ValueError("Niepoprawny wpis historii wydań.")
+            raise ValueError(text("error.notesEntry"))
         if tuple(map(int, release["version"][1:].split("."))) <= installed:
             kept.append(release)
     return kept
@@ -118,14 +120,14 @@ async def clients():
         _, output = await _run([powershell, "-NoProfile", "-NonInteractive", "-Command", query], Path.cwd(), 12)
         found = json.loads(output)
     except (OSError, ValueError, asyncio.TimeoutError) as error:
-        raise RuntimeError("Nie udało się sprawdzić okna klienta w Windows.") from error
+        raise RuntimeError(text("error.windowCheck")) from error
     return found if isinstance(found, list) else []
 
 
 def window_pid(processes, folder):
     matches = [p for p in processes if p.get("HasWindow") and p.get("Path") and _same_folder(p["Path"], folder)]
     if len(matches) > 1:
-        raise MultipleClients("Otwarte są co najmniej dwa okna klienta z tego folderu. Pozostaw jedno.")
+        raise MultipleClients(text("error.twoClients"))
     return matches[0]["Id"] if matches else None
 
 
@@ -136,20 +138,20 @@ async def open_window_pid(folder):
 async def open_client(folder):
     exe = client_exe(folder)
     if not exe:
-        raise RuntimeError("Wybierz katalog z dbvStart.exe lub dbvStart_gl.exe.")
+        raise RuntimeError(text("error.chooseClientFolder"))
     found = await clients()
     same = next((p for p in found if p.get("Path") and _same_folder(p["Path"], folder)), None)
     if same:
         return same["Id"]
     if found:
-        raise RuntimeError("Klient działa z innej lokalizacji. Wybierz jego folder.")
+        raise RuntimeError(text("error.clientElsewhere"))
     try:
         child = subprocess.Popen([str(exe)], cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL,
                                  creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
                                  | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
     except OSError as error:
-        raise RuntimeError("Windows nie uruchomił klienta DBVictory. Sprawdź wybrany folder.") from error
+        raise RuntimeError(text("error.clientNotStarted")) from error
     return child.pid
 
 
@@ -157,9 +159,9 @@ async def run_json(root, script, args, timeout=90):
     try:
         _, output = await _run([python_exe(root), "-B", "-X", "utf8", script, *args], root, timeout)
     except (OSError, asyncio.TimeoutError) as error:
-        raise RuntimeError("Nie udało się uruchomić lokalnego Pythona.") from error
+        raise RuntimeError(text("error.pythonFailed")) from error
     if not output:
-        raise RuntimeError("Nie udało się uruchomić lokalnego Pythona.")
+        raise RuntimeError(text("error.pythonFailed"))
     result = json.loads(output)
     if isinstance(result, dict) and result.get("error"):
         raise RuntimeError(result["error"])
@@ -170,25 +172,28 @@ async def mcp_clients(root, operation, target=None):
     if operation == "status":
         return await run_json(root, "mcp_clients.py", ["status"], 30)
     if operation not in ("connect", "disconnect") or target not in MCP_TARGETS:
-        raise RuntimeError("Nieznana integracja.")
-    return await run_json(root, "mcp_clients.py", [operation, target])
+        raise RuntimeError(text("error.unknownIntegration"))
+    result = await run_json(root, "mcp_clients.py", [operation, target])
+    if isinstance(result, dict) and result.get("message"):
+        label = (result.get("status") or {}).get(target, {}).get("label", target)
+        result["message"] = text(f"ai.done.{operation}", label=label, hint=text(f"ai.hint.{target}"))
+    return result
 
 
 async def set_channel(root, channel):
     if channel not in ("stable", "test"):
-        raise RuntimeError("Nieznany kanał aktualizacji.")
+        raise RuntimeError(text("error.unknownChannel"))
     try:
         return await run_json(root, "launcher_files.py", ["channel", channel], 30)
     except ValueError as error:
-        raise RuntimeError("Nie udało się zapisać kanału aktualizacji.") from error
+        raise RuntimeError(text("error.channelSave")) from error
 
 
 async def client_support(root, folder):
     exe = client_exe(folder)
     if not exe:
         return {"supported": False, "missing": True,
-                "message": "Wybierz katalog klienta DBVictory (z plikiem dbvStart.exe lub dbvStart_gl.exe) "
-                           "przyciskiem „Zmień”."}
+                "message": text("error.clientFolderMissing")}
     return await run_json(root, "launcher_files.py", ["client-check", str(exe)], 30)
 
 

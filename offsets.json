@@ -1,6 +1,5 @@
 {
-  "packet_formats": {
-    "player_stats": {
+  "packet_formats": { "player_stats": {
       "size": 36,
       "capacity_scale": 100,
       "allow_mana_over_max": true,
@@ -74,11 +73,7 @@
     "player_cancel_walk": {
       "size": 1
     },
-    "world_light": {
-      "size": 2,
-      "level": 0,
-      "color": 1
-    },
+    "world_light": { "size": 2, "level": 0, "color": 1 },
     "custom_0xcb": {
       "size": 5
     },
@@ -88,11 +83,8 @@
       "y": 2,
       "z": 4
     },
-    "login_or_pending": {
-      "player_id_size": 4,
-      "header_before_position": 19,
-      "map_description_marker": 75,
-      "map_description_search_window": 10
+    "login_or_pending": { "player_id_size": 4, "header_before_position": 19,
+      "map_description_marker": 75, "map_description_search_window": 10
     },
     "map_description": {
       "position_x": 0,

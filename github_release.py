@@ -23,6 +23,7 @@ import urllib.request
 from uuid import uuid4
 import zipfile
 
+from dbv.paths import state_dir
 from dbv_revision import RELEASE_FILE, TEST_SUFFIX, read_release, revision_label
 
 MANIFEST_FILE = "release-manifest.json"
@@ -41,7 +42,7 @@ MAX_PACKAGE = 2 * 1024 ** 3
 MAX_MANIFEST = 32 * 1024 ** 2
 
 # Never written, replaced or removed by an update: the player's own data.
-PROTECTED_PREFIXES = (".codex/", ".git/", ".venv/", "local_data/", "dashboard/public/local-spells/")
+PROTECTED_PREFIXES = (".codex/", ".dbvictory/", ".git/", ".venv/", "local_data/", "dashboard/public/local-spells/")
 PROTECTED_FILES = {"bot_settings.json", ".env", ".mcp.json"}
 # Shipped as examples: added when missing, never overwritten or removed.
 SEED_PREFIXES = ("recordings/",)
@@ -61,7 +62,7 @@ def is_release_install(root):
 
 
 def _feed(root):
-    return Path(root) / ".codex" / "updates" / "github"
+    return state_dir(root) / "updates" / "github"
 
 
 def _version(label):
@@ -291,7 +292,7 @@ def _busy(root):
 
 def _lock(root):
     from dbv_release import _file_lock
-    return _file_lock(Path(root) / ".codex" / "standalone.lock")
+    return _file_lock(state_dir(root) / "standalone.lock")
 
 
 def _offer(root, release, fetch, fetch_tests):
@@ -375,7 +376,7 @@ def _hash_file(path):
 class Progress:
     """What the installer is doing, for the launcher's progress bar.
 
-    Written to .codex/updates/github/progress.json at most four times a second:
+    Written to .dbvictory/updates/github/progress.json at most four times a second:
     {"stage": "download" | "extract" | "apply", "done": n, "total": n, "unit": "bytes" | "files",
      "kind": "patch" | "full", "started": unix time of the stage}.
     """

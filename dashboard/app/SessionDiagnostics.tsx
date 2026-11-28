@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import type { CreatureInfo, PlayerInfo, ProxySequence } from "@/lib/api";
 
 const percent = (part: number, whole: number) => whole > 0 ? Math.round(part * 100 / whole) : 0;
@@ -16,7 +17,7 @@ export function PlayerStats({ player }: { player: PlayerInfo }) {
   const where = player.position.join(", ");
   return <div className="mb-8 space-y-3 rounded-lg border border-gray-700 bg-gray-800 p-4">
     <div className="flex items-center justify-between">
-      <span className="text-sm font-semibold text-gray-300">Poziom {player.level}</span>
+      <span className="text-sm font-semibold text-gray-300">{t("player.level",{level:player.level})}</span>
       <span className="text-xs tabular-nums text-gray-500">({where})</span>
     </div>
     <Meter name="HP" value={player.hp} limit={player.max_hp} tone="bg-red-500"/>
@@ -25,17 +26,16 @@ export function PlayerStats({ player }: { player: PlayerInfo }) {
 }
 
 // The proxy's connection steps, in the order a login goes through them.
-const PROXY_STEPS: [keyof Omit<ProxySequence, "timestamps">, string][] = [
-  ["proxy_created", "Proxy utworzone"], ["listening", "Nasłuch"], ["client_connected", "Klient połączony"],
-  ["server_connected", "Serwer połączony"], ["xtea_captured", "Klucze XTEA"], ["logged_in", "Zalogowano"],
-  ["packets_flowing", "Ruch pakietów"],
+const PROXY_STEPS: (keyof Omit<ProxySequence, "timestamps">)[] = [
+  "proxy_created", "listening", "client_connected", "server_connected", "xtea_captured", "logged_in", "packets_flowing",
 ];
 
 /** Which proxy steps are done; the first missing one is where a login is stuck. */
 export function ConnectionSequence({ seq, onClose }: { seq: ProxySequence; onClose: () => void }) {
-  const stuckAt = PROXY_STEPS.findIndex(([step]) => !seq[step]);
-  return <ol className="mb-4 flex flex-wrap items-center gap-1" aria-label="Etapy połączenia">
-    {PROXY_STEPS.map(([step, name], position) => {
+  const stuckAt = PROXY_STEPS.findIndex(step => !seq[step]);
+  return <ol className="mb-4 flex flex-wrap items-center gap-1" aria-label={t("proxy.aria")}>
+    {PROXY_STEPS.map((step, position) => {
+      const name = t(`proxy.${step}`);
       const after = seq.timestamps?.[step];
       const when = after == null ? "" : `+${after}s`;
       const look = seq[step] ? "bg-emerald-900/50 text-emerald-300"
@@ -47,7 +47,7 @@ export function ConnectionSequence({ seq, onClose }: { seq: ProxySequence; onClo
         </span>
       </li>;
     })}
-    <li><button aria-label="Zamknij etapy połączenia" onClick={onClose} className="ml-1 text-xs text-gray-500 hover:text-gray-300">✕</button></li>
+    <li><button aria-label={t("proxy.close")} onClick={onClose} className="ml-1 text-xs text-gray-500 hover:text-gray-300">✕</button></li>
   </ol>;
 }
 
@@ -55,9 +55,9 @@ export function ConnectionSequence({ seq, onClose }: { seq: ProxySequence; onClo
 export function CreatureList({ creatures }: { creatures: CreatureInfo[] }) {
   return <div className="mb-8">
     <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-gray-400">
-      Stworzenia <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs tabular-nums text-gray-300">{creatures.length}</span>
+      {t("observation.creatures")} <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs tabular-nums text-gray-300">{creatures.length}</span>
     </h2>
-    {creatures.length === 0 ? <p className="text-sm text-gray-500">Brak stworzeń w pobliżu</p> :
+    {creatures.length === 0 ? <p className="text-sm text-gray-500">{t("creatures.none")}</p> :
       <ul className="divide-y divide-gray-700 rounded-lg border border-gray-700 bg-gray-800">
         {creatures.map(creature => <li key={creature.id} className="flex items-center gap-3 px-4 py-2">
           <span className="w-28 shrink-0 truncate text-sm text-gray-200" title={`#${creature.id}`}>{creature.name || `#${creature.id}`}</span>

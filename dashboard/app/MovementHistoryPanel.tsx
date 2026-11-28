@@ -1,4 +1,5 @@
 "use client";
+import { t } from "@/lib/i18n";
 import {useEffect,useState} from "react";
 import {movementHistory,type MovementHistoryStatus} from "@/lib/api";
 
@@ -25,12 +26,12 @@ export default function MovementHistoryPanel({online}:{online:boolean}) {
     finally{setSaving(false);}
   }
   return <div className="diagnostic-section">
-    <div className="section-caption"><h2>Blokady ruchu</h2>
-      <span>{report?.capturing?"Trwa zapis blokady":online&&report?.active?"Historia 5 min":"Brak sesji"}</span></div>
+    <div className="section-caption"><h2>{t("movement.title")}</h2>
+      <span>{t(report?.capturing?"movement.capturing":online&&report?.active?"movement.history":"movement.noSession")}</span></div>
     <button className="secondary-button" disabled={!online||!report?.available||saving} onClick={save}>
-      {saving?"Zapisywanie…":"Zapisz ostatnią blokadę"}</button>
-    {report?.latest&&<p className="break-all" role="status">Ostatni raport · {report.latest}</p>}
+      {t(saving?"common.saving":"movement.save")}</button>
+    {report?.latest&&<p className="break-all" role="status">{t("movement.latest")} · {report.latest}</p>}
     {(error||readError||report?.error)&&<p role="alert">{error||readError||report?.error}</p>}
-    {!!report?.unwritten_reports&&<p role="alert">Niezapisane raporty po przepełnieniu kolejki · {report.unwritten_reports}</p>}
+    {!!report?.unwritten_reports&&<p role="alert">{t("movement.unwritten")} · {report.unwritten_reports}</p>}
   </div>;
 }

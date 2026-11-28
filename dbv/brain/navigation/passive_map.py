@@ -401,9 +401,9 @@ class PassiveMapMonitor:
                 logging.getLogger(__name__).info(
                     "Hunter Knife 5908 manual: tile=%s corpse_before=%d corpse_after=%d",
                     pos, original, ids[0][1])
-                suggestions = getattr(self.state, "knife_suggestions", None)
-                if suggestions is not None:
-                    suggestions.record(original, ids[0][1], killed_on(game_state, pos, started), started)
+                learned = getattr(self.state, "knife_learned", None)
+                if learned is not None:
+                    learned.record(original, ids[0][1], killed_on(game_state, pos, started))
 
     def invalidate_packet_evidence(self):
         with self._knife_witness_lock:

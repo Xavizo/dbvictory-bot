@@ -1,6 +1,7 @@
 import { authenticatedFetch } from "./auth";
 
-const API_BASE = "http://127.0.0.1:8089";
+const API_PORT = 8089;
+const API_BASE = `http://127.0.0.1:${API_PORT}`;
 
 export interface MapNavigationFeature {
   kind: "web" | "stairs" | "ladder" | "descent" | "hole" | "covered_hole" | "rope_spot" | "door" | "level_gate" | "teleport" | "floor_change" | "passage";
@@ -69,17 +70,17 @@ export interface TransitionLearningState {
 }
 
 // Shapes of /api/state, as dashboard_api._build_state_json writes them.
-export interface ActionInfo {
+export interface ActionInfo { // one entry of "actions"
   name: string; description: string;
   enabled: boolean; running: boolean; completed?: boolean;
   senzu_deferral?: string;
   logs?: string[];                 // the action's latest bot.log lines
   config?: Record<string, any>;    // its settings, without "enabled"
 }
-export interface PlayerInfo {
+export interface PlayerInfo { // "player": vitals and position
   hp: number; max_hp: number; mana: number; max_mana: number;
   level: number; experience: number; magic_level: number; soul: number;
-  position: [number, number, number];
+  position: [x: number, y: number, z: number];
   stats_age?: number;              // seconds since the last stats update, -1 before any
 }
 export interface CreatureInfo { id: number; name: string; health: number; x: number; y: number; z: number }
@@ -87,9 +88,8 @@ export interface RecordingSummary {
   name: string; count: number; mode?: "manual" | "adaptive"; created_at: string;
   last_stats?: {xp_per_hour: number; kills_per_hour: number; senzu_per_hour: number; session_seconds: number; timestamp: string};
 }
-export interface CavebotState {
-  recording: {
-    active: boolean;
+export interface CavebotState { // "cavebot": the route recorder and saved routes
+  recording: { active: boolean;
     mode?: "manual" | "adaptive";
     hunt_progress?: {stage: 0 | 1 | 2 | 3 | 4 | null; areas?: number; total_areas?: number; revisited?: number; sectors?:number; missing_sectors?:number} | null;
     name: string; waypoint_count: number; waypoints: Record<string, any>[];   // the last 20 raw waypoints
@@ -119,7 +119,8 @@ export const setAlertsPaused=(paused:boolean)=>control("/api/alerts",{command:"s
 
 export type LiveMovementPreview = {path:[number,number,number][];stop:[number,number,number]|null};
 
-export interface BotState {
+export interface BotState { // the whole /api/state answer
+  language?: "pl" | "en"; // the launcher's language switch (dbv/language.py)
   commands?: {session:number} | null;
   login_startup?: {phase:"waiting_for_login"|"waiting_for_session"|"activated"|"failed"} | null;
   observation_families?: {
@@ -149,7 +150,7 @@ export interface BotState {
   automation_pause_kind?: "manual"|"emergency"|null;
   potion_diagnostics?: PotionDiagnosticState;
   item_identification?: ItemIdentificationState | null;
-  hunter_knife?: {last_issue?:{position:[number,number,number];reason:string;action:"skin"|"uncover";spell?:string;since_spell_ms?:number}|null;unassigned_bodies?:number;status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number;monsters?:KnifeMonster[];default_monsters?:KnifeMonster[];ignored_suggestions?:number[];suggestions?:KnifeSuggestion[]};
+  hunter_knife?: {last_issue?:{position:[number,number,number];reason:string;action:"skin"|"uncover";spell?:string;since_spell_ms?:number}|null;unassigned_bodies?:number;status:string;processed:number;unattributed?:number;from_combat?:number;last_timing_ms?:{recognition:number;wait_for_use:number;delivery_wait?:number;confirmation:number}|null;personal_loot:number;unclassified_loot:number;denied:number;corpses?:KnifeCorpse[];default_corpses?:KnifeCorpse[]};
   barrier_band?: {status:string;equipped_id:number|null;stock:number|null;attempts:number};
   actions: ActionInfo[];             // every script in actions/, internal ones excluded
   packets_from_server: number; packets_from_client: number;
@@ -199,9 +200,7 @@ export interface MapAnnotationInput {
 export const saveMapAnnotation = (data:MapAnnotationInput) => control("/api/map/annotation",data);
 export const labelVisiblePet = (position:number[],ref:string,name:string|null) => control("/api/map/pet",{position,ref,name});
 
-export type KnifeCorpse = {id:number;skinned:number;confirmed?:boolean};
-export type KnifeMonster = {name:string;corpses:KnifeCorpse[]};
-export type KnifeSuggestion = {id:number;skinned:number;name:string|null;seen:number};
+export type KnifeCorpse = {id:number;skinned:number;monster?:string};
 
 function okOrThrow(response: Response): Response {
   if (response.ok) return response;
@@ -226,7 +225,7 @@ export const toggleAction = (name: string, enabled: boolean) => control(actionPa
 export const updateActionConfig = (name: string, config: Record<string, any>) => control(actionPath(name, "config"), config);
 
 /** Stop and delete an action's script. A failure is only logged; the next state shows what happened. */
-export async function deleteAction(name: string): Promise<void> {
+export async function deleteAction(name: string) {
   const response = await authenticatedFetch(API_BASE + actionPath(name), {method: "DELETE"});
   if (!response.ok) console.error("Delete failed:", response.status, await response.json().catch(() => ({})));
 }

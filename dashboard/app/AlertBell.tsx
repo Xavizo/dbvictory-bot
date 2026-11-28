@@ -1,9 +1,10 @@
 "use client";
 
+import { t, locale } from "@/lib/i18n";
 import {useEffect, useRef, useState} from "react";
 import {acknowledgeAlerts, configureAlerts, setAlertsPaused, type AlertConfig, type AlertKind, type AlertState} from "@/lib/api";
 
-const labels:Record<AlertKind|"vitals",string>={vitals:"Utrata odczytu HP",ki_loss:"Nagła utrata Ki",private:"Wiadomość prywatna",default:"Czat Default",player:"Pojawienie się gracza"};
+const label=(kind:AlertKind|"vitals")=>t(`alerts.kind.${kind}`);
 const kinds:AlertKind[]=["private","default","player","ki_loss"];
 type AlertEvent = AlertState["events"][number];
 
@@ -12,11 +13,11 @@ const DISMISSED_PREVIEW_KEY = "dbv.alerts.dismissedPreview";
 function AlertPreview({event, onOpen, onDismiss}:{event:AlertEvent;onOpen:()=>void;onDismiss:()=>void}) {
   return <div className="alert-peek">
     <button type="button" className="alert-peek-open" onClick={onOpen}>
-      <span role="status"><b>{labels[event.kind]}</b> · {event.sender}</span>
+      <span role="status"><b>{label(event.kind)}</b> · {event.sender}</span>
       <small>{event.text}</small>
     </button>
-    <button type="button" className="alert-peek-dismiss" aria-label="Zamknij podgląd alertu"
-      title="Zamknij podgląd alertu" onClick={onDismiss}>×</button>
+    <button type="button" className="alert-peek-dismiss" aria-label={t("alerts.closePreview")}
+      title={t("alerts.closePreview")} onClick={onDismiss}>×</button>
   </div>;
 }
 
@@ -90,36 +91,36 @@ export default function AlertBell({alerts,connected,onRefresh}:{alerts?:AlertSta
   const unread=legacy&&alerts?Math.min(alerts.unread,alerts.events.filter(e=>e.id>through).length):alerts?.unread??0;
   const automationPaused=alerts?.automation_paused===true;
   const paused=automationPaused || (alerts?.paused??localPause?.paused??true);
-  const pauseLabel=automationPaused?"Alerty wstrzymane przez pauzę automatyki":paused?"Wznów alerty":"Wstrzymaj alerty";
+  const pauseLabel=t(automationPaused?"alerts.pausedByAutomation":paused?"alerts.resume":"alerts.pause");
   return <div className="alert-hub" ref={ref}>
-    <button className={`alert-bell ${unread&&!paused?"has-alert":""}`} aria-label={`Alerty${paused?" wstrzymane":unread?`: ${unread} nieprzeczytanych`:""}`} title={paused?"Alerty wstrzymane":"Alerty i dźwięk"} aria-expanded={open} aria-controls="alert-panel" onClick={()=>setOpen(v=>!v)}>
+    <button className={`alert-bell ${unread&&!paused?"has-alert":""}`} aria-label={paused?t("alerts.paused"):unread?t("alerts.unread",{n:unread}):t("alerts.title")} title={t(paused?"alerts.paused":"alerts.titleSound")} aria-expanded={open} aria-controls="alert-panel" onClick={()=>setOpen(v=>!v)}>
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M9 21h6"/></svg>
-      <span>Alerty</span>{!paused&&unread>0&&<span className="alert-count">{unread>99?"99+":unread}</span>}
+      <span>{t("alerts.title")}</span>{!paused&&unread>0&&<span className="alert-count">{unread>99?"99+":unread}</span>}
     </button>
     {(typeof alerts?.paused==="boolean"||localPause)&&<button className={`alert-pause${paused?" is-paused":""}`} aria-label={pauseLabel}
       title={pauseLabel} disabled={busy||!connected||automationPaused} onClick={()=>void changePause()}>
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
         <path d={paused?"M4 2.5 13 8l-9 5.5z":"M3 2h3.5v12H3zm6.5 0H13v12H9.5z"}/>
-      </svg><span>{automationPaused?"Pauza":paused?"Wznów":"Wstrzymaj"}</span>
+      </svg><span>{t(automationPaused?"common.pause":paused?"common.resume":"alerts.hold")}</span>
     </button>}
     {!open&&!paused&&unread>0&&latest&&latest.id>through&&previewKey!==dismissedPreview&&
       <AlertPreview event={latest} onOpen={()=>setOpen(true)} onDismiss={dismissPreview}/>}
 
-    {open&&<section id="alert-panel" className="alert-panel" aria-label="Alerty">
-      <header><strong>Alerty</strong><span>{automationPaused?"Pauza automatyki":paused?"Wstrzymane":alerts?.cavebot_active?"Cavebot działa":"Cavebot zatrzymany"}</span><button aria-label="Zamknij alerty" className="alert-close" onClick={()=>setOpen(false)}>×</button></header>
-      {!alerts||!config?<p>Alerty wymagają nowej sesji silnika.</p>:<>
-        <div className="alert-setting-head"><span>Zdarzenie</span><span>Sygnał</span><span>Kiedy</span></div>
+    {open&&<section id="alert-panel" className="alert-panel" aria-label={t("alerts.title")}>
+      <header><strong>{t("alerts.title")}</strong><span>{t(automationPaused?"alerts.automationPause":paused?"alerts.held":alerts?.cavebot_active?"alerts.cavebotOn":"alerts.cavebotOff")}</span><button aria-label={t("alerts.close")} className="alert-close" onClick={()=>setOpen(false)}>×</button></header>
+      {!alerts||!config?<p>{t("alerts.needsSession")}</p>:<>
+        <div className="alert-setting-head"><span>{t("alerts.event")}</span><span>{t("alerts.signal")}</span><span>{t("alerts.when")}</span></div>
         {kinds.filter(kind=>config[kind]).map(kind=><div key={kind} className="alert-setting">
-          <label><input type="checkbox" checked={config[kind].enabled} disabled={busy||!connected} onChange={e=>void change(kind,{enabled:e.target.checked})}/>{labels[kind]}</label>
-          <label className="alert-sound-toggle"><input type="checkbox" aria-label={`Dźwięk i miganie ikony: ${labels[kind]}`} checked={config[kind].sound} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{sound:e.target.checked})}/></label>
-          <select aria-label={`Kiedy: ${labels[kind]}`} value={config[kind].scope} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{scope:e.target.value as "always"|"cavebot"})}><option value="always">Zawsze</option><option value="cavebot">Przy V2</option></select>
+          <label><input type="checkbox" checked={config[kind].enabled} disabled={busy||!connected} onChange={e=>void change(kind,{enabled:e.target.checked})}/>{label(kind)}</label>
+          <label className="alert-sound-toggle"><input type="checkbox" aria-label={t("alerts.soundAria",{kind:label(kind)})} checked={config[kind].sound} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{sound:e.target.checked})}/></label>
+          <select aria-label={t("alerts.whenAria",{kind:label(kind)})} value={config[kind].scope} disabled={busy||!connected||!config[kind].enabled} onChange={e=>void change(kind,{scope:e.target.value as "always"|"cavebot"})}><option value="always">{t("alerts.always")}</option><option value="cavebot">{t("alerts.withV2")}</option></select>
         </div>)}
-        <p className="alert-hint">Dźwięk i ikona gry sygnalizują każdą wiadomość. Przy widocznym graczu sygnał powtarza się co 1,5 s.</p>
-        {config.ki_loss&&<p className="alert-hint">Alarm Ki trwa 10 s, gdy w jednej zmianie Ki spada z co najmniej 90% do najwyżej 5% i brak komunikatu o trafieniu. Kilka kolejnych strat Ki podczas walki nie uruchamia alarmu.</p>}
-        <div className="alert-tools"><button disabled={paused} onClick={async()=>{setError("");try{if(!window.dbvAlerts)throw new Error("Uruchom ponownie panel, aby wczytać obsługę dźwięku.");await window.dbvAlerts.testSound();}catch(e){setError(String(e));}}}>♪ Test sygnału</button><button disabled={busy||!connected||!unread} onClick={()=>void read()}>Oznacz jako przeczytane</button></div>
+        <p className="alert-hint">{t("alerts.hint")}</p>
+        {config.ki_loss&&<p className="alert-hint">{t("alerts.kiHint")}</p>}
+        <div className="alert-tools"><button disabled={paused} onClick={async()=>{setError("");try{if(!window.dbvAlerts)throw new Error(t("alerts.restartForSound"));await window.dbvAlerts.testSound();}catch(e){setError(String(e));}}}>♪ {t("alerts.test")}</button><button disabled={busy||!connected||!unread} onClick={()=>void read()}>{t("alerts.markRead")}</button></div>
         {error&&<p role="alert" className="alert-error">{error}</p>}
-        <div className="alert-history" aria-label="Historia alertów">{[...alerts.events].reverse().map(e=><article key={`${alerts.session}-${e.id}`}><div><b>{labels[e.kind]}</b><time>{new Date(e.at*1000).toLocaleTimeString("pl-PL")}</time></div><strong>{e.sender}</strong>{e.position&&<span className="alert-coordinates"> ({e.position.join(", ")})</span>}<p>{e.text}</p></article>)}{!alerts.events.length&&<p className="alert-empty">Brak zdarzeń w tej sesji.</p>}</div>
-        <footer>{!connected?"Brak połączenia z botem.":!alerts.map_fresh?"Gracze: czekam na świeżą mapę.":"Gracze: pasywny odczyt aktywny."} <span title="Czytamy rozpoznane komunikaty czatu. Nie skanujemy zawartości mapy w poszukiwaniu tekstu.">Czat: {alerts.chat_received?`${alerts.chat_received} rozpoznanych komunikatów.`:"oczekiwanie na komunikat."}</span></footer>
+        <div className="alert-history" aria-label={t("alerts.history")}>{[...alerts.events].reverse().map(e=><article key={`${alerts.session}-${e.id}`}><div><b>{label(e.kind)}</b><time>{new Date(e.at*1000).toLocaleTimeString(locale())}</time></div><strong>{e.sender}</strong>{e.position&&<span className="alert-coordinates"> ({e.position.join(", ")})</span>}<p>{e.text}</p></article>)}{!alerts.events.length&&<p className="alert-empty">{t("action.noEvents")}</p>}</div>
+        <footer>{t(!connected?"alerts.noBot":!alerts.map_fresh?"alerts.playersWaiting":"alerts.playersActive")} <span title={t("alerts.chatTitle")}>{t("alerts.chat")}: {alerts.chat_received?t("alerts.chatCount",{n:alerts.chat_received}):t("alerts.chatWaiting")}</span></footer>
       </>}
     </section>}
   </div>;

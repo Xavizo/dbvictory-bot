@@ -1,9 +1,9 @@
 import pytest
 
 from dbv.brain.combat import hunter_knife as hk
-from dbv.brain.combat.hunter_knife import (FRESH, GUNSO, MUTANT_WOLF, ROCO, SPENT, CorpseSuggestions,
-                                           apply_config, body_counts, exposed_body_action, killed_on,
-                                           loot_species, skinned, validate_config)
+from dbv.brain.combat.hunter_knife import (FRESH, GUNSO, MUTANT_WOLF, ROCO, SPENT, LearnedCorpses, apply_config,
+                                           body_counts, exposed_body_action, learn_into, loot_species, skinned,
+                                           validate_config, with_learned)
 
 
 @pytest.fixture(autouse=True)
@@ -16,112 +16,77 @@ def items(*ids):
     return [dict(id=i, stack=s, flags=["container"]) for s, i in enumerate(ids, 1)]
 
 
-def test_defaults_match_the_previous_hardcoded_lists():
-    monsters = validate_config({})["monsters"]
-    assert {c["id"] for m in monsters for c in m["corpses"]} == {FRESH, ROCO, GUNSO, MUTANT_WOLF}
-    assert all(c["skinned"] == SPENT for m in monsters for c in m["corpses"])
-    assert {m["name"] for m in monsters} == {
-        "fire elemental", "fire elementalis", "mutant fire elemental", "fury mutant fire",
-        "fury mutant fire elemental", "roco", "chibi roco", "fury roco", "gunso", "chibi gunso",
-        "fury gunso", "mutant wolf"}
+def test_defaults_are_the_four_known_corpses():
+    assert validate_config({})["corpses"] == [{"id": i, "skinned": SPENT} for i in (FRESH, ROCO, GUNSO, MUTANT_WOLF)]
 
 
-def test_configured_monster_and_corpse_are_recognised():
-    apply_config({"monsters": [{"name": "  Big   Ape ", "corpses": [{"id": 1234, "skinned": 4321}]}]})
-    assert hk.FRESH_BODIES == {1234} and hk.SKINNABLE_SPECIES == {"big ape"}
+def test_configured_corpse_is_recognised_and_removed_one_is_not():
+    apply_config({"corpses": [{"id": 1234, "skinned": 4321}]})
+    assert hk.FRESH_BODIES == {1234}
     assert exposed_body_action(items(1234))[0] == "skin"
-    assert exposed_body_action(items(FRESH)) is None
+    assert exposed_body_action(items(MUTANT_WOLF)) is None
     assert exposed_body_action(items(1234, 4321))[0] == "uncover"
     assert skinned(body_counts(items(1234)), body_counts(items(4321)), 1234)
-    assert not skinned(body_counts(items(1234)), body_counts(items(SPENT)), 1234)
-    assert loot_species("12:00 [Big Ape]: 3 gold coins") == "big ape"
-    assert loot_species("12:00 [Roco]: 3 gold coins") is None
-
-
-def test_removing_a_monster_removes_its_corpses():
-    monsters = [m for m in validate_config({})["monsters"] if m["name"] != "mutant wolf"]
-    apply_config({"monsters": monsters})
-    assert MUTANT_WOLF not in hk.FRESH_BODIES and exposed_body_action(items(MUTANT_WOLF)) is None
-    assert ROCO in hk.FRESH_BODIES
-
-
-def test_monster_without_corpse_id_is_kept_but_skins_nothing():
-    apply_config({"monsters": [{"name": "Big Ape", "corpses": []}]})
-    assert hk.FRESH_BODIES == set() and hk.SKINNABLE_SPECIES == {"big ape"}
-    assert exposed_body_action(items(FRESH)) is None
 
 
 def test_ids_from_text_and_missing_skinned_id_default_to_spent():
-    cfg = validate_config({"monsters": [{"name": "a", "corpses": ["777", {"id": 778}]}]})
-    assert cfg["monsters"][0]["corpses"] == [{"id": 777, "skinned": SPENT, "confirmed": False},
-                                             {"id": 778, "skinned": SPENT, "confirmed": False}]
+    assert validate_config({"corpses": ["777", {"id": 778}]})["corpses"] == [
+        {"id": 777, "skinned": SPENT}, {"id": 778, "skinned": SPENT}]
 
 
-def test_defaults_are_unconfirmed_and_saved_confirmations_are_kept():
-    assert not any(c["confirmed"] for m in validate_config({})["monsters"] for c in m["corpses"])
-    cfg = validate_config({"monsters": [{"name": "roco", "corpses": [{"id": 1, "confirmed": True}]}]})
-    assert cfg["monsters"][0]["corpses"][0]["confirmed"] is True
+def test_settings_from_the_monster_window_fall_back_to_the_corpse_list():
+    cfg = validate_config({"enabled": True, "monsters": [{"name": "x", "corpses": []}], "ignored_suggestions": []})
+    assert cfg == {"enabled": True, "corpses": validate_config({})["corpses"]}
 
 
-@pytest.mark.parametrize("monsters", [
-    [],
-    [{"name": "a", "corpses": [{"id": 0}]}],
-    [{"name": "a", "corpses": [{"id": 70000}]}],
-    [{"name": "a", "corpses": [{"id": 5908}]}],
-    [{"name": "a", "corpses": [{"id": 10, "skinned": 10}]}],
-    [{"name": "a"}, {"name": "A "}],
-    [{"name": "a", "corpses": [{"id": 10, "skinned": 11}]}, {"name": "b", "corpses": [{"id": 11}]}],
-    [{"name": "a", "corpses": [{"id": 10, "skinned": 11}]}, {"name": "b", "corpses": [{"id": 10, "skinned": 12}]}],
-    [{"name": "[Roco]"}],
-    [{"name": ""}],
+@pytest.mark.parametrize("corpses", [
+    [{"id": 0}], [{"id": 70000}], [{"id": 5908}], [{"id": 10, "skinned": 10}],
+    [{"id": 10, "skinned": 11}, {"id": 11}], "nonsense",
 ])
-def test_invalid_lists_are_refused(monsters):
+def test_invalid_lists_are_refused(corpses):
     with pytest.raises(ValueError):
-        validate_config({"monsters": monsters})
+        validate_config({"corpses": corpses})
 
 
 def test_broken_saved_settings_fall_back_to_defaults():
-    apply_config({"monsters": "nonsense"})
+    apply_config({"corpses": "nonsense"})
     assert hk.FRESH_BODIES == {FRESH, ROCO, GUNSO, MUTANT_WOLF}
 
 
-def test_old_flat_lists_are_replaced_by_the_monster_list():
-    cfg = validate_config({"corpses": [{"id": 1}], "species": ["x"], "enabled": True})
-    assert "corpses" not in cfg and "species" not in cfg and cfg["enabled"] is True
+def test_hand_skinned_corpses_are_added_once():
+    cfg = with_learned({}, {1234: (4321, "Big  Ape"), MUTANT_WOLF: (SPENT, "Mutant Wolf")})
+    assert cfg["corpses"][-1] == {"id": 1234, "skinned": 4321, "monster": "big ape"} and len(cfg["corpses"]) == 5
+    assert with_learned(cfg, {1234: (4321, None)}) is None
+    assert with_learned({}, {SPENT: (1, None)}) is None  # a skinned corpse is never a fresh one
+    assert with_learned({}, {55: (56, None)})["corpses"][-1] == {"id": 55, "skinned": 56}
 
 
-def test_manual_skin_of_an_unknown_corpse_is_suggested_until_added_or_ignored():
-    rows = CorpseSuggestions()
-    rows.record(FRESH, SPENT, "Fire Elemental", 1.)  # already on the default list
-    rows.record(1234, 4321, "Big  Ape", 2.)
-    rows.record(1234, 4321, None, 3.)
-    rows.record(555, 556, None, 4.)
-    pending = rows.pending({})
-    assert [(r["id"], r["skinned"], r["name"], r["seen"]) for r in pending] == [(555, 556, None, 1), (1234, 4321, "big ape", 2)]
-    added = {"monsters": [*validate_config({})["monsters"], {"name": "big ape", "corpses": [{"id": 1234, "skinned": 4321}]}],
-             "ignored_suggestions": [555]}
-    assert rows.pending(added) == []
+def test_learned_monster_counts_as_kill_evidence():
+    apply_config(with_learned({}, {1234: (4321, "Big Ape")}))
+    assert "big ape" in hk.SKINNABLE_SPECIES and "mutant wolf" in hk.SKINNABLE_SPECIES
+    assert loot_species("[Big Ape]: 2 gold coins") == "big ape"
+    apply_config({})
+    assert "big ape" not in hk.SKINNABLE_SPECIES
 
 
-def test_known_corpse_skinned_from_an_unlisted_monster_is_suggested_for_that_monster():
-    rows = CorpseSuggestions()
-    rows.record(ROCO, SPENT, "Giant Roco", 1.)
-    assert [r["name"] for r in rows.pending({})] == ["giant roco"]
+def test_learning_is_saved_into_settings_once():
+    learned = LearnedCorpses()
+    calls = []
+    learned.on_record = lambda: calls.append(True)
+    learned.record(1234, 4321, "Big Ape")
+    settings = {"actions": {"auto_hunter_knife": {"enabled": False}}}
+    assert calls == [True] and learn_into(settings, learned)
+    cfg = settings["actions"]["auto_hunter_knife"]
+    assert {"id": 1234, "skinned": 4321, "monster": "big ape"} in cfg["corpses"] and cfg["enabled"] is False
+    assert learned.snapshot() == {} and not learn_into(settings, learned)
 
 
-def test_suggestions_are_bounded():
-    rows = CorpseSuggestions(limit=3)
-    for i in range(10):
-        rows.record(100 + i, 50, None, i)
-    assert [r["id"] for r in rows.pending({})] == [109, 108, 107]
-
-
-class Game:
-    kill_log = [dict(t=100., name="Old", x=1, y=2, z=7), dict(t=900., name="Big Ape", x=1, y=2, z=7),
-                dict(t=950., name="Other", x=5, y=5, z=7)]
-
-
-def test_killed_on_names_the_latest_recent_kill_on_the_tile():
-    assert killed_on(Game, (1, 2, 7), 1000.) == "Big Ape"
-    assert killed_on(Game, (1, 2, 7), 5000.) is None
-    assert killed_on(Game, (9, 9, 7), 1000.) is None
+def test_server_saves_hand_skins_while_automation_is_off(monkeypatch):
+    from dbv.mcp_server import server
+    saved = []
+    monkeypatch.setattr(server, "save_settings", lambda settings: saved.append(settings))
+    monkeypatch.setattr(server.state, "settings", {"actions": {"auto_hunter_knife": {"enabled": False}}})
+    monkeypatch.setattr(server.state, "knife_learned", LearnedCorpses())
+    server.state.knife_learned.record(1234, 4321, None)
+    server._save_learned_knife_corpses()
+    assert {"id": 1234, "skinned": 4321} in saved[0]["actions"]["auto_hunter_knife"]["corpses"]
